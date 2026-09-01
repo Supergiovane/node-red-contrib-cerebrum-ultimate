@@ -1,0 +1,1940 @@
+<script type="text/javascript" src="resources/node-red-contrib-cerebrum-ultimate/htmlUtils.js"></script>
+<script type="text/javascript" src="resources/node-red-contrib-cerebrum-ultimate/CerebrumChatAdapterMappings.js"></script>
+<style type="text/css">
+    #cerebrum-ollama-install-row {
+        align-items: flex-start;
+    }
+
+    #cerebrum-llm-connection-settings {
+        width: 100%;
+        max-width: 720px;
+        min-width: 0;
+    }
+
+    #cerebrum-llm-connection-settings .form-row {
+        min-width: 0;
+    }
+
+    #cerebrum-local-context-status,
+    .cerebrum-prompt-context-hint {
+        width: 100%;
+        max-width: 720px;
+        min-width: 0;
+        box-sizing: border-box;
+        color: var(--red-ui-secondary-text-color, #777);
+        font-size: 12px;
+        line-height: 1.4;
+        white-space: normal;
+        overflow-wrap: break-word;
+    }
+
+    #cerebrum-local-context-status {
+        margin: -8px 0 12px;
+    }
+
+    .cerebrum-prompt-context-hint {
+        margin: 6px 0 0;
+    }
+
+    #cerebrum-ollama-install-row>label {
+        padding-top: 6px;
+    }
+
+    #cerebrum-ollama-install-row .cerebrum-ollama-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        max-width: calc(100% - 300px);
+    }
+
+    #cerebrum-ollama-install-row .cerebrum-ollama-actions .red-ui-button {
+        margin: 0 !important;
+    }
+
+    .cerebrum-chat-adapter-editor {
+        width: 100% !important;
+        height: 220px;
+        min-height: 180px;
+        box-sizing: border-box;
+    }
+
+    #node-input-chatInputCode-editor .monaco-editor,
+    #node-input-chatInputCode-editor .monaco-editor-background,
+    #node-input-chatInputCode-editor .monaco-editor .margin,
+    #node-input-chatInputCode-editor .monaco-editor .overflow-guard,
+    #node-input-chatInputCode-editor .monaco-editor .lines-content,
+    #node-input-chatInputCode-editor .monaco-editor .editor-scrollable {
+        background-color: #e8f5e9 !important;
+    }
+
+    #node-input-chatOutputCode-editor .monaco-editor,
+    #node-input-chatOutputCode-editor .monaco-editor-background,
+    #node-input-chatOutputCode-editor .monaco-editor .margin,
+    #node-input-chatOutputCode-editor .monaco-editor .overflow-guard,
+    #node-input-chatOutputCode-editor .monaco-editor .lines-content,
+    #node-input-chatOutputCode-editor .monaco-editor .editor-scrollable {
+        background-color: #fffde7 !important;
+    }
+
+    #cerebrum-tabs.ui-tabs {
+        background: transparent;
+        border: none;
+    }
+
+    #cerebrum-tabs>.ui-tabs-nav {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid #c0c0c0;
+        border-radius: 0;
+    }
+
+    #cerebrum-tabs>.ui-tabs-nav>li.ui-state-default {
+        float: none;
+        margin: 0 2px -1px 0;
+        background: transparent;
+        border: none;
+    }
+
+    #cerebrum-tabs>.ui-tabs-nav>li.ui-state-default>a {
+        padding: 0.5em 1em;
+        color: #878787;
+        outline: none;
+    }
+
+    #cerebrum-tabs>.ui-tabs-nav>li.ui-state-active {
+        background: transparent no-repeat bottom center;
+        border: none;
+    }
+
+    #cerebrum-tabs>.ui-tabs-nav>li.ui-state-active>a {
+        color: #377e00;
+        border-bottom: 1px solid #377e00;
+        outline: none;
+    }
+
+    #cerebrum-tabs>.ui-tabs-nav>li>a>i {
+        color: inherit;
+    }
+
+    #cerebrum-tabs>.ui-tabs-panel {
+        padding: 1em 1.4em;
+        overflow: visible;
+        background: transparent;
+        border: none;
+        border-radius: 0;
+    }
+
+    #cerebrum-tabs .cerebrum-accordion-subsection {
+        padding: 0;
+    }
+
+    #cerebrum-tabs .cerebrum-accordion-subsection+.cerebrum-accordion-subsection {
+        margin-top: 18px;
+        padding-top: 16px;
+        border-top: 1px solid var(--red-ui-form-input-border-color, #ccc);
+    }
+
+    #cerebrum-tabs .cerebrum-accordion-subsection>h4 {
+        margin: 0 0 14px;
+        color: var(--red-ui-primary-text-color, #555);
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    #cerebrum-tabs .cerebrum-accordion-subsection>h4 i {
+        width: 18px;
+        text-align: center;
+    }
+
+    #cerebrum-tabs .cerebrum-inline-subsection {
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px dashed var(--red-ui-form-input-border-color, #ccc);
+    }
+
+    #cerebrum-tabs .cerebrum-inline-subsection>h5 {
+        margin: 0 0 12px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    #cerebrum-tabs .cerebrum-accordion-mount>div {
+        display: block;
+    }
+
+    #cerebrum-setup-doctor-panel,
+    #cerebrum-detected-adapters-panel,
+    #cerebrum-chat-context-panel,
+    #cerebrum-chat-learning-link-panel {
+        margin: 0 0 18px;
+        padding: 12px 14px;
+        border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+        border-radius: 4px;
+        background: var(--red-ui-secondary-background, #f7f7f7);
+    }
+
+    #cerebrum-tabs-chat-home>#cerebrum-detected-adapters-panel {
+        margin: 18px 0 0;
+    }
+
+    #cerebrum-tabs-chat-home>#cerebrum-detected-adapters-panel+#cerebrum-chat-context-panel {
+        margin: 18px 0 0;
+    }
+
+    #cerebrum-detected-adapters-panel>h4,
+    #cerebrum-chat-context-panel>h4,
+    #cerebrum-chat-learning-link-panel>h4 {
+        margin: 0 0 9px;
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    #cerebrum-setup-doctor-panel {
+        margin: 24px 0 0;
+        border-color: rgba(255, 152, 0, 0.55);
+        background: linear-gradient(135deg, rgba(255, 152, 0, 0.10), var(--red-ui-secondary-background, #f7f7f7));
+    }
+
+    .cerebrum-setup-doctor-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 0;
+        color: var(--red-ui-primary-text-color, #555);
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+    }
+
+    .cerebrum-setup-doctor-toggle::-webkit-details-marker {
+        display: none;
+    }
+
+    .cerebrum-setup-doctor-toggle>span>i {
+        width: 18px;
+        text-align: center;
+    }
+
+    .cerebrum-setup-doctor-toggle:focus-visible {
+        outline: 2px solid var(--red-ui-primary-color, #377e00);
+        outline-offset: 3px;
+        border-radius: 2px;
+    }
+
+    .cerebrum-setup-doctor-chevron {
+        flex: 0 0 auto;
+        transition: transform 0.16s ease;
+    }
+
+    #cerebrum-setup-doctor-panel[open] .cerebrum-setup-doctor-chevron {
+        transform: rotate(90deg);
+    }
+
+    .cerebrum-setup-doctor-body {
+        margin-top: 11px;
+    }
+
+    #cerebrum-setup-doctor-panel.status-ready {
+        border-color: rgba(46, 125, 50, 0.55);
+        background: linear-gradient(135deg, rgba(46, 125, 50, 0.10), var(--red-ui-secondary-background, #f7f7f7));
+    }
+
+    #cerebrum-setup-doctor-panel.status-blocked {
+        border-color: rgba(198, 40, 40, 0.52);
+        background: linear-gradient(135deg, rgba(198, 40, 40, 0.09), var(--red-ui-secondary-background, #f7f7f7));
+    }
+
+    .cerebrum-setup-doctor-hero {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .cerebrum-setup-doctor-summary {
+        flex: 1 1 auto;
+        min-width: 0;
+        line-height: 1.45;
+    }
+
+    .cerebrum-setup-doctor-score {
+        flex: 0 0 auto;
+        min-width: 48px;
+        padding: 6px 8px;
+        border-radius: 16px;
+        color: #7a4200;
+        background: rgba(255, 152, 0, 0.18);
+        text-align: center;
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    #cerebrum-setup-doctor-panel.status-ready .cerebrum-setup-doctor-score {
+        color: #256029;
+        background: rgba(46, 125, 50, 0.16);
+    }
+
+    #cerebrum-setup-doctor-panel.status-blocked .cerebrum-setup-doctor-score {
+        color: #842029;
+        background: rgba(198, 40, 40, 0.14);
+    }
+
+    .cerebrum-setup-doctor-check {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 7px 0;
+    }
+
+    .cerebrum-setup-doctor-check+.cerebrum-setup-doctor-check {
+        border-top: 1px solid var(--red-ui-form-input-border-color, #ddd);
+    }
+
+    .cerebrum-setup-doctor-check-copy {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .cerebrum-setup-doctor-check-detail,
+    #cerebrum-setup-doctor-status,
+    .cerebrum-setup-doctor-prompts-hint {
+        color: var(--red-ui-secondary-text-color, #777);
+        font-size: 12px;
+        line-height: 1.4;
+    }
+
+    .cerebrum-setup-doctor-badge {
+        flex: 0 0 auto;
+        min-width: 48px;
+        padding: 2px 7px;
+        border-radius: 10px;
+        text-align: center;
+        font-size: 11px;
+        font-weight: 700;
+    }
+
+    .cerebrum-setup-doctor-badge.pass {
+        color: #256029;
+        background: #dff0d8;
+    }
+
+    .cerebrum-setup-doctor-badge.warn {
+        color: #7a5200;
+        background: #fff3cd;
+    }
+
+    .cerebrum-setup-doctor-badge.fail {
+        color: #842029;
+        background: #f8d7da;
+    }
+
+    .cerebrum-setup-doctor-badge.info {
+        color: #245269;
+        background: #d9edf7;
+    }
+
+    .cerebrum-setup-doctor-prompts {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px dashed var(--red-ui-form-input-border-color, #ccc);
+    }
+
+    .cerebrum-setup-doctor-prompt-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 8px;
+    }
+
+    .cerebrum-setup-doctor-prompt {
+        width: 100%;
+        margin: 0 !important;
+        text-align: left;
+        white-space: normal;
+    }
+
+    .cerebrum-setup-doctor-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 10px;
+    }
+
+    .cerebrum-setup-doctor-deploy-hint {
+        color: var(--red-ui-secondary-text-color, #777);
+        font-size: 11px;
+        line-height: 1.35;
+    }
+
+    #cerebrum-setup-doctor-refresh {
+        flex: 0 0 auto;
+    }
+
+    .cerebrum-detected-adapter {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 0;
+    }
+
+    .cerebrum-detected-adapter+.cerebrum-detected-adapter {
+        border-top: 1px solid var(--red-ui-form-input-border-color, #ddd);
+    }
+
+    .cerebrum-detected-adapter-main {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .cerebrum-detected-adapter-package,
+    .cerebrum-detected-adapter-counts,
+    #cerebrum-detected-adapters-status,
+    #cerebrum-chat-context-status,
+    .cerebrum-chat-context-intro,
+    .cerebrum-chat-context-metric,
+    .cerebrum-chat-context-description,
+    .cerebrum-chat-context-pattern {
+        color: var(--red-ui-secondary-text-color, #777);
+        font-size: 12px;
+    }
+
+    #cerebrum-chat-learning-link-panel {
+        margin: 18px 0 0;
+    }
+
+    .cerebrum-compatible-intro {
+        margin: 0 0 10px;
+        color: var(--red-ui-secondary-text-color, #777);
+        font-size: 12px;
+        line-height: 1.45;
+    }
+
+    .cerebrum-compatible-config {
+        margin: 8px 0;
+        padding: 0 0 12px;
+        border-bottom: 1px solid var(--red-ui-form-input-border-color, #ddd);
+    }
+
+    .cerebrum-compatible-config-field {
+        display: flex;
+        align-items: center;
+        margin: 6px 0 8px;
+    }
+
+    .cerebrum-compatible-config-field>label {
+        flex: 0 0 120px;
+        width: 120px;
+    }
+
+    .cerebrum-compatible-config-field>.red-ui-button,
+    .cerebrum-compatible-config-field>div {
+        min-width: 0;
+    }
+
+    .cerebrum-chat-learning-link-copy {
+        margin: 0 0 10px;
+        color: var(--red-ui-secondary-text-color, #777);
+        font-size: 12px;
+        line-height: 1.45;
+    }
+
+    .cerebrum-chat-context-metric {
+        margin-top: 6px;
+        font-weight: 600;
+    }
+
+    .cerebrum-chat-context-group-title {
+        margin: 12px 0 2px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .cerebrum-chat-context-path {
+        margin-top: 2px;
+        color: var(--red-ui-secondary-text-color, #777);
+        font-family: monospace;
+        font-size: 11px;
+        overflow-wrap: anywhere;
+    }
+
+    .cerebrum-chat-context-pattern {
+        margin-top: 8px;
+    }
+
+    .cerebrum-detected-adapter-badge {
+        flex: 0 0 auto;
+        padding: 2px 7px;
+        border-radius: 10px;
+        color: #256029;
+        background: #dff0d8;
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .cerebrum-detected-adapter-badge.pending {
+        color: #7a5200;
+        background: #fff3cd;
+    }
+
+    @media (max-width: 900px) {
+        #cerebrum-ollama-install-row>label {
+            width: 100% !important;
+            padding-top: 0;
+            margin-bottom: 6px;
+        }
+
+        #cerebrum-ollama-install-row .cerebrum-ollama-actions {
+            max-width: 100%;
+        }
+
+    }
+</style>
+
+<script type="text/javascript">
+    RED.nodes.registerType('cerebrumUltimate', {
+        category: "Cerebrum Ultimate",
+        color: '#FF9800',
+        defaults: {
+            server: { value: "", type: "knxUltimate-config", required: false },
+            unifiProtectConfig: { value: "", type: "unifi-protect-config", required: false },
+            name: { value: "Cerebrum", required: false },
+            topic: { value: "", required: false },
+
+            llmEnabled: { value: false },
+            llmProvider: { value: "openai_compat" },
+            llmBaseUrl: { value: "https://api.openai.com/v1/chat/completions" },
+            llmModel: { value: "gpt-5.4" },
+            llmReasoningEffort: { value: "default" },
+            llmContextLength: { value: 0 },
+            llmLocalContextTokens: { value: 0 },
+            llmAllowKnxCommands: { value: false },
+            llmRequireCommandConfirmation: { value: true },
+            etsExposedGAs: { value: [] },
+            etsReadOnlyGAs: { value: [] },
+            etsExposeConfigured: { value: false },
+            webAccessEnabled: { value: true },
+            webMaxCallsPerHour: { value: 40 },
+            chatAdapterPreset: { value: "none" },
+            chatInputCode: { value: "" },
+            chatOutputCode: { value: "" },
+            aiEducation: { value: "" }
+        },
+        credentials: {
+            llmApiKey: { type: "password" }
+        },
+        inputs: 1,
+        outputs: 5,
+        outputLabels: function (i) {
+            switch (i) {
+                case 0: return this._('cerebrumUltimate.outputs.summary');
+                case 1: return this._('cerebrumUltimate.outputs.anomalies');
+                case 2: return this._('cerebrumUltimate.outputs.assistant');
+                case 3: return this._('cerebrumUltimate.outputs.knxCommands');
+                case 4: return this._('cerebrumUltimate.outputs.ttsUltimate');
+            }
+        },
+        icon: "cerebrum-brain.svg",
+        label: function () {
+            return (this.name || "Cerebrum");
+        },
+        paletteLabel: "Cerebrum",
+        oneditprepare: function () {
+            try { RED.sidebar.show("help"); } catch (error) { }
+            const node = this;
+            const savedKnxGatewayId = String(node.server || "").trim();
+            const savedUnifiProtectConfigId = String(node.unifiProtectConfig || "").trim();
+            const OPENAI_COMPAT_DEFAULT_CHAT_URL = "https://api.openai.com/v1/chat/completions";
+            const OLLAMA_DEFAULT_CHAT_URL = "http://localhost:11434/api/chat";
+            const ANTHROPIC_DEFAULT_CHAT_URL = "https://api.anthropic.com/v1/messages";
+            const LMSTUDIO_DEFAULT_CHAT_URL = "http://localhost:1234/v1/chat/completions";
+            const OLLAMA_LIBRARY_URL = "https://ollama.com/library";
+            const OPENAI_COMPAT_DEFAULT_MODELS = ["gpt-5.4", "gpt-4o-mini"];
+            const OLLAMA_DEFAULT_MODEL = "llama3.1";
+            const ANTHROPIC_DEFAULT_MODEL = "claude-opus-4-8";
+
+            const mountTabSection = (mountSelector, sectionSelector) => {
+                const $mount = $(mountSelector);
+                const $section = $(sectionSelector);
+                if ($mount.length && $section.length) $mount.append($section);
+            };
+            mountTabSection("#cerebrum-mount-assistant-setup", "#cerebrum-tab-llm-connection");
+            mountTabSection("#cerebrum-mount-ets-access", "#cerebrum-tab-ets-access");
+            mountTabSection("#cerebrum-mount-assistant-advanced", "#cerebrum-tab-advanced");
+            mountTabSection("#cerebrum-mount-chat-adapter", "#cerebrum-tab-chat-adapter");
+            mountTabSection("#cerebrum-mount-home-intelligence", "#cerebrum-tab-home-intelligence");
+            $("#cerebrum-tabs").tabs({ active: 0 });
+
+            const toggleLLM = () => {
+                const enabled = $("#node-input-llmEnabled").is(":checked");
+                $("#cerebrum-llm-connection-settings").toggle(enabled);
+                $("#cerebrum-llm-advanced-settings").toggle(enabled);
+            };
+            $("#node-input-llmEnabled").on("change", toggleLLM);
+
+            const toggleCommandConfirmation = () => {
+                const enabled = $("#node-input-llmAllowKnxCommands").is(":checked");
+                $("#cerebrum-command-confirmation-row").toggle(enabled);
+            };
+            $("#node-input-llmAllowKnxCommands").on("change", toggleCommandConfirmation);
+
+            toggleLLM();
+            toggleCommandConfirmation();
+
+            const nodeId = node.id;
+            const resolveAdminRoot = () => {
+                const raw = (RED.settings && typeof RED.settings.httpAdminRoot === "string") ? RED.settings.httpAdminRoot : "/";
+                const trimmed = String(raw || "/").trim();
+                if (trimmed === "" || trimmed === "/") return "";
+                return "/" + trimmed.replace(/^\/+|\/+$/g, "");
+            };
+            const resolveAccessToken = () => {
+                try {
+                    const tokens = (RED.settings && typeof RED.settings.get === "function") ? RED.settings.get("auth-tokens") : null;
+                    const token = tokens && typeof tokens.access_token === "string" ? tokens.access_token.trim() : "";
+                    return token;
+                } catch (error) {
+                    return "";
+                }
+            };
+            const t = (key, fallback) => {
+                const value = RED._(key);
+                if (!value || value === key) return fallback || "";
+                return value;
+            };
+
+            // Same ETS access selector used by the MQTT profile of IoT Bridge.
+            try {
+                const savedSet = new Set(Array.isArray(node.etsExposedGAs) ? node.etsExposedGAs : []);
+                const readOnlySet = new Set(Array.isArray(node.etsReadOnlyGAs) ? node.etsReadOnlyGAs : []);
+                const exposeConfigured = node.etsExposeConfigured === true;
+
+                const updateEtsCount = () => {
+                    const total = $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-cb").length;
+                    const selected = $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-cb:checked").length;
+                    $("#cerebrum-ets-ga-count").text(selected + " / " + total + " " + t("cerebrumUltimate.messages.etsSelected", "selected"));
+                };
+
+                const buildEtsGaList = () => {
+                    const list = $("#cerebrum-ets-ga-list").empty();
+                    const serverId = String($("#node-input-server").val() || "").trim();
+                    if (!serverId) {
+                        list.append($("<div/>").css("color", "#999").text(t("cerebrumUltimate.messages.etsNoGateway", "Select a KNX gateway.")));
+                        updateEtsCount();
+                        return;
+                    }
+                    $.getJSON("knxUltimatecsv?nodeID=" + encodeURIComponent(serverId), function (data) {
+                        list.empty();
+                        if (!Array.isArray(data) || data.length === 0) {
+                            list.append($("<div/>").css("color", "#999").text(t("cerebrumUltimate.messages.etsNoGa", "No group addresses found. Import the ETS list in the KNX gateway.")));
+                            updateEtsCount();
+                            return;
+                        }
+                        data.forEach(function (item) {
+                            if (!item || !item.ga) return;
+                            const row = $("<div/>").addClass("cerebrum-ets-ga-row").css({
+                                display: "flex", gap: "8px", alignItems: "center", padding: "3px 2px",
+                                width: "100%", whiteSpace: "nowrap", cursor: "pointer", borderBottom: "1px solid #f3f3f3"
+                            }).appendTo(list);
+                            const include = $("<input/>", { type: "checkbox", class: "cerebrum-ets-ga-cb", value: item.ga, style: "width:auto; margin:0; flex:0 0 auto;" }).appendTo(row);
+                            include.prop("checked", exposeConfigured ? savedSet.has(item.ga) : true);
+                            $("<span/>").css({ flex: "0 0 auto", fontFamily: "monospace", minWidth: "64px" }).text(item.ga).appendTo(row);
+                            const name = String(item.devicename || item.ga);
+                            $("<span/>").addClass("cerebrum-ets-ga-name").css({ flex: "1 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#444" }).text(name).attr("title", name).appendTo(row);
+                            $("<span/>").css({ flex: "0 0 auto", color: "#888", fontSize: "11px" }).text("DPT" + (item.dpt || "")).appendTo(row);
+                            const readOnlyLabel = $("<label/>").css({ flex: "0 0 auto", display: "flex", alignItems: "center", gap: "3px", margin: "0", fontSize: "11px", color: "#888", cursor: "pointer" }).appendTo(row);
+                            const readOnly = $("<input/>", { type: "checkbox", class: "cerebrum-ets-ga-ro", value: item.ga, style: "width:auto; margin:0;" }).appendTo(readOnlyLabel);
+                            readOnly.prop("checked", readOnlySet.has(item.ga));
+                            $("<span/>").text(t("cerebrumUltimate.messages.etsReadOnly", "Read only")).appendTo(readOnlyLabel);
+                            readOnlyLabel.on("click", function (event) { event.stopPropagation(); });
+                            row.on("click", function (event) {
+                                if (event.target === include[0] || event.target === readOnly[0]) return;
+                                include.prop("checked", !include.prop("checked"));
+                                updateEtsCount();
+                            });
+                        });
+                        $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-cb").on("change", updateEtsCount);
+                        updateEtsCount();
+                    }).fail(function () {
+                        list.empty().append($("<div/>").css("color", "#c0392b").text(t("cerebrumUltimate.messages.etsCsvError", "Unable to load the group address list from the gateway.")));
+                        updateEtsCount();
+                    });
+                };
+
+                $("#cerebrum-ets-ga-all").on("click", function (event) { event.preventDefault(); $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row:visible").find("input.cerebrum-ets-ga-cb").prop("checked", true); updateEtsCount(); });
+                $("#cerebrum-ets-ga-none").on("click", function (event) { event.preventDefault(); $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row:visible").find("input.cerebrum-ets-ga-cb").prop("checked", false); updateEtsCount(); });
+                $("#cerebrum-ets-ga-ro-all").on("click", function (event) { event.preventDefault(); $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row:visible").find("input.cerebrum-ets-ga-ro").prop("checked", true); });
+                $("#cerebrum-ets-ga-ro-none").on("click", function (event) { event.preventDefault(); $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row:visible").find("input.cerebrum-ets-ga-ro").prop("checked", false); });
+                $("#cerebrum-ets-ga-filter").on("input", function () {
+                    const term = String($(this).val() || "").toLowerCase();
+                    $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row").each(function () {
+                        $(this).toggle($(this).text().toLowerCase().indexOf(term) !== -1);
+                    });
+                });
+                $("#node-input-server").on("change.cerebrumEtsAccess", buildEtsGaList);
+                buildEtsGaList();
+            } catch (error) { }
+
+            const applyChatEditorOptions = (editor) => {
+                try {
+                    if (!editor) return;
+                    if (typeof editor.updateOptions === "function") {
+                        editor.updateOptions({
+                            lineNumbers: "off",
+                            minimap: { enabled: false },
+                            scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 }
+                        });
+                    } else if (editor.renderer && typeof editor.renderer.setShowGutter === "function") {
+                        editor.renderer.setShowGutter(false);
+                    }
+                    if (typeof editor.setShowPrintMargin === "function") editor.setShowPrintMargin(false);
+                    if (typeof editor.setOptions === "function") {
+                        editor.setOptions({
+                            enableBasicAutocompletion: true,
+                            enableLiveAutocompletion: true
+                        });
+                    }
+                } catch (error) { }
+            };
+            const setChatEditorValue = (editor, value) => {
+                try {
+                    if (!editor) return;
+                    if (typeof editor.setValue === "function") {
+                        editor.setValue(String(value || ""));
+                    } else if (editor.session && typeof editor.session.setValue === "function") {
+                        editor.session.setValue(String(value || ""));
+                    }
+                } catch (error) { }
+            };
+            const destroyChatEditors = () => {
+                ["chatInputCodeEditor", "chatOutputCodeEditor"].forEach(function (key) {
+                    try {
+                        if (node[key] && typeof node[key].destroy === "function") node[key].destroy();
+                    } catch (error) { }
+                    delete node[key];
+                });
+                try {
+                    const $model = $("#node-input-llmModel");
+                    $model.off(".knxUltimateAiModelPicker");
+                    if (typeof $model.autocomplete === "function" && $model.data("ui-autocomplete")) {
+                        $model.autocomplete("destroy");
+                    }
+                } catch (error) { }
+            };
+
+            try {
+                node.chatInputCodeEditor = RED.editor.createEditor({
+                    id: "node-input-chatInputCode-editor",
+                    mode: "ace/mode/nrjavascript",
+                    value: node.chatInputCode || ""
+                });
+            } catch (error) { }
+            try {
+                node.chatOutputCodeEditor = RED.editor.createEditor({
+                    id: "node-input-chatOutputCode-editor",
+                    mode: "ace/mode/nrjavascript",
+                    value: node.chatOutputCode || ""
+                });
+            } catch (error) { }
+            applyChatEditorOptions(node.chatInputCodeEditor);
+            applyChatEditorOptions(node.chatOutputCodeEditor);
+            if (typeof monaco !== "undefined") {
+                try {
+                    const globalScope = typeof window !== "undefined" ? window : globalThis;
+                    if (!globalScope._cerebrumChatEditorThemesDefined) {
+                        monaco.editor.defineTheme("cerebrum-chat-input-theme", {
+                            base: "vs",
+                            inherit: true,
+                            rules: [],
+                            colors: {
+                                "editor.background": "#e8f5e9",
+                                "editorGutter.background": "#e8f5e9"
+                            }
+                        });
+                        monaco.editor.defineTheme("cerebrum-chat-output-theme", {
+                            base: "vs",
+                            inherit: true,
+                            rules: [],
+                            colors: {
+                                "editor.background": "#fffde7",
+                                "editorGutter.background": "#fffde7"
+                            }
+                        });
+                        globalScope._cerebrumChatEditorThemesDefined = true;
+                    }
+                    if (node.chatInputCodeEditor && typeof node.chatInputCodeEditor.updateOptions === "function") {
+                        node.chatInputCodeEditor.updateOptions({ theme: "cerebrum-chat-input-theme" });
+                    }
+                    if (node.chatOutputCodeEditor && typeof node.chatOutputCodeEditor.updateOptions === "function") {
+                        node.chatOutputCodeEditor.updateOptions({ theme: "cerebrum-chat-output-theme" });
+                    }
+                } catch (error) { }
+            }
+            node._destroyCerebrumChatEditors = destroyChatEditors;
+
+            const configureChatAdapterPicker = () => {
+                const adapters = Array.isArray(window.CerebrumChatAdapterMappings)
+                    ? window.CerebrumChatAdapterMappings.slice()
+                    : [];
+                const $picker = $("#node-input-chatAdapterPreset");
+                if (!$picker.length) return;
+                const hideAdapterMappingFields = () => {
+                    $("#cerebrum-chat-adapter-fields").hide();
+                };
+                $picker.empty();
+                $("<option></option>")
+                    .attr("value", "none")
+                    .text(t("cerebrumUltimate.selectlists.chatAdapter.none", "No adapter"))
+                    .appendTo($picker);
+                adapters.forEach(function (adapter) {
+                    if (!adapter || !adapter.id) return;
+                    $("<option></option>")
+                        .attr("value", adapter.id)
+                        .text(adapter.title || adapter.id)
+                        .appendTo($picker);
+                });
+
+                const configuredPreset = String(this.chatAdapterPreset || "none");
+                if (configuredPreset !== "none" && !adapters.some(adapter => adapter && adapter.id === configuredPreset)) {
+                    $("<option></option>")
+                        .attr("value", configuredPreset)
+                        .text(configuredPreset)
+                        .appendTo($picker);
+                }
+                $picker.val(configuredPreset);
+                hideAdapterMappingFields();
+                $picker.on("change", function () {
+                    const selected = String($(this).val() || "none");
+                    if (selected === "none") {
+                        setChatEditorValue(node.chatInputCodeEditor, "");
+                        setChatEditorValue(node.chatOutputCodeEditor, "");
+                        hideAdapterMappingFields();
+                        return;
+                    }
+                    const adapter = adapters.find(item => item && item.id === selected);
+                    if (!adapter) return;
+                    setChatEditorValue(node.chatInputCodeEditor, adapter.inputCode || "");
+                    setChatEditorValue(node.chatOutputCodeEditor, adapter.outputCode || "");
+                    hideAdapterMappingFields();
+                });
+            };
+            configureChatAdapterPicker.call(node);
+
+            const isEditorNodeTypeAvailable = (type) => {
+                try { return !!(RED.nodes && typeof RED.nodes.getType === "function" && RED.nodes.getType(type)); } catch (error) { return false; }
+            };
+            const configIntegrationRows = {
+                "knx-ultimate": {
+                    selector: "#cerebrum-compatible-knx",
+                    input: "#node-input-server",
+                    available: () => isEditorNodeTypeAvailable("knxUltimate-config") || !!savedKnxGatewayId
+                },
+                "unifi-ultimate": {
+                    selector: "#cerebrum-compatible-unifi",
+                    input: "#node-input-unifiProtectConfig",
+                    available: () => isEditorNodeTypeAvailable("unifi-protect-config") || !!savedUnifiProtectConfigId
+                }
+            };
+            Object.keys(configIntegrationRows).forEach(function (id) {
+                const row = configIntegrationRows[id];
+                $(row.selector).toggle(row.available());
+            });
+
+            let lastCompatibleNodes = [];
+            const renderDetectedAdapters = (compatibleNodes) => {
+                const $list = $("#cerebrum-detected-adapters-list");
+                const $status = $("#cerebrum-detected-adapters-status");
+                if (!$list.length) return;
+                $list.empty();
+                const entries = Array.isArray(compatibleNodes) ? compatibleNodes : [];
+                lastCompatibleNodes = entries;
+                const entryById = new Map(entries.filter(item => item && item.id).map(item => [String(item.id), item]));
+                Object.keys(configIntegrationRows).forEach(function (id) {
+                    const rowDefinition = configIntegrationRows[id];
+                    const entry = entryById.get(id);
+                    const $row = $(rowDefinition.selector);
+                    const visible = rowDefinition.available() || !!entry;
+                    $row.toggle(visible);
+                    if (!visible) return;
+                    const currentConfigId = String($(rowDefinition.input).val() || "").trim();
+                    const configured = !!currentConfigId && currentConfigId !== "_ADD_";
+                    const deployedConfigId = String(entry && entry.configNodeId || "").trim();
+                    const used = !!entry && entry.usedInChat === true && configured && currentConfigId === deployedConfigId;
+                    const providerCount = Math.max(0, Number(entry && entry.providerCount) || 0);
+                    const cameraCount = Math.max(0, Number(entry && entry.cameraCount) || 0);
+                    const detail = id === "unifi-ultimate"
+                        ? t("cerebrumUltimate.messages.detectedAdapterControllers", "Controllers") + ": " + providerCount + " · " + t("cerebrumUltimate.messages.detectedAdapterCameras", "Cameras") + ": " + cameraCount
+                        : configured
+                            ? t("cerebrumUltimate.messages.compatibleConfigSelected", "Configuration selected; deploy to use it with Cerebrum.")
+                            : t("cerebrumUltimate.messages.compatibleConfigRequired", "Select an existing configuration or create a new one.");
+                    $row.find(".cerebrum-detected-adapter-counts").text(detail);
+                    $row.find(".cerebrum-detected-adapter-badge")
+                        .toggleClass("pending", !used)
+                        .text(used
+                            ? t("cerebrumUltimate.messages.detectedAdapterUsed", "Used by Cerebrum")
+                            : configured
+                                ? t("cerebrumUltimate.messages.detectedAdapterSelected", "Selected")
+                                : t("cerebrumUltimate.messages.detectedAdapterConfigure", "Configure"));
+                });
+
+                const genericEntries = entries.filter(function (entry) {
+                    return entry && entry.id && !configIntegrationRows[String(entry.id)];
+                });
+                const visibleConfigRows = Object.keys(configIntegrationRows).some(function (id) {
+                    return configIntegrationRows[id].available() || entryById.has(id);
+                });
+                if (!genericEntries.length && !visibleConfigRows) {
+                    $status.text(t("cerebrumUltimate.messages.detectedAdaptersNone", "No compatible node detected.")).show();
+                    return;
+                }
+                $status.hide();
+                genericEntries.forEach(function (adapter) {
+                    if (!adapter || !adapter.id) return;
+                    const providerCount = Number(adapter.providerCount) || 0;
+                    const cameraCount = Number(adapter.cameraCount) || 0;
+                    const nodeCount = Number(adapter.nodeCount) || 0;
+                    const $row = $("<div></div>").addClass("cerebrum-detected-adapter");
+                    const $main = $("<div></div>").addClass("cerebrum-detected-adapter-main");
+                    $("<div></div>").text(adapter.title || adapter.id).appendTo($main);
+                    if (adapter.packageName) {
+                        $("<div></div>").addClass("cerebrum-detected-adapter-package").text(adapter.packageName).appendTo($main);
+                    }
+                    $("<div></div>")
+                        .addClass("cerebrum-detected-adapter-counts")
+                        .text(adapter.kind === "camera"
+                            ? t("cerebrumUltimate.messages.detectedAdapterControllers", "Controllers") + ": " + providerCount + " · " + t("cerebrumUltimate.messages.detectedAdapterCameras", "Cameras") + ": " + cameraCount
+                            : t("cerebrumUltimate.messages.detectedAdapterNodes", "Nodes") + ": " + nodeCount)
+                        .appendTo($main);
+                    $main.appendTo($row);
+                    $("<span></span>")
+                        .addClass("cerebrum-detected-adapter-badge" + (adapter.usedInChat === true ? "" : " pending"))
+                        .text(adapter.usedInChat === true
+                            ? t("cerebrumUltimate.messages.detectedAdapterUsed", "Used by Cerebrum")
+                            : t("cerebrumUltimate.messages.detectedAdapterConfigure", "Configure"))
+                        .appendTo($row);
+                    $row.appendTo($list);
+                });
+            };
+            $("#node-input-server, #node-input-unifiProtectConfig").on("change.cerebrumCompatibleNodes", function () {
+                renderDetectedAdapters(lastCompatibleNodes);
+            });
+
+            const renderSetupDoctor = (snapshot) => {
+                const $panel = $("#cerebrum-setup-doctor-panel");
+                const $status = $("#cerebrum-setup-doctor-status");
+                const $content = $("#cerebrum-setup-doctor-content");
+                const $checks = $("#cerebrum-setup-doctor-checks").empty();
+                const $prompts = $("#cerebrum-setup-doctor-prompt-list").empty();
+                if (!snapshot || typeof snapshot !== "object") {
+                    $panel.removeClass("status-ready status-attention status-blocked");
+                    $content.hide();
+                    $status.text(t("cerebrumUltimate.messages.setupDoctorUnavailable", "Setup Doctor is temporarily unavailable.")).show();
+                    return;
+                }
+                const badgeLabels = {
+                    pass: t("cerebrumUltimate.messages.setupDoctorPass", "OK"),
+                    warn: t("cerebrumUltimate.messages.setupDoctorWarn", "Check"),
+                    fail: t("cerebrumUltimate.messages.setupDoctorFail", "Fix"),
+                    info: t("cerebrumUltimate.messages.setupDoctorInfo", "Optional")
+                };
+                const snapshotStatus = ["ready", "attention", "blocked"].includes(String(snapshot.status)) ? String(snapshot.status) : "attention";
+                $panel.removeClass("status-ready status-attention status-blocked").addClass("status-" + snapshotStatus);
+                $("#cerebrum-setup-doctor-state").text(String(snapshot.statusLabel || snapshot.status || ""));
+                $("#cerebrum-setup-doctor-summary").text(String(snapshot.summary || ""));
+                $("#cerebrum-setup-doctor-score").text(String(Math.max(0, Number(snapshot.score) || 0)) + "%");
+                (Array.isArray(snapshot.checks) ? snapshot.checks : []).forEach(function (check) {
+                    if (!check || !check.id) return;
+                    const statusName = ["pass", "warn", "fail", "info"].includes(String(check.status)) ? String(check.status) : "info";
+                    const $row = $("<div></div>").addClass("cerebrum-setup-doctor-check");
+                    const $copy = $("<div></div>").addClass("cerebrum-setup-doctor-check-copy");
+                    $("<strong></strong>").text(String(check.title || check.id)).appendTo($copy);
+                    $("<div></div>").addClass("cerebrum-setup-doctor-check-detail").text(String(check.detail || "")).appendTo($copy);
+                    $copy.appendTo($row);
+                    $("<span></span>")
+                        .addClass("cerebrum-setup-doctor-badge " + statusName)
+                        .text(badgeLabels[statusName])
+                        .appendTo($row);
+                    $row.appendTo($checks);
+                });
+                const promptItems = snapshot.firstRun && Array.isArray(snapshot.firstRun.prompts) ? snapshot.firstRun.prompts : [];
+                promptItems.forEach(function (prompt) {
+                    if (!prompt || !prompt.text) return;
+                    $("<button type=\"button\"></button>")
+                        .addClass("red-ui-button cerebrum-setup-doctor-prompt")
+                        .text(String(prompt.text))
+                        .on("click", function (evt) {
+                            evt.preventDefault();
+                            openCerebrumWebPage("cerebrum", String(prompt.text));
+                        })
+                        .appendTo($prompts);
+                });
+                $(".cerebrum-setup-doctor-prompts").toggle(promptItems.length > 0);
+                $status.hide();
+                $content.show();
+            };
+
+            let lastChatContextOverview = null;
+            const selectedLocalContextTokens = () => Math.max(0, Number($("#node-input-llmLocalContextTokens").val()) || 0);
+            const formatCompactContextTokens = (value) => {
+                const tokens = Math.max(0, Number(value) || 0);
+                if (!tokens) return "?";
+                if (tokens >= 1024 && tokens % 1024 === 0) return (tokens / 1024) + "K";
+                return tokens.toLocaleString();
+            };
+            const selectedLocalContextLabel = () => {
+                const selectedTokens = selectedLocalContextTokens();
+                return selectedTokens
+                    ? formatCompactContextTokens(selectedTokens)
+                    : t("cerebrumUltimate.selectlists.localContext.maximum", "Maximum");
+            };
+
+            const renderChatContextOverview = (overview) => {
+                const $status = $("#cerebrum-chat-context-status");
+                const $content = $("#cerebrum-chat-context-content");
+                const $sources = $("#cerebrum-chat-context-sources-list").empty();
+                const $files = $("#cerebrum-chat-context-files-list").empty();
+                const $directories = $("#cerebrum-chat-context-directories-list").empty();
+                const $contextLimit = $("#cerebrum-chat-context-limit");
+                const $lastPromptUsage = $("#cerebrum-chat-context-last-prompt");
+                if (!overview || typeof overview !== "object") {
+                    lastChatContextOverview = null;
+                    $content.hide();
+                    $status
+                        .text(t("cerebrumUltimate.messages.chatContextUnavailable", "The Cerebrum context summary is temporarily unavailable."))
+                        .show();
+                    return;
+                }
+                lastChatContextOverview = overview;
+
+                const addRow = function ($list, title, description, pathText, badge) {
+                    const $row = $("<div></div>").addClass("cerebrum-detected-adapter");
+                    const $main = $("<div></div>").addClass("cerebrum-detected-adapter-main");
+                    $("<div></div>").text(title || "").appendTo($main);
+                    if (description) {
+                        $("<div></div>").addClass("cerebrum-chat-context-description").text(description).appendTo($main);
+                    }
+                    if (pathText) {
+                        $("<div></div>").addClass("cerebrum-chat-context-path").text(pathText).appendTo($main);
+                    }
+                    $main.appendTo($row);
+                    $("<span></span>").addClass("cerebrum-detected-adapter-badge").text(badge).appendTo($row);
+                    $row.appendTo($list);
+                };
+
+                const formatBytes = function (value) {
+                    const bytes = Math.max(0, Number(value) || 0);
+                    if (bytes >= (1024 * 1024)) return (bytes / (1024 * 1024)).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " MB";
+                    if (bytes >= 1024) return (bytes / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " KB";
+                    return bytes.toLocaleString() + " B";
+                };
+
+                const contextLimit = overview.contextLimit && typeof overview.contextLimit === "object" ? overview.contextLimit : {};
+                const deployedProvider = String(contextLimit.provider || "").toLowerCase();
+                const currentProvider = String($("#node-input-llmProvider").val() || deployedProvider).toLowerCase();
+                let contextLimitTokens = currentProvider === deployedProvider
+                    ? Math.max(0, Number(contextLimit.tokens) || 0)
+                    : 0;
+                const localProvider = currentProvider === "lmstudio" || currentProvider === "ollama";
+                if (localProvider) {
+                    const modelContextTokens = contextLimitTokens || Math.max(0, Number($("#node-input-llmContextLength").val()) || 0);
+                    const selectedTokens = selectedLocalContextTokens();
+                    contextLimitTokens = selectedTokens > 0
+                        ? (modelContextTokens > 0 ? Math.min(modelContextTokens, selectedTokens) : selectedTokens)
+                        : modelContextTokens;
+                }
+                const contextLimitValue = contextLimitTokens
+                    ? formatCompactContextTokens(contextLimitTokens) + " " + t("cerebrumUltimate.messages.chatContextTokens", "tokens")
+                    : t("cerebrumUltimate.messages.chatContextProviderManaged", "managed by the selected provider/model");
+                const localBudgetValue = localProvider
+                    ? " · " + t("cerebrumUltimate.messages.localContextBudget", "Local Cerebrum context") + ": " + selectedLocalContextLabel()
+                    : "";
+                $contextLimit
+                    .text(t("cerebrumUltimate.messages.chatContextLimitLabel", "Maximum operational context") + ": " + contextLimitValue + localBudgetValue)
+                    .attr("title", contextLimitTokens ? contextLimitTokens.toLocaleString() + " tokens" : contextLimitValue);
+
+                const promptUsage = overview.lastPromptUsage && typeof overview.lastPromptUsage === "object" ? overview.lastPromptUsage : null;
+                if (promptUsage && Number(promptUsage.bytes) > 0) {
+                    const exactInputTokens = Math.max(0, Number(promptUsage.exactInputTokens) || 0);
+                    const estimatedInputTokens = Math.max(0, Number(promptUsage.estimatedInputTokens) || 0);
+                    const tokenText = exactInputTokens
+                        ? formatCompactContextTokens(exactInputTokens) + " " + t("cerebrumUltimate.messages.chatContextExactInputTokens", "input tokens measured by the provider")
+                        : "~" + formatCompactContextTokens(estimatedInputTokens) + " " + t("cerebrumUltimate.messages.chatContextEstimatedInputTokens", "estimated input tokens");
+                    const imageText = Number(promptUsage.imageCount) > 0
+                        ? " · " + Number(promptUsage.imageCount).toLocaleString() + " " + t("cerebrumUltimate.messages.chatContextImages", "images")
+                        : "";
+                    $lastPromptUsage.text(
+                        t("cerebrumUltimate.messages.chatContextLastPromptLabel", "Last Cerebrum prompt actual size") + ": " +
+                        formatBytes(promptUsage.bytes) + " · " + tokenText + imageText
+                    );
+                } else {
+                    $lastPromptUsage.text(
+                        t("cerebrumUltimate.messages.chatContextLastPromptLabel", "Last Cerebrum prompt actual size") + ": " +
+                        t("cerebrumUltimate.messages.chatContextLastPromptUnavailable", "not available until the first Cerebrum request")
+                    );
+                }
+
+                const sourceLabels = {
+                    knxTraffic: t("cerebrumUltimate.messages.chatContextSourceKnxTraffic", "Derived KNX analysis plus the latest exact events from the default 20-minute or explicit interval, automatically bounded for the active local-model window."),
+                    adapterHistory: t("cerebrumUltimate.messages.chatContextSourceAdapterHistory", "Latest exact adapter events from the same interval, automatically bounded for the active local-model window."),
+                    etsProject: t("cerebrumUltimate.messages.chatContextSourceEtsProject", "Complete selected semantic ETS catalog for cloud models. Local models receive the full catalog when it fits; otherwise they receive a window-sized manifest and exact model-requested details. Function source only for explicit code review."),
+                    memoryEducation: t("cerebrumUltimate.messages.chatContextSourceMemoryEducation", "Session context, AI Education, bounded home memory and active plans."),
+                    cameras: t("cerebrumUltimate.messages.chatContextSourceCameras", "Detected cameras and their available capabilities.")
+                };
+                (Array.isArray(overview.sources) ? overview.sources : []).forEach(function (sourceId) {
+                    addRow(
+                        $sources,
+                        sourceLabels[sourceId] || String(sourceId),
+                        "",
+                        "",
+                        t("cerebrumUltimate.messages.chatContextSourceBadge", "Source")
+                    );
+                });
+
+                const fileDescriptions = {
+                    chatContext: t("cerebrumUltimate.messages.chatContextFileChatContext", "Persistent conversation turns, instructions and camera notification rules."),
+                    homeMemory: t("cerebrumUltimate.messages.chatContextFileHomeMemory", "Bounded learned home memory only; AI Education remains in the node property."),
+                    schedules: t("cerebrumUltimate.messages.chatContextFileSchedules", "Authoritative structured plans and reminders for this node."),
+                    schedulesReadable: t("cerebrumUltimate.messages.chatContextFileSchedulesReadable", "Human-readable plans and reminders generated from the scheduler state."),
+                    assistantConfig: t("cerebrumUltimate.messages.chatContextFileAssistantConfig", "Persistent Cerebrum configuration and semantic areas for this node."),
+                    lastChatPrompt: t("cerebrumUltimate.messages.chatContextFileLastChatPrompt", "Temporary local copy of the latest system and user messages sent to the Cerebrum model; overwritten on every Cerebrum request.")
+                };
+                (Array.isArray(overview.files) ? overview.files : []).forEach(function (item) {
+                    if (!item || !item.name || !item.path) return;
+                    addRow(
+                        $files,
+                        item.name,
+                        fileDescriptions[item.id] || "",
+                        item.path,
+                        t("cerebrumUltimate.messages.chatContextFileBadge", "File")
+                    );
+                });
+
+                const directoryLabels = {
+                    archiveRoot: t("cerebrumUltimate.messages.chatContextDirectoryRoot", "Telegram archive root"),
+                    nodeArchive: t("cerebrumUltimate.messages.chatContextDirectoryNode", "This node's telegram archive"),
+                    adapterArchiveRoot: t("cerebrumUltimate.messages.chatContextDirectoryAdapterRoot", "Adapter event archive root"),
+                    adapterNodeArchive: t("cerebrumUltimate.messages.chatContextDirectoryAdapterNode", "This node's adapter event archive")
+                };
+                (Array.isArray(overview.telegramDirectories) ? overview.telegramDirectories : []).forEach(function (item) {
+                    if (!item || !item.path) return;
+                    addRow(
+                        $directories,
+                        directoryLabels[item.id] || String(item.id || ""),
+                        "",
+                        item.path,
+                        /^adapter/.test(String(item.id || ""))
+                            ? t("cerebrumUltimate.messages.chatContextDirectoryAdapterBadge", "Adapter")
+                            : t("cerebrumUltimate.messages.chatContextDirectoryBadge", "KNX")
+                    );
+                });
+
+                $("#cerebrum-chat-context-pattern")
+                    .text(t("cerebrumUltimate.messages.chatContextTelegramPattern", "Daily files") + ": " + String(overview.telegramFilePattern || "YYYY-MM-DD.knxctx"));
+                $status.hide();
+                $content.show();
+            };
+            const editorLanguage = String((RED.settings && RED.settings.lang) || (window.navigator && window.navigator.language) || "en");
+            const loadCerebrumOverview = function (refreshSetup) {
+                const $refresh = $("#cerebrum-setup-doctor-refresh");
+                $refresh.prop("disabled", true).find("i.fa-refresh").addClass("fa-spin");
+                const requestData = { language: editorLanguage };
+                if (nodeId) requestData.nodeId = nodeId;
+                if (refreshSetup) requestData.refreshSetup = "1";
+                $.ajax({
+                    url: "cerebrumUltimate/adapters",
+                    type: "GET",
+                    data: requestData
+                })
+                    .done(function (data) {
+                        renderSetupDoctor(data && data.setupDoctor);
+                        renderDetectedAdapters(data && data.compatibleNodes);
+                        renderChatContextOverview(data && data.chatContext);
+                    })
+                    .fail(function () {
+                        renderSetupDoctor(null);
+                        $("#cerebrum-detected-adapters-status")
+                            .text(t("cerebrumUltimate.messages.detectedAdaptersUnavailable", "Compatible-node detection is temporarily unavailable."))
+                            .show();
+                        renderChatContextOverview(null);
+                    })
+                    .always(function () {
+                        $refresh.prop("disabled", false).find("i.fa-refresh").removeClass("fa-spin");
+                    });
+            };
+            loadCerebrumOverview(false);
+            $("#cerebrum-setup-doctor-refresh").on("click", function (evt) {
+                evt.preventDefault();
+                loadCerebrumOverview(true);
+            });
+
+            const openCerebrumWebPage = function (view, prompt) {
+                const adminRoot = resolveAdminRoot();
+                const targetBase = adminRoot + "/cerebrumUltimate/sidebar/page";
+                const params = new URLSearchParams();
+                if (nodeId) params.set("nodeId", nodeId);
+                if (view === "chat-learning") {
+                    params.set("tab", "cerebrum");
+                    params.set("cerebrumTab", "learning");
+                } else if (view === "cerebrum-memory") {
+                    params.set("tab", "cerebrum");
+                    params.set("cerebrumTab", "memory");
+                } else if (view === "cerebrum") {
+                    params.set("tab", "cerebrum");
+                    params.set("cerebrumTab", "conversation");
+                    if (prompt) params.set("prompt", String(prompt));
+                }
+                const accessToken = resolveAccessToken();
+                if (accessToken) params.set("access_token", accessToken);
+                const target = targetBase + (params.toString() ? ("?" + params.toString()) : "");
+                const wnd = window.open(target, "_blank", "noopener,noreferrer");
+                try { if (wnd && typeof wnd.focus === "function") wnd.focus(); } catch (e) { }
+            };
+
+            $("#cerebrum-open-web-page-vue").on("click", function (evt) {
+                evt.preventDefault();
+                openCerebrumWebPage();
+            });
+
+            $("#cerebrum-open-chat-learning").on("click", function (evt) {
+                evt.preventDefault();
+                openCerebrumWebPage("chat-learning");
+            });
+
+            $("#cerebrum-open-cerebrum-memory").on("click", function (evt) {
+                evt.preventDefault();
+                openCerebrumWebPage("cerebrum-memory");
+            });
+
+            const setRefreshModelsBusy = (busy) => {
+                const $button = $("#cerebrum-refreshModels");
+                $button.prop("disabled", !!busy);
+                $button.find("i.fa-refresh").toggleClass("fa-spin", !!busy);
+            };
+
+            const setOllamaInstallUiState = (busy) => {
+                $("#cerebrum-installOllamaModel").prop("disabled", !!busy);
+                $("#cerebrum-downloadOllamaModel").prop("disabled", !!busy);
+            };
+
+            let localModelDetailsById = new Map();
+            let availableModelItems = [];
+            let modelPickerMouseDown = false;
+            let localContextRequestVersion = 0;
+
+            const formatContextTokens = (value) => {
+                const tokens = Math.max(0, Number(value) || 0);
+                return tokens ? tokens.toLocaleString() : "?";
+            };
+
+            const updateLocalContextTokenOptions = (detail) => {
+                const $select = $("#node-input-llmLocalContextTokens");
+                if (!$select.length) return;
+                const maxContextLength = Math.max(0, Number(detail && detail.maxContextLength) || 0);
+                $select.find("option[data-context-tokens]").each(function () {
+                    const optionTokens = Math.max(0, Number($(this).attr("data-context-tokens")) || 0);
+                    const unavailable = maxContextLength > 0 && optionTokens > maxContextLength;
+                    $(this).prop("disabled", unavailable).prop("hidden", unavailable).toggle(!unavailable);
+                });
+                if (maxContextLength > 0 && selectedLocalContextTokens() > maxContextLength) {
+                    $select.val("0");
+                }
+                if (lastChatContextOverview) renderChatContextOverview(lastChatContextOverview);
+            };
+
+            const setLocalModelContextStatus = (detail, state, errorText) => {
+                const $status = $("#cerebrum-local-context-status");
+                const provider = $("#node-input-llmProvider").val();
+                updateLocalContextTokenOptions(detail);
+                if (!$status.length || (provider !== "lmstudio" && provider !== "ollama") || !detail) {
+                    $status.hide();
+                    return;
+                }
+                const maxTokens = formatContextTokens(detail.maxContextLength);
+                const loadedTokens = formatContextTokens(detail.loadedContextLength);
+                let text = t("cerebrumUltimate.messages.lmStudioContextAvailable", "Maximum model context") + ": " + maxTokens + " token";
+                let color = "#555";
+                if (state === "loading") {
+                    text = t("cerebrumUltimate.messages.lmStudioContextLoading", "Checking the active model context") + "…";
+                    color = "#1565c0";
+                } else if (state === "inactive") {
+                    text = t("cerebrumUltimate.messages.lmStudioContextInactive", "Model inactive; Bionic defaults will be used on the first request");
+                    color = "#555";
+                } else if (state === "configured") {
+                    const configuredTokens = formatContextTokens(detail.configuredContextLength || detail.loadedContextLength || detail.maxContextLength);
+                    text = t("cerebrumUltimate.messages.lmStudioContextConfigured", "Active model context") + ": " + configuredTokens + " token";
+                    color = "#2e7d32";
+                } else if (state === "error") {
+                    text = String(errorText || t("cerebrumUltimate.messages.lmStudioContextFailed", "Unable to configure the model context"));
+                    color = "#c62828";
+                } else if (detail.loadedContextLength > 0) {
+                    text += " · " + t("cerebrumUltimate.messages.lmStudioContextCurrentlyLoaded", "currently loaded") + ": " + loadedTokens + " token";
+                }
+                text += " · " + t("cerebrumUltimate.messages.localContextBudget", "Local Cerebrum context") + ": " + selectedLocalContextLabel();
+                $status.text(text).css("color", color).show();
+            };
+
+            const populateModels = (models, modelDetails) => {
+                localModelDetailsById = new Map();
+                (modelDetails || []).forEach(function (detail) {
+                    if (detail && detail.id) localModelDetailsById.set(String(detail.id), detail);
+                });
+                availableModelItems = (models || []).map(function (m) {
+                    const detail = localModelDetailsById.get(String(m));
+                    const label = detail
+                        ? String(detail.displayName || detail.id) + " · " + formatContextTokens(detail.maxContextLength) + " token"
+                        : String(m);
+                    return { label: label, value: String(m) };
+                });
+            };
+
+            const configureModelPicker = () => {
+                const $model = $("#node-input-llmModel");
+                if (!$model.length || typeof $model.autocomplete !== "function") return;
+                $model.autocomplete({
+                    minLength: 0,
+                    source: function (request, response) {
+                        const term = String(request && request.term ? request.term : "").trim().toLowerCase();
+                        if (!term) {
+                            response(availableModelItems.slice());
+                            return;
+                        }
+                        response(availableModelItems.filter(function (item) {
+                            return item.value.toLowerCase().includes(term) || item.label.toLowerCase().includes(term);
+                        }));
+                    },
+                    select: function (event, ui) {
+                        $(this).val(ui.item.value).trigger("change");
+                        return false;
+                    }
+                });
+                $model.on("mousedown.knxUltimateAiModelPicker", function () {
+                    modelPickerMouseDown = true;
+                }).on("focus.knxUltimateAiModelPicker", function () {
+                    if (!modelPickerMouseDown) $(this).autocomplete("search", "");
+                }).on("click.knxUltimateAiModelPicker", function () {
+                    modelPickerMouseDown = false;
+                    const input = this;
+                    setTimeout(function () {
+                        try { $(input).autocomplete("search", ""); } catch (error) { }
+                    }, 0);
+                }).on("blur.knxUltimateAiModelPicker", function () {
+                    modelPickerMouseDown = false;
+                });
+            };
+
+            configureModelPicker();
+
+            const normalizeUrl = (value) => String(value || "").trim().replace(/\/+$/, "").toLowerCase();
+            const isOpenAiDefaultUrl = (value) => normalizeUrl(value) === normalizeUrl(OPENAI_COMPAT_DEFAULT_CHAT_URL);
+            const isOllamaDefaultUrl = (value) => normalizeUrl(value) === normalizeUrl(OLLAMA_DEFAULT_CHAT_URL);
+            const isOpenAiDefaultModel = (value) => OPENAI_COMPAT_DEFAULT_MODELS.indexOf(String(value || "").trim().toLowerCase()) >= 0;
+            const DEFAULT_CHAT_URLS = [OPENAI_COMPAT_DEFAULT_CHAT_URL, OLLAMA_DEFAULT_CHAT_URL, ANTHROPIC_DEFAULT_CHAT_URL, LMSTUDIO_DEFAULT_CHAT_URL];
+            const DEFAULT_MODELS = OPENAI_COMPAT_DEFAULT_MODELS.concat([OLLAMA_DEFAULT_MODEL, ANTHROPIC_DEFAULT_MODEL]);
+            const isAnyDefaultUrl = (value) => DEFAULT_CHAT_URLS.some((u) => normalizeUrl(u) === normalizeUrl(value));
+            const isAnyDefaultModel = (value) => DEFAULT_MODELS.indexOf(String(value || "").trim().toLowerCase()) >= 0;
+
+            const applyProviderDefaults = (provider) => {
+                const $baseUrl = $("#node-input-llmBaseUrl");
+                const $model = $("#node-input-llmModel");
+                const currentBaseUrl = String($baseUrl.val() || "").trim();
+                const currentModel = String($model.val() || "").trim();
+
+                const urlByProvider = { ollama: OLLAMA_DEFAULT_CHAT_URL, anthropic: ANTHROPIC_DEFAULT_CHAT_URL, lmstudio: LMSTUDIO_DEFAULT_CHAT_URL, openai_compat: OPENAI_COMPAT_DEFAULT_CHAT_URL };
+                const modelByProvider = { ollama: OLLAMA_DEFAULT_MODEL, anthropic: ANTHROPIC_DEFAULT_MODEL, lmstudio: "", openai_compat: OPENAI_COMPAT_DEFAULT_MODELS[0] };
+                const targetUrl = urlByProvider[provider] || OPENAI_COMPAT_DEFAULT_CHAT_URL;
+                const targetModel = Object.prototype.hasOwnProperty.call(modelByProvider, provider)
+                    ? modelByProvider[provider]
+                    : OPENAI_COMPAT_DEFAULT_MODELS[0];
+
+                // Only overwrite when the field is empty or still holds another provider's default,
+                // so a user's custom base URL / model is never clobbered when switching providers.
+                if (!currentBaseUrl || isAnyDefaultUrl(currentBaseUrl)) $baseUrl.val(targetUrl);
+                if (!currentModel || isAnyDefaultModel(currentModel)) $model.val(targetModel);
+            };
+
+            const configureSelectedLocalModel = () => {
+                const provider = $("#node-input-llmProvider").val();
+                if (provider !== "lmstudio" && provider !== "ollama") return;
+                const model = String($("#node-input-llmModel").val() || "").trim();
+                const detail = localModelDetailsById.get(model);
+                if (!detail || !(Number(detail.maxContextLength) > 0)) {
+                    $("#node-input-llmContextLength").val(0);
+                    updateLocalContextTokenOptions(null);
+                    setLocalModelContextStatus(null);
+                    return;
+                }
+
+                const requestVersion = ++localContextRequestVersion;
+                const activeContextLength = Number(detail.loadedContextLength) > 0
+                    ? Number(detail.loadedContextLength)
+                    : Number(detail.maxContextLength);
+                $("#node-input-llmContextLength").val(activeContextLength);
+                if (provider === "ollama") {
+                    detail.configuredContextLength = Number(detail.maxContextLength);
+                    $("#node-input-llmContextLength").val(detail.configuredContextLength);
+                    setLocalModelContextStatus(detail);
+                    return;
+                }
+
+                setLocalModelContextStatus(detail, "loading");
+                $("#node-input-llmModel").prop("disabled", true);
+                $("#cerebrum-refreshModels").prop("disabled", true);
+
+                const payload = {
+                    nodeId: nodeId,
+                    baseUrl: $("#node-input-llmBaseUrl").val() || LMSTUDIO_DEFAULT_CHAT_URL,
+                    model: model,
+                    localContextTokens: selectedLocalContextTokens()
+                };
+                const apiKey = $("#node-input-llmApiKey").val() || "";
+                if (apiKey && apiKey !== "__PWRD__") payload.apiKey = apiKey;
+
+                $.ajax({
+                    url: "cerebrumUltimate/lmstudio/select-model",
+                    type: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify(payload)
+                })
+                    .done(function (data) {
+                        if (requestVersion !== localContextRequestVersion) return;
+                        const resolvedContextLength = Math.max(0, Number(data && data.contextLength) || 0);
+                        detail.loadedContextLength = data && data.active === true ? resolvedContextLength : 0;
+                        detail.configuredContextLength = resolvedContextLength;
+                        $("#node-input-llmContextLength").val(resolvedContextLength);
+                        setLocalModelContextStatus(detail, data && data.active === true ? "configured" : "inactive");
+                    })
+                    .fail(function (xhr) {
+                        if (requestVersion !== localContextRequestVersion) return;
+                        let errorText = t("cerebrumUltimate.messages.lmStudioContextFailed", "Unable to configure the model context");
+                        try {
+                            if (xhr && xhr.responseJSON && xhr.responseJSON.error) errorText = xhr.responseJSON.error;
+                        } catch (e) { }
+                        setLocalModelContextStatus(detail, "error", errorText);
+                        try { RED.notify(errorText, "error"); } catch (e) { }
+                    })
+                    .always(function () {
+                        if (requestVersion !== localContextRequestVersion) return;
+                        $("#node-input-llmModel").prop("disabled", false);
+                        $("#cerebrum-refreshModels").prop("disabled", false);
+                    });
+            };
+
+            const refreshModels = () => {
+                const provider = $("#node-input-llmProvider").val();
+                const baseUrl = $("#node-input-llmBaseUrl").val() || "";
+                const apiKey = $("#node-input-llmApiKey").val() || "";
+                const payload = { nodeId: nodeId, provider: provider, baseUrl: baseUrl };
+                if (provider === "ollama") payload.autoStart = true;
+                // Node-RED uses "__PWRD__" as placeholder for stored credentials: don't send it.
+                if (apiKey && apiKey !== "__PWRD__") payload.apiKey = apiKey;
+
+                setRefreshModelsBusy(true);
+
+                $.ajax({
+                    url: "cerebrumUltimate/models",
+                    type: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify(payload)
+                })
+                    .done(function (data) {
+                        const models = (data && data.models) ? data.models : [];
+                        populateModels(models, data && data.modelDetails);
+                        let selectedAutomatically = false;
+                        if (provider === "lmstudio" && models.length > 0 && !String($("#node-input-llmModel").val() || "").trim()) {
+                            $("#node-input-llmModel").val(models[0]);
+                            selectedAutomatically = true;
+                        }
+                        if (provider === "lmstudio" || provider === "ollama") {
+                            const selectedDetail = localModelDetailsById.get(String($("#node-input-llmModel").val() || ""));
+                            if (selectedDetail) {
+                                setLocalModelContextStatus(selectedDetail);
+                                configureSelectedLocalModel();
+                            } else if (selectedAutomatically) {
+                                configureSelectedLocalModel();
+                            }
+                        }
+                        if (provider === "ollama" && data && data.ollamaStarted) {
+                            try {
+                                const startedMsg = t('cerebrumUltimate.messages.ollamaStartedAuto', "Ollama server started automatically.");
+                                RED.notify(startedMsg, "success");
+                            } catch (e) { }
+                        }
+                        if (provider === "ollama" && models.length === 0) {
+                            const msg = t('cerebrumUltimate.messages.ollamaNoModels', "No local Ollama model found. Install one from https://ollama.com/library.");
+                            try { RED.notify(msg, "warning"); } catch (e) { }
+                        }
+                    })
+                    .fail(function (xhr) {
+                        let err = "Failed to load models";
+                        try {
+                            const resp = xhr && xhr.responseJSON;
+                            if (resp && resp.error) err = resp.error;
+                        } catch (e) { }
+                        try { RED.notify(err, "error"); } catch (e) { }
+                    })
+                    .always(function () {
+                        setRefreshModelsBusy(false);
+                    });
+            };
+
+            const installOllamaModel = () => {
+                const provider = $("#node-input-llmProvider").val();
+                if (provider !== "ollama") return;
+                const baseUrl = $("#node-input-llmBaseUrl").val() || "";
+                const model = String($("#node-input-llmModel").val() || "").trim() || OLLAMA_DEFAULT_MODEL;
+                const payload = { nodeId: nodeId, baseUrl: baseUrl, model: model };
+
+                $("#cerebrum-refreshModels").prop("disabled", true);
+                setOllamaInstallUiState(true);
+
+                $.ajax({
+                    url: "cerebrumUltimate/ollama/pull",
+                    type: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify(payload)
+                })
+                    .done(function (data) {
+                        try {
+                            const okMsg = t('cerebrumUltimate.messages.installedOllamaModel', "Ollama model installed") + ": " + model;
+                            RED.notify(okMsg, "success");
+                            if (data && data.ollamaStarted) {
+                                const startedMsg = t('cerebrumUltimate.messages.ollamaStartedAuto', "Ollama server started automatically.");
+                                RED.notify(startedMsg, "success");
+                            }
+                        } catch (e) { }
+                        refreshModels();
+                    })
+                    .fail(function (xhr) {
+                        let err = t('cerebrumUltimate.messages.installOllamaModelFailed', "Failed to install Ollama model");
+                        try {
+                            const resp = xhr && xhr.responseJSON;
+                            if (resp && resp.error) err = resp.error;
+                        } catch (e) { }
+                        try { RED.notify(err, "error"); } catch (e) { }
+                        $("#cerebrum-refreshModels").prop("disabled", false);
+                    })
+                    .always(function () {
+                        setOllamaInstallUiState(false);
+                    });
+            };
+
+            const openOllamaLibrary = () => {
+                const wnd = window.open(OLLAMA_LIBRARY_URL, "_blank", "noopener,noreferrer");
+                try { if (wnd && typeof wnd.focus === "function") wnd.focus(); } catch (e) { }
+            };
+
+            const toggleProvider = ({ applyDefaults = false, autoLoadModels = false } = {}) => {
+                const provider = $("#node-input-llmProvider").val();
+                const localProvider = provider === "lmstudio" || provider === "ollama";
+                if (applyDefaults) applyProviderDefaults(provider);
+                $("#cerebrum-local-context-row").toggle(localProvider);
+                if (localProvider) {
+                    updateLocalContextTokenOptions(localModelDetailsById.get(String($("#node-input-llmModel").val() || "").trim()));
+                }
+                if (provider === "ollama") {
+                    $("#cerebrum-apikey-row").hide();
+                    $("#cerebrum-ollama-install-row").show();
+                    if (autoLoadModels) refreshModels();
+                } else {
+                    $("#cerebrum-apikey-row").show();
+                    $("#cerebrum-ollama-install-row").hide();
+                    if (provider === "lmstudio" && autoLoadModels) refreshModels();
+                    if (provider !== "lmstudio") {
+                        $("#node-input-llmContextLength").val(0);
+                        if (provider !== "ollama") $("#cerebrum-local-context-status").hide();
+                    }
+                }
+            };
+            const toggleWebAccess = () => {
+                const enabled = $("#node-input-webAccessEnabled").prop("checked") === true;
+                $("#cerebrum-web-access-settings").toggle(enabled);
+            };
+            $("#node-input-webAccessEnabled").on("change", toggleWebAccess);
+            toggleWebAccess();
+            $("#node-input-llmProvider").on("change", function () {
+                toggleProvider({ applyDefaults: true, autoLoadModels: true });
+            });
+            toggleProvider({ applyDefaults: true });
+
+            $("#cerebrum-refreshModels").on("click", function (evt) {
+                evt.preventDefault();
+                refreshModels();
+            });
+            $("#node-input-llmModel").on("change", function () {
+                configureSelectedLocalModel();
+            });
+            $("#node-input-llmLocalContextTokens").on("change", function () {
+                const detail = localModelDetailsById.get(String($("#node-input-llmModel").val() || "").trim());
+                updateLocalContextTokenOptions(detail);
+                if (detail) setLocalModelContextStatus(detail, detail.loadedContextLength > 0 ? "configured" : undefined);
+            });
+            $("#cerebrum-downloadOllamaModel").on("click", function (evt) {
+                evt.preventDefault();
+                openOllamaLibrary();
+            });
+            $("#cerebrum-installOllamaModel").on("click", function (evt) {
+                evt.preventDefault();
+                installOllamaModel();
+            });
+        },
+        oneditsave: function () {
+            try { RED.sidebar.show("info"); } catch (error) { }
+            try {
+                const checkboxes = $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-cb");
+                if (checkboxes.length > 0) {
+                    const exposed = [];
+                    const readOnly = [];
+                    checkboxes.each(function () { if ($(this).is(":checked")) exposed.push($(this).val()); });
+                    $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-ro").each(function () { if ($(this).is(":checked")) readOnly.push($(this).val()); });
+                    this.etsExposedGAs = exposed;
+                    this.etsReadOnlyGAs = readOnly;
+                    this.etsExposeConfigured = true;
+                }
+            } catch (error) { }
+            try {
+                if (this.chatInputCodeEditor && typeof this.chatInputCodeEditor.getValue === "function") {
+                    this.chatInputCode = this.chatInputCodeEditor.getValue();
+                    $("#node-input-chatInputCode").val(this.chatInputCode);
+                }
+            } catch (error) { }
+            try {
+                if (this.chatOutputCodeEditor && typeof this.chatOutputCodeEditor.getValue === "function") {
+                    this.chatOutputCode = this.chatOutputCodeEditor.getValue();
+                    $("#node-input-chatOutputCode").val(this.chatOutputCode);
+                }
+            } catch (error) { }
+            try {
+                if (typeof this._destroyCerebrumChatEditors === "function") this._destroyCerebrumChatEditors();
+            } catch (error) { }
+            delete this._destroyCerebrumChatEditors;
+        },
+        oneditcancel: function () {
+            try { RED.sidebar.show("info"); } catch (error) { }
+            try {
+                if (typeof this._destroyCerebrumChatEditors === "function") this._destroyCerebrumChatEditors();
+            } catch (error) { }
+            delete this._destroyCerebrumChatEditors;
+        },
+        oneditresize: function () {
+            try {
+                if (this.chatInputCodeEditor && typeof this.chatInputCodeEditor.resize === "function") this.chatInputCodeEditor.resize();
+                if (this.chatOutputCodeEditor && typeof this.chatOutputCodeEditor.resize === "function") this.chatOutputCodeEditor.resize();
+            } catch (error) { }
+        }
+    })
+</script>
+
+<script type="text/html" data-template-name="cerebrumUltimate">
+  <div class="form-row" style="margin-bottom:10px;">
+    <span style="color:#ff0000"><i class="fa fa-youtube"></i></span>&nbsp;<a target="_blank" href="https://www.youtube.com/playlist?list=PL9Yh1bjbLAYrU8PsVhW4xzEug2WtVFv3E"><b>KNX-Ultimate video tutorials (YouTube playlist)</b></a>
+  </div>
+    <b><span data-i18n="cerebrumUltimate.title"></span></b>&nbsp&nbsp<span style="color:#ff9800" &nbsp &nbsp <i class="fa fa-youtube"></i></span><a
+        target="_blank" href="https://www.youtube.com/watch?v=qw7kjQ_mvdg&t=10s">See sample video</a>
+      <br /><br />
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> <span data-i18n="cerebrumUltimate.properties.name"></span></label>
+        <input type="text" id="node-input-name" data-i18n="[placeholder]cerebrumUltimate.properties.name" style="flex:1 1 240px; min-width:240px; max-width:240px;">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-topic"><i class="fa fa-tasks"></i> <span data-i18n="cerebrumUltimate.properties.topic"></span></label>
+        <input type="text" id="node-input-topic" data-i18n="[placeholder]cerebrumUltimate.properties.topic">
+    </div>
+    <div class="form-row">
+        <label><i class="fa fa-external-link"></i> Web UI</label>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="red-ui-button" id="cerebrum-open-web-page-vue" style="background-color:#ff9800; border-color:#ff9800; color:#ffffff !important; -webkit-text-fill-color:#ffffff;">
+                <i class="fa fa-external-link" style="color:#ffffff !important;"></i> <span style="color:#ffffff !important;">Open Cerebrum Web Page</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="cerebrum-tabs">
+        <ul>
+            <li><a href="#cerebrum-tabs-assistant"><i class="fa fa-magic"></i> <span data-i18n="cerebrumUltimate.sections.groupAssistant"></span></a></li>
+            <li><a href="#cerebrum-tabs-chat-home"><i class="fa fa-comments"></i> <span data-i18n="cerebrumUltimate.sections.groupChatHome"></span></a></li>
+        </ul>
+        <div id="cerebrum-tabs-assistant">
+            <div class="cerebrum-accordion-subsection">
+                <h4><i class="fa fa-cog"></i> <span data-i18n="cerebrumUltimate.sections.quickSetup"></span></h4>
+                <div class="cerebrum-accordion-mount" id="cerebrum-mount-assistant-setup"></div>
+            </div>
+            <div class="cerebrum-accordion-subsection">
+                <h4><i class="fa fa-list"></i> <span data-i18n="cerebrumUltimate.sections.etsAccess"></span></h4>
+                <div class="cerebrum-accordion-mount" id="cerebrum-mount-ets-access"></div>
+            </div>
+            <div class="cerebrum-accordion-subsection">
+                <h4><i class="fa fa-sliders"></i> <span data-i18n="cerebrumUltimate.sections.advanced"></span></h4>
+                <div class="cerebrum-accordion-mount" id="cerebrum-mount-assistant-advanced"></div>
+            </div>
+        </div>
+
+        <div id="cerebrum-tabs-chat-home">
+            <div class="cerebrum-accordion-subsection">
+                <h4><i class="fa fa-plug"></i> <span data-i18n="cerebrumUltimate.sections.chatAdapter"></span></h4>
+                <div class="cerebrum-accordion-mount" id="cerebrum-mount-chat-adapter"></div>
+            </div>
+            <div class="cerebrum-accordion-subsection">
+                <h4><i class="fa fa-home"></i> <span data-i18n="cerebrumUltimate.sections.homeIntelligence"></span></h4>
+                <div class="cerebrum-accordion-mount" id="cerebrum-mount-home-intelligence"></div>
+            </div>
+            <div id="cerebrum-chat-learning-link-panel">
+                <h4><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.sections.chatLearning"></span></h4>
+                <p class="cerebrum-chat-learning-link-copy" data-i18n="cerebrumUltimate.messages.chatLearningOpenHint"></p>
+                <button type="button" class="red-ui-button" id="cerebrum-open-chat-learning">
+                    <i class="fa fa-external-link"></i> <span data-i18n="cerebrumUltimate.buttons.openChatLearning"></span>
+                </button>
+                <h4 style="margin-top:14px;"><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.sections.cerebrumMemory"></span></h4>
+                <p class="cerebrum-chat-learning-link-copy" data-i18n="cerebrumUltimate.messages.cerebrumMemoryOpenHint"></p>
+                <button type="button" class="red-ui-button" id="cerebrum-open-cerebrum-memory">
+                    <i class="fa fa-external-link"></i> <span data-i18n="cerebrumUltimate.buttons.openCerebrumMemory"></span>
+                </button>
+            </div>
+            <div id="cerebrum-detected-adapters-panel">
+                <h4><i class="fa fa-puzzle-piece"></i> <span data-i18n="cerebrumUltimate.sections.detectedAdapters"></span></h4>
+                <p class="cerebrum-compatible-intro" data-i18n="cerebrumUltimate.messages.compatibleNodesHint"></p>
+                <div id="cerebrum-detected-adapters-status" data-i18n="cerebrumUltimate.messages.detectedAdaptersLoading"></div>
+                <div id="cerebrum-compatible-config-list">
+                    <div id="cerebrum-compatible-knx" class="cerebrum-compatible-config" style="display:none;">
+                        <div class="cerebrum-detected-adapter">
+                            <div class="cerebrum-detected-adapter-main">
+                                <strong>KNX Ultimate</strong>
+                                <div class="cerebrum-detected-adapter-package">node-red-contrib-knx-ultimate</div>
+                                <div class="cerebrum-detected-adapter-counts"></div>
+                            </div>
+                            <span class="cerebrum-detected-adapter-badge pending" data-i18n="cerebrumUltimate.messages.detectedAdapterConfigure"></span>
+                        </div>
+                        <div class="form-row cerebrum-compatible-config-field">
+                            <label for="node-input-server"><i class="fa fa-server"></i> <span data-i18n="cerebrumUltimate.properties.server"></span></label>
+                            <input type="text" id="node-input-server" style="width:70%;">
+                        </div>
+                    </div>
+                    <div id="cerebrum-compatible-unifi" class="cerebrum-compatible-config" style="display:none;">
+                        <div class="cerebrum-detected-adapter">
+                            <div class="cerebrum-detected-adapter-main">
+                                <strong>UniFi Ultimate / Protect</strong>
+                                <div class="cerebrum-detected-adapter-package">node-red-contrib-unifi-ultimate</div>
+                                <div class="cerebrum-detected-adapter-counts"></div>
+                            </div>
+                            <span class="cerebrum-detected-adapter-badge pending" data-i18n="cerebrumUltimate.messages.detectedAdapterConfigure"></span>
+                        </div>
+                        <div class="form-row cerebrum-compatible-config-field">
+                            <label for="node-input-unifiProtectConfig"><i class="fa fa-video-camera"></i> <span data-i18n="cerebrumUltimate.properties.unifiProtectConfig"></span></label>
+                            <input type="text" id="node-input-unifiProtectConfig" style="width:70%;">
+                        </div>
+                    </div>
+                </div>
+                <div id="cerebrum-detected-adapters-list"></div>
+            </div>
+            <div id="cerebrum-chat-context-panel">
+                <h4><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.sections.chatContextOverview"></span></h4>
+                <div id="cerebrum-chat-context-status" data-i18n="cerebrumUltimate.messages.chatContextLoading"></div>
+                <div id="cerebrum-chat-context-content" style="display:none;">
+                    <div class="cerebrum-chat-context-intro" data-i18n="cerebrumUltimate.messages.chatContextIntro"></div>
+                    <div id="cerebrum-chat-context-limit" class="cerebrum-chat-context-metric"></div>
+                    <div id="cerebrum-chat-context-last-prompt" class="cerebrum-chat-context-metric"></div>
+                    <div class="cerebrum-chat-context-group-title" data-i18n="cerebrumUltimate.messages.chatContextSourcesTitle"></div>
+                    <div id="cerebrum-chat-context-sources-list"></div>
+                    <div class="cerebrum-chat-context-group-title" data-i18n="cerebrumUltimate.messages.chatContextFilesTitle"></div>
+                    <div id="cerebrum-chat-context-files-list"></div>
+                    <div class="cerebrum-chat-context-group-title" data-i18n="cerebrumUltimate.messages.chatContextDirectoriesTitle"></div>
+                    <div id="cerebrum-chat-context-directories-list"></div>
+                    <div id="cerebrum-chat-context-pattern" class="cerebrum-chat-context-pattern"></div>
+                </div>
+            </div>
+            <details id="cerebrum-setup-doctor-panel">
+                <summary class="cerebrum-setup-doctor-toggle">
+                    <span><i class="fa fa-magic"></i> <span data-i18n="cerebrumUltimate.sections.setupDoctor"></span></span>
+                    <i class="fa fa-chevron-right cerebrum-setup-doctor-chevron" aria-hidden="true"></i>
+                </summary>
+                <div class="cerebrum-setup-doctor-body">
+                    <div id="cerebrum-setup-doctor-status" data-i18n="cerebrumUltimate.messages.setupDoctorLoading"></div>
+                    <div id="cerebrum-setup-doctor-content" style="display:none;">
+                        <div class="cerebrum-setup-doctor-hero">
+                            <div class="cerebrum-setup-doctor-summary">
+                                <strong id="cerebrum-setup-doctor-state"></strong>
+                                <div id="cerebrum-setup-doctor-summary"></div>
+                            </div>
+                            <div id="cerebrum-setup-doctor-score" class="cerebrum-setup-doctor-score"></div>
+                        </div>
+                        <div id="cerebrum-setup-doctor-checks"></div>
+                        <div class="cerebrum-setup-doctor-prompts">
+                            <strong data-i18n="cerebrumUltimate.messages.setupDoctorPromptsTitle"></strong>
+                            <div class="cerebrum-setup-doctor-prompts-hint" data-i18n="cerebrumUltimate.messages.setupDoctorPromptsHint"></div>
+                            <div id="cerebrum-setup-doctor-prompt-list" class="cerebrum-setup-doctor-prompt-list"></div>
+                        </div>
+                        <div class="cerebrum-setup-doctor-footer">
+                            <div class="cerebrum-setup-doctor-deploy-hint">
+                                <i class="fa fa-info-circle"></i> <span data-i18n="cerebrumUltimate.messages.setupDoctorDeployHint"></span>
+                            </div>
+                            <button type="button" class="red-ui-button" id="cerebrum-setup-doctor-refresh">
+                                <i class="fa fa-refresh"></i> <span data-i18n="cerebrumUltimate.buttons.refreshSetupDoctor"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+        </div>
+
+    </div>
+
+    <div id="cerebrum-accordion-source" style="display:none;">
+
+        <div id="cerebrum-tab-llm-connection">
+            <div class="form-row">
+                <input type="checkbox" id="node-input-llmEnabled" style="display:inline-block; width:auto; vertical-align:top;">
+                <label style="width:auto" for="node-input-llmEnabled">&nbsp;&nbsp;<span data-i18n="cerebrumUltimate.properties.llmEnabled"></span></label>
+            </div>
+
+            <div id="cerebrum-llm-connection-settings">
+                <div class="form-row">
+                    <label style="width:290px" for="node-input-llmProvider"><i class="fa fa-cog"></i> <span data-i18n="cerebrumUltimate.properties.llmProvider"></span></label>
+                    <select style="width:100%" id="node-input-llmProvider">
+                        <option value="openai_compat" data-i18n="cerebrumUltimate.selectlists.llmProvider.openai_compat"></option>
+                        <option value="anthropic" data-i18n="cerebrumUltimate.selectlists.llmProvider.anthropic"></option>
+                        <option value="ollama" data-i18n="cerebrumUltimate.selectlists.llmProvider.ollama"></option>
+                        <option value="lmstudio" data-i18n="cerebrumUltimate.selectlists.llmProvider.lmstudio"></option>
+                    </select>
+                </div>
+                <div class="form-row" id="cerebrum-apikey-row">
+                    <label style="width:290px" for="node-input-llmApiKey"><i class="fa fa-key"></i> <span data-i18n="cerebrumUltimate.properties.llmApiKey"></span></label>
+                    <input type="password" id="node-input-llmApiKey" data-i18n="[placeholder]cerebrumUltimate.placeholder.llmApiKey">
+                </div>
+
+                <div class="form-row">
+                    <label style="width:290px" for="node-input-llmModel"><i class="fa fa-cube"></i> <span data-i18n="cerebrumUltimate.properties.llmModel"></span></label>
+                    <input style="width:calc(100% - 110px)" type="text" id="node-input-llmModel" autocomplete="off" data-i18n="[placeholder]cerebrumUltimate.placeholder.llmModel">
+                    <button type="button" class="red-ui-button" id="cerebrum-refreshModels" style="margin-left:6px;" title="Refresh models">
+                        <i class="fa fa-refresh"></i> <span data-i18n="cerebrumUltimate.buttons.refreshModels"></span>
+                    </button>
+                </div>
+                <div class="form-row">
+                    <label style="width:290px" for="node-input-llmReasoningEffort"><i class="fa fa-tachometer"></i> <span data-i18n="cerebrumUltimate.properties.llmReasoningEffort"></span></label>
+                    <select style="width:100%" id="node-input-llmReasoningEffort">
+                        <option value="default" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.default"></option>
+                        <option value="none" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.none"></option>
+                        <option value="minimal" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.minimal"></option>
+                        <option value="low" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.low"></option>
+                        <option value="medium" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.medium"></option>
+                        <option value="high" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.high"></option>
+                        <option value="xhigh" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.xhigh"></option>
+                        <option value="max" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.max"></option>
+                    </select>
+                    <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.reasoningEffortHint"></div>
+                </div>
+                <input type="hidden" id="node-input-llmContextLength">
+                <div id="cerebrum-local-context-status" style="display:none;"></div>
+                <div class="form-row" id="cerebrum-local-context-row" style="display:none;">
+                    <label style="width:290px" for="node-input-llmLocalContextTokens"><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.properties.llmLocalContextTokens"></span></label>
+                    <select style="width:100%" id="node-input-llmLocalContextTokens">
+                        <option value="0" data-i18n="cerebrumUltimate.selectlists.localContext.maximum"></option>
+                        <option value="4096" data-context-tokens="4096" data-i18n="cerebrumUltimate.selectlists.localContext.k4"></option>
+                        <option value="8192" data-context-tokens="8192" data-i18n="cerebrumUltimate.selectlists.localContext.k8"></option>
+                        <option value="16384" data-context-tokens="16384" data-i18n="cerebrumUltimate.selectlists.localContext.k16"></option>
+                        <option value="32768" data-context-tokens="32768" data-i18n="cerebrumUltimate.selectlists.localContext.k32"></option>
+                        <option value="65536" data-context-tokens="65536" data-i18n="cerebrumUltimate.selectlists.localContext.k64"></option>
+                        <option value="131072" data-context-tokens="131072" data-i18n="cerebrumUltimate.selectlists.localContext.k128"></option>
+                        <option value="262144" data-context-tokens="262144" data-i18n="cerebrumUltimate.selectlists.localContext.k256"></option>
+                    </select>
+                    <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.localContextHint"></div>
+                </div>
+                <div class="form-row">
+                    <input type="checkbox" id="node-input-llmAllowKnxCommands" style="display:inline-block; width:auto; vertical-align:top;">
+                    <label style="width:auto" for="node-input-llmAllowKnxCommands">&nbsp;&nbsp;<span data-i18n="cerebrumUltimate.properties.llmAllowKnxCommands"></span></label>
+                </div>
+                <div class="form-row" id="cerebrum-command-confirmation-row">
+                    <input type="checkbox" id="node-input-llmRequireCommandConfirmation" style="display:inline-block; width:auto; vertical-align:top;">
+                    <label style="width:auto" for="node-input-llmRequireCommandConfirmation">&nbsp;&nbsp;<span data-i18n="cerebrumUltimate.properties.llmRequireCommandConfirmation"></span></label>
+                </div>
+            </div>
+        </div>
+
+        <div id="cerebrum-tab-chat-adapter">
+            <div class="form-row">
+                <label style="width:290px" for="node-input-chatAdapterPreset"><i class="fa fa-plug"></i> <span data-i18n="cerebrumUltimate.properties.chatAdapterPreset"></span></label>
+                <select style="width:100%" id="node-input-chatAdapterPreset">
+                    <option value="none" data-i18n="cerebrumUltimate.selectlists.chatAdapter.none"></option>
+                </select>
+            </div>
+            <div id="cerebrum-chat-adapter-fields" style="display:none;">
+                <div class="form-row">
+                    <label style="width:100%" for="node-input-chatInputCode"><i class="fa fa-sign-in"></i> <span data-i18n="cerebrumUltimate.properties.chatInputCode"></span></label>
+                    <input type="hidden" id="node-input-chatInputCode">
+                    <div id="node-input-chatInputCode-editor" class="node-text-editor cerebrum-chat-adapter-editor"></div>
+                </div>
+                <div class="form-row">
+                    <label style="width:100%" for="node-input-chatOutputCode"><i class="fa fa-sign-out"></i> <span data-i18n="cerebrumUltimate.properties.chatOutputCode"></span></label>
+                    <input type="hidden" id="node-input-chatOutputCode">
+                    <div id="node-input-chatOutputCode-editor" class="node-text-editor cerebrum-chat-adapter-editor"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="cerebrum-tab-home-intelligence">
+            <div class="form-row">
+                <strong><i class="fa fa-globe"></i> <span data-i18n="cerebrumUltimate.sections.webIntelligence"></span></strong>
+            </div>
+            <div class="form-row">
+                <input type="checkbox" id="node-input-webAccessEnabled" style="display:inline-block; width:auto; vertical-align:top;">
+                <label style="width:auto" for="node-input-webAccessEnabled">&nbsp;&nbsp;<span data-i18n="cerebrumUltimate.properties.webAccessEnabled"></span></label>
+                <!-- <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.webAccessHint"></div> -->
+            </div>
+            <div id="cerebrum-web-access-settings">
+                <div class="form-row">
+                    <label style="width:290px" for="node-input-webMaxCallsPerHour"><i class="fa fa-tachometer"></i> <span data-i18n="cerebrumUltimate.properties.webMaxCallsPerHour"></span></label>
+                    <input type="number" id="node-input-webMaxCallsPerHour" min="1" max="60" step="1" style="width:100%;">
+                    <!-- <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.webBudgetHint"></div> -->
+                </div>
+            </div>
+            <hr>
+            <div class="form-row">
+                <label style="width:100%" for="node-input-aiEducation"><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.properties.aiEducation"></span></label>
+                <textarea id="node-input-aiEducation" maxlength="16000" style="width:100%; min-height:180px; box-sizing:border-box;" data-i18n="[placeholder]cerebrumUltimate.placeholder.aiEducation"></textarea>
+            </div>
+        </div>
+
+        <div id="cerebrum-tab-ets-access">
+            <div class="form-row">
+                <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.etsAccessHint"></div>
+                <div style="margin:8px 0 4px; display:flex; gap:6px; align-items:center;">
+                    <input type="text" id="cerebrum-ets-ga-filter" data-i18n="[placeholder]cerebrumUltimate.messages.etsFilterPlaceholder" style="flex:1 1 auto;">
+                    <button type="button" id="cerebrum-ets-ga-all" class="ui-button ui-corner-all ui-widget" style="width:auto;" data-i18n="cerebrumUltimate.buttons.etsSelectAll"></button>
+                    <button type="button" id="cerebrum-ets-ga-none" class="ui-button ui-corner-all ui-widget" style="width:auto;" data-i18n="cerebrumUltimate.buttons.etsSelectNone"></button>
+                    <span style="border-left:1px solid #ccc; align-self:stretch;"></span>
+                    <button type="button" id="cerebrum-ets-ga-ro-all" class="ui-button ui-corner-all ui-widget" style="width:auto;" data-i18n="[title]cerebrumUltimate.messages.etsReadOnlyBulk;cerebrumUltimate.buttons.etsReadOnlyAll"></button>
+                    <button type="button" id="cerebrum-ets-ga-ro-none" class="ui-button ui-corner-all ui-widget" style="width:auto;" data-i18n="[title]cerebrumUltimate.messages.etsReadOnlyBulk;cerebrumUltimate.buttons.etsReadOnlyNone"></button>
+                </div>
+                <div id="cerebrum-ets-ga-count" style="font-size:11px; color:#666; margin:2px 0;"></div>
+                <div id="cerebrum-ets-ga-list" style="max-height:220px; overflow:auto; border:1px solid #ccc; padding:6px; border-radius:4px; background:#fff;"></div>
+            </div>
+        </div>
+
+        <div id="cerebrum-tab-advanced">
+            <div id="cerebrum-llm-advanced-settings">
+                <div class="form-row">
+                    <label style="width:290px" for="node-input-llmBaseUrl"><i class="fa fa-link"></i> <span data-i18n="cerebrumUltimate.properties.llmBaseUrl"></span></label>
+                    <input type="text" id="node-input-llmBaseUrl" data-i18n="[placeholder]cerebrumUltimate.placeholder.llmBaseUrl">
+                </div>
+                <div class="form-row" id="cerebrum-ollama-install-row" style="display:none;">
+                    <label style="width:290px"><i class="fa fa-download"></i> Ollama</label>
+                    <div class="cerebrum-ollama-actions">
+                        <button type="button" class="red-ui-button" id="cerebrum-downloadOllamaModel">
+                            <i class="fa fa-cloud-download"></i> <span data-i18n="cerebrumUltimate.buttons.downloadOllamaModel"></span>
+                        </button>
+                        <button type="button" class="red-ui-button" id="cerebrum-installOllamaModel">
+                            <i class="fa fa-download"></i> <span data-i18n="cerebrumUltimate.buttons.installOllamaModel"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</script>
