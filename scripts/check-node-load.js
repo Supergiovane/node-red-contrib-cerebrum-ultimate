@@ -25,14 +25,13 @@ const RED = {
 
 const root = path.resolve(__dirname, '..')
 require(path.join(root, 'nodes', 'cerebrumUltimate'))(RED)
-require(path.join(root, 'nodes', 'cerebrumHomeAssistant'))(RED)
 require(path.join(root, 'nodes', 'plugins', 'cerebrum-runtime-plugin'))(RED)
 
 assert(registeredNodes.has('cerebrumUltimate'))
-assert(registeredNodes.has('cerebrumHomeAssistant'))
+assert(!registeredNodes.has('cerebrumHomeAssistant'))
 assert(registeredPlugins.has('cerebrumUltimateRuntime'))
 
-const editorFiles = ['nodes/cerebrumUltimate.html', 'nodes/cerebrumHomeAssistant.html']
+const editorFiles = ['nodes/cerebrumUltimate.html']
 let editorScriptCount = 0
 editorFiles.forEach(relativePath => {
   const html = fs.readFileSync(path.join(root, relativePath), 'utf8')
@@ -52,5 +51,5 @@ fs.readdirSync(localeRoot, { withFileTypes: true }).filter(entry => entry.isDire
   JSON.parse(fs.readFileSync(localeFile, 'utf8'))
 })
 
-assert(editorScriptCount >= 2)
+assert(editorScriptCount >= 1)
 process.stdout.write(`Cerebrum Ultimate runtime modules, ${editorScriptCount} editor scripts and locale catalogs loaded successfully.\n`)

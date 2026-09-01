@@ -11,7 +11,7 @@
       "chatLearning": "Cerebrum 学习",
       "cerebrumMemory": "Cerebrum 记忆",
       "quickSetup": "助手配置",
-      "etsAccess": "ETS 对象访问",
+      "etsAccess": "GA 对象访问",
       "llmConnection": "AI 助手连接",
       "chatAdapter": "Cerebrum 输入/输出端口",
       "homeIntelligence": "AI 教育与记忆",
@@ -45,7 +45,8 @@
       "anomalies": "异常",
       "assistant": "AI 助手",
       "knxCommands": "KNX 操作",
-      "ttsUltimate": "TTS Ultimate 播报"
+      "ttsUltimate": "TTS Ultimate 播报",
+      "homeAssistant": "Home Assistant (ha-api)"
     },
     "selectlists": {
       "llmProvider": {
@@ -229,6 +230,7 @@
       "downloadOllamaModel": "1) Download model",
       "openChatLearning": "打开 Cerebrum 学习",
       "openCerebrumMemory": "打开 Cerebrum 记忆",
+      "openEtsAccess": "配置 GA 访问",
       "etsSelectAll": "全选",
       "etsSelectNone": "全部取消",
       "etsReadOnlyAll": "设为只读",

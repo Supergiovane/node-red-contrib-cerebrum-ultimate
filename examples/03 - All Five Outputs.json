@@ -2,7 +2,7 @@
   {
     "id": "ce03000000000001",
     "type": "tab",
-    "label": "Cerebrum 03 - All Five Outputs",
+    "label": "Cerebrum 03 - Five General Outputs",
     "disabled": false,
     "info": "Inspect every Cerebrum output in the Debug sidebar."
   },
@@ -63,7 +63,8 @@
       ["ce03000000000006"],
       ["ce03000000000007"],
       ["ce03000000000008"],
-      ["ce03000000000009"]
+      ["ce03000000000009"],
+      []
     ]
   },
   {

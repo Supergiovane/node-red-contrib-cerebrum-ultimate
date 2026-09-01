@@ -45,7 +45,8 @@
       "anomalies": "Anomalies",
       "assistant": "Assistant IA",
       "knxCommands": "Opérations KNX",
-      "ttsUltimate": "Annonces TTS Ultimate"
+      "ttsUltimate": "Annonces TTS Ultimate",
+      "homeAssistant": "Home Assistant (ha-api)"
     },
     "selectlists": {
       "llmProvider": {
@@ -229,6 +230,7 @@
       "downloadOllamaModel": "1) Download model",
       "openChatLearning": "Ouvrir l’Apprentissage Cerebrum",
       "openCerebrumMemory": "Ouvrir la mémoire Cerebrum",
+      "openEtsAccess": "Configurer l’accès GA",
       "etsSelectAll": "Tout sélectionner",
       "etsSelectNone": "Tout désélectionner",
       "etsReadOnlyAll": "Activer lecture seule",

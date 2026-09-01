@@ -158,6 +158,9 @@ const CEREBRUM_KNX_READS_PER_TICK = 1
 const CEREBRUM_HA_HOT_REFRESH_SECONDS = 120
 const CEREBRUM_HA_WARM_REFRESH_SECONDS = 600
 const CEREBRUM_HA_COLD_REFRESH_SECONDS = 1800
+const CEREBRUM_HA_REQUEST_TIMEOUT_MS = 15000
+const CEREBRUM_HA_OUTPUT_INDEX = 5
+const CEREBRUM_HA_ADAPTER_ID = 'home-assistant'
 const CEREBRUM_THINKING_DELAY_MS = 1200
 const CEREBRUM_LLM_TIMEOUT_MIN_MS = 30 * 60 * 1000
 const CEREBRUM_REASONING_EFFORT_OPTIONS = Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -488,7 +491,7 @@ const buildCerebrumCompatibleNodeSummary = ({
   }
 
   const homeAssistant = discovery.homeAssistant && typeof discovery.homeAssistant === 'object' ? discovery.homeAssistant : {}
-  if (homeAssistant.addonDetected === true || homeAssistant.packageDetected === true || homeAssistant.bridgeNodePresent === true) {
+  if (homeAssistant.addonDetected === true || homeAssistant.packageDetected === true || homeAssistant.cerebrumNodePresent === true) {
     entries.push({
       id: 'home-assistant',
       title: 'Home Assistant',
@@ -496,7 +499,7 @@ const buildCerebrumCompatibleNodeSummary = ({
       detected: true,
       configured: homeAssistant.ready === true,
       usedInChat: homeAssistant.ready === true,
-      nodeCount: (Array.isArray(homeAssistant.apiNodes) ? homeAssistant.apiNodes.length : 0) + (Array.isArray(homeAssistant.bridgeNodes) ? homeAssistant.bridgeNodes.length : 0),
+      nodeCount: Array.isArray(homeAssistant.apiNodes) ? homeAssistant.apiNodes.length : 0,
       recommendationCode: String(homeAssistant.recommendationCode || 'optional')
     })
   }
@@ -626,7 +629,7 @@ const summarizeCerebrumFlowWiring = ({ nodeId, wires, flowNodes } = {}) => {
     const id = String(item && item.id ? item.id : '').trim()
     if (id) targetMap.set(id, item)
   })
-  const outputIds = ['summary', 'anomalies', 'assistant', 'knxCommands', 'ttsUltimate']
+  const outputIds = ['summary', 'anomalies', 'assistant', 'knxCommands', 'ttsUltimate', 'homeAssistant']
   const outputs = outputIds.map((id, index) => {
     const targetIds = Array.isArray(wires && wires[index])
       ? Array.from(new Set(wires[index].map(value => String(value || '').trim()).filter(Boolean)))
@@ -695,7 +698,7 @@ const getCerebrumSetupDoctorCopy = (language) => {
         cameras: ['Camera adapters', details => details.cameraCount > 0 ? `${details.cameraCount} camera(s) available through ${details.adapterCount} detected adapter(s).` : details.adapterCount > 0 ? `${details.adapterCount} camera adapter(s) detected, but no ready camera is registered.` : 'No camera adapter detected; this integration is optional.'],
         webAccess: ['Web access', details => details.enabled ? `The general Web tool is enabled with a budget of ${details.budget} outbound calls per hour.` : 'Web access is off; no external request can be made.'],
         cerebrumDiscovery: ['Cerebrum discovery', details => `${details.flowNodeCount} flow nodes inspected; ${details.logicNodeCount} logic nodes and ${details.toolCount} useful capabilities discovered across KNX, HUE, Matter and Node-RED.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Ready: Cerebrum and ha-api are wired in a complete request/response round trip.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED is running as a Home Assistant add-on, but no API node (ha-api) is deployed. Add it to the flow.' : details.recommendationCode === 'add_cerebrum_bridge' ? 'ha-api is present. Add the Cerebrum Home Assistant node to expose it safely.' : details.recommendationCode === 'wire_round_trip' ? 'Wire Cerebrum Home Assistant → ha-api → Cerebrum Home Assistant.' : 'Home Assistant was not detected; this integration is optional.']
+        homeAssistant: ['Home Assistant', details => details.ready ? 'Ready: Cerebrum output 6 and ha-api are wired in a complete request/response round trip.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED is running as a Home Assistant add-on, but no API node (ha-api) is deployed. Add it to the flow.' : details.recommendationCode === 'wire_round_trip' ? 'Wire Cerebrum output 6 → ha-api → Cerebrum input.' : 'Home Assistant was not detected; this integration is optional.']
       },
       summary: (status, totals, issueCount) => status === 'ready'
         ? `Ready: ${totals.groupAddresses} KNX signals, ${totals.etsAreas} ETS areas/groups and about ${totals.logicalFunctionsEstimate} recognizable logical functions.`
@@ -730,7 +733,7 @@ const getCerebrumSetupDoctorCopy = (language) => {
         cameras: ['Adattatori telecamera', details => details.cameraCount > 0 ? `${details.cameraCount} telecamere disponibili tramite ${details.adapterCount} adattatori rilevati.` : details.adapterCount > 0 ? `Rilevati ${details.adapterCount} adattatori telecamera, ma nessuna telecamera pronta.` : 'Nessun adattatore telecamera rilevato; l’integrazione è opzionale.'],
         webAccess: ['Accesso Web', details => details.enabled ? `Il tool Web generale è abilitato con un budget di ${details.budget} chiamate esterne all’ora.` : 'Accesso Web disattivato: non verrà eseguita alcuna richiesta esterna.'],
         cerebrumDiscovery: ['Discovery Cerebrum', details => `Analizzati ${details.flowNodeCount} nodi del flow; riconosciuti ${details.logicNodeCount} nodi logici e ${details.toolCount} strumenti utili fra KNX, HUE, Matter e Node-RED.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Pronto: Cerebrum e ha-api sono collegati con un percorso completo richiesta/risposta.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED gira come add-on Home Assistant, ma nel flow non c’è un nodo API (ha-api). Aggiungilo.' : details.recommendationCode === 'add_cerebrum_bridge' ? 'ha-api è presente. Aggiungi il nodo Cerebrum Home Assistant per esporlo in sicurezza.' : details.recommendationCode === 'wire_round_trip' ? 'Collega Cerebrum Home Assistant → ha-api → Cerebrum Home Assistant.' : 'Home Assistant non è stato rilevato; l’integrazione è opzionale.']
+        homeAssistant: ['Home Assistant', details => details.ready ? 'Pronto: l’uscita 6 di Cerebrum e ha-api sono collegati con un percorso completo richiesta/risposta.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED gira come add-on Home Assistant, ma nel flow non c’è un nodo API (ha-api). Aggiungilo.' : details.recommendationCode === 'wire_round_trip' ? 'Collega uscita 6 Cerebrum → ha-api → ingresso Cerebrum.' : 'Home Assistant non è stato rilevato; l’integrazione è opzionale.']
       },
       summary: (status, totals, issueCount) => status === 'ready'
         ? `Pronto: ${totals.groupAddresses} segnali KNX, ${totals.etsAreas} aree/gruppi ETS e circa ${totals.logicalFunctionsEstimate} funzioni logiche riconoscibili.`
@@ -765,7 +768,7 @@ const getCerebrumSetupDoctorCopy = (language) => {
         cameras: ['Kameraadapter', details => details.cameraCount > 0 ? `${details.cameraCount} Kamera(s) über ${details.adapterCount} erkannte Adapter verfügbar.` : details.adapterCount > 0 ? `${details.adapterCount} Kameraadapter erkannt, aber keine Kamera bereit.` : 'Kein Kameraadapter erkannt; diese Integration ist optional.'],
         webAccess: ['Webzugriff', details => details.enabled ? `Das allgemeine Web-Tool ist mit einem Budget von ${details.budget} externen Aufrufen pro Stunde aktiviert.` : 'Webzugriff ist deaktiviert; es kann keine externe Anfrage erfolgen.'],
         cerebrumDiscovery: ['Cerebrum-Erkennung', details => `${details.flowNodeCount} Flow-Nodes geprüft; ${details.logicNodeCount} Logik-Nodes und ${details.toolCount} nützliche Fähigkeiten erkannt.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Bereit: Cerebrum und ha-api sind als vollständiger Hin- und Rückweg verbunden.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED läuft als Home-Assistant-Add-on, aber ein API-Node (ha-api) fehlt im Flow.' : details.recommendationCode === 'add_cerebrum_bridge' ? 'ha-api ist vorhanden. Fügen Sie Cerebrum Home Assistant hinzu.' : details.recommendationCode === 'wire_round_trip' ? 'Verbinden Sie Cerebrum Home Assistant → ha-api → Cerebrum Home Assistant.' : 'Home Assistant wurde nicht erkannt; die Integration ist optional.']
+        homeAssistant: ['Home Assistant', details => details.ready ? 'Bereit: Cerebrum-Ausgang 6 und ha-api sind als vollständiger Hin- und Rückweg verbunden.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED läuft als Home-Assistant-Add-on, aber ein API-Node (ha-api) fehlt im Flow.' : details.recommendationCode === 'wire_round_trip' ? 'Verbinden Sie Cerebrum-Ausgang 6 → ha-api → Cerebrum-Eingang.' : 'Home Assistant wurde nicht erkannt; die Integration ist optional.']
       },
       summary: (status, totals, issueCount) => status === 'ready' ? `Bereit: ${totals.groupAddresses} KNX-Signale, ${totals.etsAreas} ETS-Bereiche/-Gruppen und etwa ${totals.logicalFunctionsEstimate} erkennbare logische Funktionen.` : status === 'attention' ? `Fast bereit: ${totals.groupAddresses} KNX-Signale erkannt; ${issueCount} Punkt(e) brauchen Aufmerksamkeit.` : `${totals.groupAddresses} KNX-Signale erkannt, aber ${issueCount} erforderliche Punkt(e) fehlen.`,
       prompts: { area: name => `Nur lesen: Was wissen Sie über „${name}“?`, inventory: 'Was erkennen Sie in meiner KNX-Anlage? Nur lesen.', lights: 'Welche Leuchten können Sie jetzt lesen? Nichts ändern.', openings: 'Welche Türen oder Fenster sind offen? Nur lesen.', climate: 'Welche Temperaturen und Klimazustände lesen Sie jetzt?', anomalies: 'Gibt es KNX-Anomalien? Keine Befehle ausführen.', setup: 'Was fehlt in meiner Cerebrum-Konfiguration?' },
@@ -786,7 +789,7 @@ const getCerebrumSetupDoctorCopy = (language) => {
         cameras: ['Adaptateurs caméra', details => details.cameraCount > 0 ? `${details.cameraCount} caméra(s) disponibles via ${details.adapterCount} adaptateur(s).` : details.adapterCount > 0 ? `${details.adapterCount} adaptateur(s) détecté(s), mais aucune caméra prête.` : 'Aucun adaptateur caméra détecté ; cette intégration est optionnelle.'],
         webAccess: ['Accès Web', details => details.enabled ? `L’outil Web général est activé avec un budget de ${details.budget} appels externes par heure.` : 'L’accès Web est désactivé ; aucune requête externe ne peut être effectuée.'],
         cerebrumDiscovery: ['Découverte Cerebrum', details => `${details.flowNodeCount} nœuds du flow analysés ; ${details.logicNodeCount} nœuds logiques et ${details.toolCount} capacités utiles détectés.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Prêt : Cerebrum et ha-api sont reliés par une boucle requête/réponse complète.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED fonctionne comme add-on Home Assistant, mais aucun nœud API (ha-api) n’est déployé.' : details.recommendationCode === 'add_cerebrum_bridge' ? 'ha-api est présent. Ajoutez le nœud Cerebrum Home Assistant.' : details.recommendationCode === 'wire_round_trip' ? 'Reliez Cerebrum Home Assistant → ha-api → Cerebrum Home Assistant.' : 'Home Assistant n’a pas été détecté ; cette intégration est optionnelle.']
+        homeAssistant: ['Home Assistant', details => details.ready ? 'Prêt : la sortie 6 de Cerebrum et ha-api sont reliés par une boucle requête/réponse complète.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED fonctionne comme add-on Home Assistant, mais aucun nœud API (ha-api) n’est déployé.' : details.recommendationCode === 'wire_round_trip' ? 'Reliez sortie 6 Cerebrum → ha-api → entrée Cerebrum.' : 'Home Assistant n’a pas été détecté ; cette intégration est optionnelle.']
       },
       summary: (status, totals, issueCount) => status === 'ready' ? `Prêt : ${totals.groupAddresses} signaux KNX, ${totals.etsAreas} zones/groupes ETS et environ ${totals.logicalFunctionsEstimate} fonctions logiques reconnaissables.` : status === 'attention' ? `Presque prêt : ${totals.groupAddresses} signaux KNX reconnus ; ${issueCount} point(s) demandent votre attention.` : `${totals.groupAddresses} signaux KNX reconnus, mais ${issueCount} point(s) requis restent à compléter.`,
       prompts: { area: name => `Lecture seule : que savez-vous de « ${name} » ?`, inventory: 'Qu’avez-vous reconnu dans mon installation KNX ? Lecture seule.', lights: 'Quelles lumières pouvez-vous lire ? Ne changez rien.', openings: 'Quelles portes ou fenêtres sont ouvertes ? Lecture seule.', climate: 'Quels états de température et de climat pouvez-vous lire ?', anomalies: 'Des anomalies KNX demandent-elles attention ? Lecture seule.', setup: 'Que manque-t-il à ma configuration Cerebrum ?' },
@@ -807,7 +810,7 @@ const getCerebrumSetupDoctorCopy = (language) => {
         cameras: ['Adaptadores de cámara', details => details.cameraCount > 0 ? `${details.cameraCount} cámara(s) disponibles mediante ${details.adapterCount} adaptador(es).` : details.adapterCount > 0 ? `${details.adapterCount} adaptador(es) detectados, pero ninguna cámara lista.` : 'No se detectó un adaptador de cámara; esta integración es opcional.'],
         webAccess: ['Acceso Web', details => details.enabled ? `La herramienta Web general está activada con un presupuesto de ${details.budget} llamadas externas por hora.` : 'El acceso Web está desactivado; no se puede realizar ninguna solicitud externa.'],
         cerebrumDiscovery: ['Descubrimiento Cerebrum', details => `${details.flowNodeCount} nodos del flow analizados; ${details.logicNodeCount} nodos lógicos y ${details.toolCount} capacidades útiles detectadas.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Listo: Cerebrum y ha-api están conectados en un circuito completo de solicitud y respuesta.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED funciona como add-on de Home Assistant, pero no hay un nodo API (ha-api) desplegado.' : details.recommendationCode === 'add_cerebrum_bridge' ? 'ha-api está presente. Añade el nodo Cerebrum Home Assistant.' : details.recommendationCode === 'wire_round_trip' ? 'Conecta Cerebrum Home Assistant → ha-api → Cerebrum Home Assistant.' : 'No se detectó Home Assistant; esta integración es opcional.']
+        homeAssistant: ['Home Assistant', details => details.ready ? 'Listo: la salida 6 de Cerebrum y ha-api están conectados en un circuito completo de solicitud y respuesta.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED funciona como add-on de Home Assistant, pero no hay un nodo API (ha-api) desplegado.' : details.recommendationCode === 'wire_round_trip' ? 'Conecta salida 6 de Cerebrum → ha-api → entrada de Cerebrum.' : 'No se detectó Home Assistant; esta integración es opcional.']
       },
       summary: (status, totals, issueCount) => status === 'ready' ? `Listo: ${totals.groupAddresses} señales KNX, ${totals.etsAreas} áreas/grupos ETS y unas ${totals.logicalFunctionsEstimate} funciones lógicas reconocibles.` : status === 'attention' ? `Casi listo: ${totals.groupAddresses} señales KNX reconocidas; ${issueCount} elemento(s) requieren atención.` : `${totals.groupAddresses} señales KNX reconocidas, pero faltan ${issueCount} elemento(s) necesarios.`,
       prompts: { area: name => `Solo lectura: ¿qué sabes de «${name}»?`, inventory: '¿Qué reconoces en mi instalación KNX? Solo lectura.', lights: '¿Qué luces puedes leer ahora? No cambies nada.', openings: '¿Qué puertas o ventanas están abiertas? Solo lectura.', climate: '¿Qué temperaturas y estados del clima puedes leer?', anomalies: '¿Hay anomalías KNX que atender? Solo lectura.', setup: '¿Qué falta en mi configuración de Cerebrum?' },
@@ -828,7 +831,7 @@ const getCerebrumSetupDoctorCopy = (language) => {
         cameras: ['摄像头适配器', details => details.cameraCount > 0 ? `通过 ${details.adapterCount} 个适配器提供 ${details.cameraCount} 个摄像头。` : details.adapterCount > 0 ? `检测到 ${details.adapterCount} 个摄像头适配器，但没有就绪的摄像头。` : '未检测到摄像头适配器；此集成为可选项。'],
         webAccess: ['Web 访问', details => details.enabled ? `通用 Web 工具已启用，每小时最多 ${details.budget} 次外部调用。` : 'Web 访问已关闭；不会发起任何外部请求。'],
         cerebrumDiscovery: ['Cerebrum 发现', details => `已检查 ${details.flowNodeCount} 个流程节点；识别 ${details.logicNodeCount} 个逻辑节点和 ${details.toolCount} 项可用能力。`],
-        homeAssistant: ['Home Assistant', details => details.ready ? '已就绪：Cerebrum 与 ha-api 已形成完整请求/响应回路。' : details.recommendationCode === 'add_ha_api' ? 'Node-RED 作为 Home Assistant add-on 运行，但流程中没有 API 节点（ha-api）。' : details.recommendationCode === 'add_cerebrum_bridge' ? '已存在 ha-api。请添加 Cerebrum Home Assistant 节点。' : details.recommendationCode === 'wire_round_trip' ? '请连接 Cerebrum Home Assistant → ha-api → Cerebrum Home Assistant。' : '未检测到 Home Assistant；此集成为可选项。']
+        homeAssistant: ['Home Assistant', details => details.ready ? '已就绪：Cerebrum 输出 6 与 ha-api 已形成完整请求/响应回路。' : details.recommendationCode === 'add_ha_api' ? 'Node-RED 作为 Home Assistant add-on 运行，但流程中没有 API 节点（ha-api）。' : details.recommendationCode === 'wire_round_trip' ? '请连接 Cerebrum 输出 6 → ha-api → Cerebrum 输入。' : '未检测到 Home Assistant；此集成为可选项。']
       },
       summary: (status, totals, issueCount) => status === 'ready' ? `已就绪：${totals.groupAddresses} 个 KNX 信号、${totals.etsAreas} 个 ETS 区域/组，以及约 ${totals.logicalFunctionsEstimate} 个可识别逻辑功能。` : status === 'attention' ? `即将就绪：已识别 ${totals.groupAddresses} 个 KNX 信号；${issueCount} 项需要注意。` : `已识别 ${totals.groupAddresses} 个 KNX 信号，但仍需完成 ${issueCount} 个必要项目。`,
       prompts: { area: name => `只读：你了解“${name}”区域的哪些内容？`, inventory: '你在 KNX 系统中识别到了什么？仅限读取。', lights: '你现在可以读取哪些灯？不要更改任何内容。', openings: '目前哪些门或窗打开？仅限读取。', climate: '你现在可以读取哪些温度和空调状态？', anomalies: '是否有需要注意的 KNX 异常？仅限读取。', setup: '我的 Cerebrum 配置还缺少什么？' },
@@ -1018,7 +1021,7 @@ const buildCerebrumSetupDoctorSnapshot = ({
     : {}
   const homeAssistantStatus = homeAssistant.ready === true
     ? 'pass'
-    : ['add_ha_api', 'add_cerebrum_bridge', 'wire_round_trip'].includes(String(homeAssistant.recommendationCode || ''))
+    : ['add_ha_api', 'wire_round_trip'].includes(String(homeAssistant.recommendationCode || ''))
         ? 'warn'
         : 'info'
   const gatewayStatus = !gatewayDetails.configured ? 'info' : gatewayDetails.connected ? 'pass' : 'warn'
@@ -1036,7 +1039,7 @@ const buildCerebrumSetupDoctorSnapshot = ({
     { id: 'cameras', status: Number(integrations.cameraCount) > 0 ? 'pass' : 'info', blocking: false, weight: 0, details: { cameraCount: Math.max(0, Number(integrations.cameraCount) || 0), adapterCount: Math.max(0, Number(integrations.cameraAdapterCount) || 0) } },
     { id: 'webAccess', status: webDetails.enabled ? 'pass' : 'info', blocking: false, weight: 0, details: webDetails },
     { id: 'cerebrumDiscovery', status: cerebrum.discoveredToolCount > 0 ? 'pass' : 'info', blocking: false, weight: 0, details: { flowNodeCount: Math.max(0, Number(cerebrum.flowNodeCount) || 0), logicNodeCount: Math.max(0, Number(cerebrum.logicNodeCount) || 0), toolCount: Math.max(0, Number(cerebrum.discoveredToolCount) || 0) } },
-    { id: 'homeAssistant', status: homeAssistantStatus, blocking: false, weight: 0, details: { ready: homeAssistant.ready === true, addonDetected: homeAssistant.addonDetected === true, apiNodePresent: homeAssistant.apiNodePresent === true, bridgeNodePresent: homeAssistant.bridgeNodePresent === true, roundTripWired: homeAssistant.roundTripWired === true, recommendationCode: String(homeAssistant.recommendationCode || 'optional') } }
+    { id: 'homeAssistant', status: homeAssistantStatus, blocking: false, weight: 0, details: { ready: homeAssistant.ready === true, addonDetected: homeAssistant.addonDetected === true, apiNodePresent: homeAssistant.apiNodePresent === true, cerebrumNodePresent: homeAssistant.cerebrumNodePresent === true, roundTripWired: homeAssistant.roundTripWired === true, recommendationCode: String(homeAssistant.recommendationCode || 'optional') } }
   ]
   const checks = checkDefinitions.map(check => {
     const copyDefinition = copy.checks[check.id] || [check.id, () => '']
@@ -3519,6 +3522,22 @@ const applyCerebrumCatalogAccessConfiguration = ({
         roleOverride: 'auto'
       })
     })
+}
+
+const normalizeCerebrumEtsAccessConfiguration = (value = {}) => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const exposed = Array.from(new Set((Array.isArray(source.exposedGAs) ? source.exposedGAs : [])
+    .map(normalizeAreaText)
+    .filter(Boolean)))
+  const exposedSet = new Set(exposed)
+  const readOnly = Array.from(new Set((Array.isArray(source.readOnlyGAs) ? source.readOnlyGAs : [])
+    .map(normalizeAreaText)
+    .filter(ga => ga && exposedSet.has(ga))))
+  return {
+    configured: source.configured === true || source.exposeConfigured === true,
+    exposedGAs: exposed.sort(),
+    readOnlyGAs: readOnly.sort()
+  }
 }
 
 const isAmbiguousGaRoleSource = (source) => {
@@ -6273,6 +6292,46 @@ module.exports = function (RED) {
       }
     })
 
+    RED.httpAdmin.get('/cerebrumUltimate/sidebar/ets-access', RED.auth.needsPermission('cerebrumUltimate.read'), async (req, res) => {
+      try {
+        const nodeId = req.query?.nodeId ? String(req.query.nodeId) : ''
+        if (!nodeId) {
+          res.status(400).json({ error: 'Missing nodeId' })
+          return
+        }
+        const n = aiRuntimeNodes.get(nodeId) || RED.nodes.getNode(nodeId)
+        if (!n || n.type !== 'cerebrumUltimate' || typeof n.getEtsAccessSnapshot !== 'function') {
+          res.status(404).json({ error: 'Cerebrum node not found' })
+          return
+        }
+        res.json({ etsAccess: await n.getEtsAccessSnapshot() })
+      } catch (error) {
+        res.status(error.status || 500).json({ error: error.message || String(error) })
+      }
+    })
+
+    RED.httpAdmin.post('/cerebrumUltimate/sidebar/ets-access/save', RED.auth.needsPermission('cerebrumUltimate.write'), async (req, res) => {
+      try {
+        const nodeId = req.body?.nodeId ? String(req.body.nodeId) : ''
+        if (!nodeId) {
+          res.status(400).json({ error: 'Missing nodeId' })
+          return
+        }
+        const n = aiRuntimeNodes.get(nodeId) || RED.nodes.getNode(nodeId)
+        if (!n || n.type !== 'cerebrumUltimate' || typeof n.saveEtsAccessConfiguration !== 'function') {
+          res.status(404).json({ error: 'Cerebrum node not found' })
+          return
+        }
+        res.json(await n.saveEtsAccessConfiguration({
+          configured: req.body?.configured === true,
+          exposedGAs: req.body?.exposedGAs,
+          readOnlyGAs: req.body?.readOnlyGAs
+        }))
+      } catch (error) {
+        res.status(error.status || 500).json({ error: error.message || String(error) })
+      }
+    })
+
     RED.httpAdmin.get('/cerebrumUltimate/sidebar/chat-learning', RED.auth.needsPermission('cerebrumUltimate.read'), async (req, res) => {
       try {
         const nodeId = req.query?.nodeId ? String(req.query.nodeId) : ''
@@ -7384,6 +7443,9 @@ module.exports = function (RED) {
     node._homeAutomationProviderUnsubscribers = new Map()
     node._homeAutomationRegistryUnsubscribe = null
     node._homeAutomationRegistrySyncTimer = null
+    node._pendingHomeAssistantRequests = new Map()
+    node._homeAssistantRequestSequence = 0
+    node._homeAssistantProvider = null
     node._pendingCameraRequests = new Map()
     node._cameraWatchLastTriggered = new Map()
     node._chatSessionSources = new Map()
@@ -9570,6 +9632,9 @@ module.exports = function (RED) {
       const configData = readJsonFileSafe(configPath, null)
       if (configData && typeof configData === 'object') {
         const normalized = {
+          etsAccess: Object.prototype.hasOwnProperty.call(configData, 'etsAccess')
+            ? normalizeCerebrumEtsAccessConfiguration(configData.etsAccess)
+            : null,
           areas: configData.areas && typeof configData.areas === 'object' ? configData.areas : {},
           gaRoles: configData.gaRoles && typeof configData.gaRoles === 'object' ? configData.gaRoles : {},
           gaRoleExperience: normalizeCerebrumGaRoleExperience(configData.gaRoleExperience),
@@ -9584,6 +9649,7 @@ module.exports = function (RED) {
       const legacyPath = getLegacyAreaStorageFile()
       const legacyData = readJsonFileSafe(legacyPath, {})
       const normalized = {
+        etsAccess: null,
         areas: legacyData && legacyData.areas && typeof legacyData.areas === 'object' ? legacyData.areas : {},
         gaRoles: {},
         gaRoleExperience: {},
@@ -9651,7 +9717,15 @@ module.exports = function (RED) {
 
     const writePersistedAiConfig = (partialConfig) => {
       const current = loadPersistedAiConfig()
+      const legacyEtsAccess = normalizeCerebrumEtsAccessConfiguration({
+        configured: node.etsExposeConfigured === true,
+        exposedGAs: node.etsExposedGAs,
+        readOnlyGAs: node.etsReadOnlyGAs
+      })
       const nextConfig = {
+        etsAccess: partialConfig && Object.prototype.hasOwnProperty.call(partialConfig, 'etsAccess')
+          ? normalizeCerebrumEtsAccessConfiguration(partialConfig.etsAccess)
+          : (current.etsAccess ? normalizeCerebrumEtsAccessConfiguration(current.etsAccess) : legacyEtsAccess),
         areas: partialConfig && partialConfig.areas && typeof partialConfig.areas === 'object'
           ? partialConfig.areas
           : (current.areas || {}),
@@ -9686,6 +9760,7 @@ module.exports = function (RED) {
         nodeId: node.id,
         gatewayId: node.serverKNX ? node.serverKNX.id : '',
         unifiProtectConfigId: node.unifiProtectConfigId || '',
+        etsAccess: nextConfig.etsAccess,
         areas: nextConfig.areas,
         gaRoles: nextConfig.gaRoles,
         gaRoleExperience: nextConfig.gaRoleExperience,
@@ -9697,6 +9772,65 @@ module.exports = function (RED) {
       node._persistedAiConfigCache = nextConfig
       return nextConfig
     }
+
+    const applyEtsAccessConfiguration = (configuration) => {
+      const normalized = normalizeCerebrumEtsAccessConfiguration(configuration)
+      node.etsExposeConfigured = normalized.configured
+      node.etsExposedGAs = normalized.exposedGAs
+      node.etsReadOnlyGAs = normalized.readOnlyGAs
+      node._gaCatalogCache = null
+      node._homeCatalogSnapshotRef = null
+      node._homeCatalogByGa = null
+      return normalized
+    }
+
+    const getEffectiveEtsAccessConfiguration = () => {
+      const persisted = loadPersistedAiConfig().etsAccess
+      return persisted
+        ? normalizeCerebrumEtsAccessConfiguration(persisted)
+        : normalizeCerebrumEtsAccessConfiguration({
+          configured: node.etsExposeConfigured === true,
+          exposedGAs: node.etsExposedGAs,
+          readOnlyGAs: node.etsReadOnlyGAs
+        })
+    }
+
+    const buildEtsAccessSnapshot = ({ includeItems = true } = {}) => {
+      const csv = (node.serverKNX && Array.isArray(node.serverKNX.csv)) ? node.serverKNX.csv : []
+      const catalog = buildGaCatalogFromCsv(csv)
+      const access = getEffectiveEtsAccessConfiguration()
+      const selectedSet = new Set(access.exposedGAs)
+      const readOnlySet = new Set(access.readOnlyGAs)
+      return {
+        configured: access.configured,
+        totalCount: catalog.length,
+        selectedCount: catalog.reduce((count, item) => count + (selectedSet.has(item.ga) ? 1 : 0), 0),
+        readOnlyCount: catalog.reduce((count, item) => count + (selectedSet.has(item.ga) && readOnlySet.has(item.ga) ? 1 : 0), 0),
+        catalogIncluded: includeItems === true,
+        gateway: {
+          configured: !!node.serverKNX,
+          id: node.serverKNX ? node.serverKNX.id : '',
+          name: node.serverKNX && (node.serverKNX.name || node.serverKNX.id) ? (node.serverKNX.name || node.serverKNX.id) : ''
+        },
+        items: includeItems === true
+          ? catalog.map(item => ({
+            ga: item.ga,
+            dpt: item.dpt,
+            label: item.label,
+            etsName: item.etsName,
+            hierarchyPath: item.hierarchyPath,
+            mainGroup: item.mainGroup,
+            middleGroup: item.middleGroup,
+            tags: item.tags,
+            selected: selectedSet.has(item.ga),
+            readOnly: selectedSet.has(item.ga) && readOnlySet.has(item.ga)
+          }))
+          : undefined
+      }
+    }
+
+    const persistedEtsAccess = loadPersistedAiConfig().etsAccess
+    if (persistedEtsAccess) applyEtsAccessConfiguration(persistedEtsAccess)
 
     const loadAreaOverrides = () => {
       const current = loadPersistedAiConfig()
@@ -10732,6 +10866,36 @@ module.exports = function (RED) {
       }
     }
 
+    node.getEtsAccessSnapshot = async () => buildEtsAccessSnapshot()
+
+    node.saveEtsAccessConfiguration = async ({ configured = true, exposedGAs, readOnlyGAs } = {}) => {
+      const csv = (node.serverKNX && Array.isArray(node.serverKNX.csv)) ? node.serverKNX.csv : []
+      const knownGAs = new Set(buildGaCatalogFromCsv(csv).map(item => item.ga))
+      const requestedExposed = Array.from(new Set((Array.isArray(exposedGAs) ? exposedGAs : []).map(normalizeAreaText).filter(Boolean)))
+      const requestedReadOnly = Array.from(new Set((Array.isArray(readOnlyGAs) ? readOnlyGAs : []).map(normalizeAreaText).filter(Boolean)))
+      const unknownGAs = Array.from(new Set(requestedExposed.concat(requestedReadOnly).filter(ga => !knownGAs.has(ga))))
+      if (unknownGAs.length) {
+        throw Object.assign(new Error(`Unknown ETS group address: ${unknownGAs.slice(0, 5).join(', ')}`), { status: 400 })
+      }
+      const selectedSet = new Set(requestedExposed)
+      const invalidReadOnly = requestedReadOnly.filter(ga => !selectedSet.has(ga))
+      if (invalidReadOnly.length) {
+        throw Object.assign(new Error('Read-only group addresses must also be selected'), { status: 400 })
+      }
+      const nextAccess = normalizeCerebrumEtsAccessConfiguration({
+        configured: configured === true,
+        exposedGAs: configured === true ? requestedExposed : [],
+        readOnlyGAs: configured === true ? requestedReadOnly : []
+      })
+      writePersistedAiConfig({ etsAccess: nextAccess })
+      applyEtsAccessConfiguration(nextAccess)
+      rebuildCachedSummaryNow()
+      return {
+        ok: true,
+        etsAccess: buildEtsAccessSnapshot()
+      }
+    }
+
     node.getGaCatalog = async () => {
       return {
         ok: true,
@@ -11374,6 +11538,9 @@ module.exports = function (RED) {
       }
 
       const nextAreas = configuration.areas && typeof configuration.areas === 'object' ? configuration.areas : {}
+      const nextEtsAccess = Object.prototype.hasOwnProperty.call(configuration, 'etsAccess')
+        ? normalizeCerebrumEtsAccessConfiguration(configuration.etsAccess)
+        : getEffectiveEtsAccessConfiguration()
       const nextGaRoles = configuration.gaRoles && typeof configuration.gaRoles === 'object'
         ? Object.fromEntries(Object.entries(configuration.gaRoles)
           .map(([ga, role]) => [normalizeAreaText(ga), normalizeGaRoleValue(role, 'auto')])
@@ -11387,11 +11554,13 @@ module.exports = function (RED) {
       const nextTestPlans = Array.isArray(configuration.testPlans) ? configuration.testPlans.map((plan, index) => normalizeAiTestPlanPayload(plan, `import-plan-${index + 1}`)) : []
       const nextTestResults = Array.isArray(configuration.testResults) ? configuration.testResults.map((report, index) => normalizeAiTestResultPayload(report, `import-result-${index + 1}`)).filter(Boolean) : []
       const previousConfiguration = clonePersistedTestResult(loadPersistedAiConfig(), {})
+      const previousEtsAccess = getEffectiveEtsAccessConfiguration()
       const previousChatContext = node._chatContext
       const previousHomeMemory = node._homeMemory
       const previousScheduleStore = node._scheduleStore
       try {
         writePersistedAiConfig({
+          etsAccess: nextEtsAccess,
           areas: nextAreas,
           gaRoles: nextGaRoles,
           gaRoleExperience: nextGaRoleExperience,
@@ -11400,6 +11569,7 @@ module.exports = function (RED) {
           testPlans: nextTestPlans,
           testResults: nextTestResults
         })
+        applyEtsAccessConfiguration(nextEtsAccess)
         node._chatContext = nextChatContext
         node._conversationSessions = conversationMapFromCerebrumChatContext(node._chatContext)
         node._homeMemory = nextHomeMemory
@@ -11429,6 +11599,7 @@ module.exports = function (RED) {
         node._homeMemory = previousHomeMemory
         node._scheduleStore = previousScheduleStore
         try { writePersistedAiConfig(previousConfiguration) } catch (rollbackError) { /* preserve original import error */ }
+        try { applyEtsAccessConfiguration(previousEtsAccess) } catch (rollbackError) { /* preserve original import error */ }
         try { scheduleChatContextPersist({ immediate: true }) } catch (rollbackError) { /* preserve original import error */ }
         try { scheduleHomeMemoryPersist({ immediate: true }) } catch (rollbackError) { /* preserve original import error */ }
         try { scheduleScheduleStorePersist({ immediate: true }) } catch (rollbackError) { /* preserve original import error */ }
@@ -11442,6 +11613,7 @@ module.exports = function (RED) {
         actuatorTests: buildActuatorTestsSnapshot(),
         testPlans: buildAiTestPlansSnapshot(),
         testResults: buildAiTestResultsSnapshot(),
+        etsAccess: buildEtsAccessSnapshot(),
         cerebrum: {
           chatLearning: buildChatLearningFileSnapshot({ fromDisk: true }),
           homeMemory: buildCerebrumMemoryFileSnapshot({ fromDisk: true }),
@@ -13083,6 +13255,129 @@ module.exports = function (RED) {
       })
     }
 
+    const getHomeAssistantRoundTripSnapshot = () => {
+      const outputTargets = Array.isArray(config.wires && config.wires[CEREBRUM_HA_OUTPUT_INDEX])
+        ? Array.from(new Set(config.wires[CEREBRUM_HA_OUTPUT_INDEX].map(value => String(value || '').trim()).filter(Boolean)))
+        : []
+      const flowNodes = []
+      try {
+        RED.nodes.eachNode(flowNode => {
+          if (flowNode && typeof flowNode === 'object') flowNodes.push(flowNode)
+        })
+      } catch (error) { /* the flow may still be starting */ }
+      const byId = new Map(flowNodes.map(flowNode => [String((flowNode && flowNode.id) || '').trim(), flowNode]).filter(([id]) => id))
+      const apiTargets = outputTargets.filter(targetId => {
+        const target = byId.get(targetId)
+        return String((target && target.type) || '').trim().toLowerCase() === 'ha-api'
+      })
+      const roundTripTargets = apiTargets.filter(targetId => {
+        const apiNode = byId.get(targetId) || {}
+        return (Array.isArray(apiNode.wires) ? apiNode.wires : []).some(output => Array.isArray(output) && output.some(value => String(value || '').trim() === node.id))
+      })
+      return {
+        ready: outputTargets.length === 1 && apiTargets.length === 1 && roundTripTargets.length === 1,
+        outputTargets,
+        apiTargets,
+        roundTripTargets
+      }
+    }
+    node.getHomeAssistantRoundTripSnapshot = getHomeAssistantRoundTripSnapshot
+
+    const sendHomeAssistantApiRequest = data => new Promise((resolve, reject) => {
+      if (node._closing === true) {
+        reject(new Error('Cerebrum is closing'))
+        return
+      }
+      const wiring = getHomeAssistantRoundTripSnapshot()
+      if (wiring.ready !== true) {
+        reject(new Error('Home Assistant requires one complete Cerebrum output 6 → ha-api → Cerebrum input round trip'))
+        return
+      }
+      node._homeAssistantRequestSequence += 1
+      const requestId = `${node.id}:${Date.now()}:${node._homeAssistantRequestSequence}`
+      const timer = setTimeout(() => {
+        node._pendingHomeAssistantRequests.delete(requestId)
+        reject(new Error('Home Assistant ha-api request timed out; verify the output 6 round-trip wiring'))
+      }, CEREBRUM_HA_REQUEST_TIMEOUT_MS)
+      node._pendingHomeAssistantRequests.set(requestId, { resolve, reject, timer })
+      const requestMessage = {
+        topic: 'cerebrum/home-assistant',
+        payload: {
+          protocol: 'websocket',
+          method: 'get',
+          path: '',
+          data,
+          dataType: 'json',
+          responseType: 'json',
+          location: 'payload',
+          locationType: 'msg',
+          outputProperties: [{ property: 'payload', propertyType: 'msg', value: '', valueType: 'results' }]
+        },
+        cerebrum: {
+          requestId,
+          adapterId: CEREBRUM_HA_ADAPTER_ID,
+          providerId: `cerebrum-ultimate:${node.id}:home-assistant`,
+          direction: 'request',
+          returnNodeId: node.id
+        }
+      }
+      const sent = sendCerebrumOutputs([null, null, null, null, null, requestMessage], requestMessage)
+      if (!sent) {
+        clearTimeout(timer)
+        node._pendingHomeAssistantRequests.delete(requestId)
+        reject(new Error('Unable to send the Home Assistant request on Cerebrum output 6'))
+      }
+    })
+
+    const handleHomeAssistantApiResponse = msg => {
+      const metadata = msg && msg.cerebrum && typeof msg.cerebrum === 'object' ? msg.cerebrum : {}
+      const requestId = String(metadata.requestId || '')
+      const providerId = String(metadata.providerId || '')
+      const expectedProviderId = `cerebrum-ultimate:${node.id}:home-assistant`
+      if (!requestId || metadata.adapterId !== CEREBRUM_HA_ADAPTER_ID || providerId !== expectedProviderId) return false
+      const pending = node._pendingHomeAssistantRequests.get(requestId)
+      if (!pending) return true
+      clearTimeout(pending.timer)
+      node._pendingHomeAssistantRequests.delete(requestId)
+      if (msg && msg.error) {
+        pending.reject(new Error(String(msg.error.message || msg.error)))
+      } else {
+        pending.resolve(msg ? msg.payload : undefined)
+      }
+      return true
+    }
+
+    const homeAssistantProvider = {
+      id: `cerebrum-ultimate:${node.id}:home-assistant`,
+      ownerNodeId: node.id,
+      adapterId: CEREBRUM_HA_ADAPTER_ID,
+      title: `${node.name || 'Cerebrum'} · Home Assistant`,
+      capabilities: ['entities', 'services', 'states'],
+      isReady: () => getHomeAssistantRoundTripSnapshot().ready === true,
+      listEntities: () => sendHomeAssistantApiRequest({ type: 'get_states' }).then(result => Array.isArray(result) ? result : []),
+      getEntity: entityId => sendHomeAssistantApiRequest({ type: 'get_states' }).then(result => {
+        const requested = String(entityId || '').trim().toLowerCase()
+        return (Array.isArray(result) ? result : []).find(entity => String((entity && entity.entity_id) || '').trim().toLowerCase() === requested) || null
+      }),
+      listServices: () => sendHomeAssistantApiRequest({ type: 'get_services' }),
+      callService: ({ domain, service, serviceData, target, authorization } = {}) => {
+        const safeDomain = String(domain || '').trim()
+        const safeService = String(service || '').trim()
+        if (!safeDomain || !safeService) return Promise.reject(new Error('Home Assistant domain and service are required'))
+        if (!authorization || authorization.confirmed !== true || authorization.source !== 'cerebrumUltimate') {
+          return Promise.reject(new Error('Home Assistant service calls require an explicit Cerebrum confirmation authorization'))
+        }
+        return sendHomeAssistantApiRequest({
+          type: 'call_service',
+          domain: safeDomain,
+          service: safeService,
+          service_data: serviceData && typeof serviceData === 'object' ? serviceData : {},
+          target: target && typeof target === 'object' ? target : {}
+        })
+      }
+    }
+    node._homeAssistantProvider = homeAssistantProvider
+
     const buildCerebrumReplyMessage = ({ inputMessage, content, metadata = {}, summary }) => {
       const replyMessage = cloneInputMessage(inputMessage)
       replyMessage.topic = node.outputtopic
@@ -14065,7 +14360,17 @@ module.exports = function (RED) {
       node._homeAutomationAdapters = new Map(registry.adapters)
       const hadHomeAssistantProvider = Array.from(node._homeAutomationProviders.values())
         .some(provider => provider && provider.adapterId === 'home-assistant' && typeof provider.listEntities === 'function')
-      const currentProviders = new Map(registry.providers)
+      const discoveredProviders = new Map(registry.providers)
+      const currentProviders = new Map(Array.from(discoveredProviders.entries()).filter(([, provider]) => provider && provider.adapterId !== CEREBRUM_HA_ADAPTER_ID))
+      const readyHomeAssistantProviders = Array.from(discoveredProviders.entries())
+        .filter(([, provider]) => {
+          if (!provider || provider.adapterId !== CEREBRUM_HA_ADAPTER_ID || typeof provider.listEntities !== 'function') return false
+          try { return typeof provider.isReady !== 'function' || provider.isReady() === true } catch (error) { return false }
+        })
+        .sort(([leftId], [rightId]) => String(leftId).localeCompare(String(rightId)))
+      const ownHomeAssistantProvider = readyHomeAssistantProviders.find(([, provider]) => String(provider && provider.ownerNodeId || '') === node.id)
+      const selectedHomeAssistantProvider = ownHomeAssistantProvider || readyHomeAssistantProviders[0]
+      if (selectedHomeAssistantProvider) currentProviders.set(selectedHomeAssistantProvider[0], selectedHomeAssistantProvider[1])
       node._homeAutomationProviderUnsubscribers.forEach((unsubscribe, providerId) => {
         const previousProvider = node._homeAutomationProviders.get(providerId)
         const currentProvider = currentProviders.get(providerId)
@@ -14156,7 +14461,7 @@ module.exports = function (RED) {
           lastError: error.message || String(error)
         })
         scheduleHomeMemoryPersist()
-        try { node.sysLogger?.warn(`Cerebrum Home Assistant refresh error: ${error.message || error}`) } catch (logError) { /* ignore */ }
+        try { node.sysLogger?.warn(`Home Assistant refresh error: ${error.message || error}`) } catch (logError) { /* ignore */ }
         return false
       }
     }
@@ -16461,6 +16766,7 @@ module.exports = function (RED) {
           },
           setupDoctor: node.getSetupDoctorSnapshot({ language }),
           summary,
+          etsAccess: buildEtsAccessSnapshot({ includeItems: false }),
           areas,
           profiles: buildProfilesSnapshot(),
           profileReport: node._lastAreaProfileReport,
@@ -16483,6 +16789,15 @@ module.exports = function (RED) {
           },
           setupDoctor: buildCerebrumSetupDoctorSnapshot({ language }),
           summary: { error: error.message || String(error) },
+          etsAccess: {
+            configured: false,
+            totalCount: 0,
+            selectedCount: 0,
+            readOnlyCount: 0,
+            catalogIncluded: false,
+            gateway: { configured: false, id: '', name: '' },
+            items: []
+          },
           areas: buildSuggestedAreasFromCsv([]),
           profiles: mergeAreaProfiles({ customProfiles: [] }),
           profileReport: null,
@@ -16535,6 +16850,7 @@ module.exports = function (RED) {
     }
 
     const processCerebrumInput = async (msg) => {
+      if (handleHomeAssistantApiResponse(msg)) return
       let adaptedMessage = msg
       try {
         adaptedMessage = executeCerebrumChatAdapter({
@@ -16662,6 +16978,14 @@ module.exports = function (RED) {
           try { if (typeof unsubscribe === 'function') unsubscribe() } catch (error) { /* ignore */ }
         })
         node._homeAutomationProviderUnsubscribers.clear()
+        if (node._homeAssistantProvider) {
+          try { getCerebrumHomeAutomationRegistry().unregisterProvider(node._homeAssistantProvider.id) } catch (error) { /* ignore */ }
+        }
+        node._pendingHomeAssistantRequests.forEach(pending => {
+          try { if (pending && pending.timer) clearTimeout(pending.timer) } catch (error) { /* ignore */ }
+          try { if (pending && typeof pending.reject === 'function') pending.reject(new Error('Cerebrum node closed')) } catch (error) { /* ignore */ }
+        })
+        node._pendingHomeAssistantRequests.clear()
         if (node._homeMemoryWriteTimer) {
           clearTimeout(node._homeMemoryWriteTimer)
           node._homeMemoryWriteTimer = null
@@ -16773,6 +17097,13 @@ module.exports = function (RED) {
 
     try {
       const homeAutomationRegistry = getCerebrumHomeAutomationRegistry()
+      homeAutomationRegistry.registerAdapter({
+        id: CEREBRUM_HA_ADAPTER_ID,
+        title: 'Home Assistant',
+        packageName: 'node-red-contrib-home-assistant-websocket',
+        capabilities: homeAssistantProvider.capabilities
+      })
+      homeAutomationRegistry.registerProvider(homeAssistantProvider)
       node._homeAutomationRegistryUnsubscribe = homeAutomationRegistry.subscribe(() => {
         try { syncHomeAutomationAdapterRegistry() } catch (error) {
           try { node.sysLogger?.warn(`Cerebrum home automation adapter refresh error: ${error.message || error}`) } catch (logError) { /* ignore */ }
@@ -16934,6 +17265,7 @@ module.exports.__test = {
   normalizeCerebrumCommandCandidates,
   normalizeCerebrumGaRoleActions,
   normalizeCerebrumGaRoleExperience,
+  normalizeCerebrumEtsAccessConfiguration,
   normalizeCerebrumMemoryActions,
   normalizeCerebrumLocalContextTokens,
   normalizeCerebrumReasoningEffort,

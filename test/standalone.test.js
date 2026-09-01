@@ -12,18 +12,23 @@ const packageRoot = path.resolve(__dirname, '..')
 const manifest = require('../package.json')
 const publicApi = require('../index')
 const {
+  CEREBRUM_CAMERA_REGISTRY_ALIAS_KEY,
+  CEREBRUM_CAMERA_REGISTRY_KEY,
+  getCerebrumCameraAdapterRegistry
+} = require('../nodes/utils/cerebrumCamera')
+const {
   buildCerebrumCompatibleNodeSummary,
   buildCerebrumPackageNodeCatalog,
   buildCerebrumSetupDoctorSnapshot,
-  isCerebrumCameraProviderSelected
+  isCerebrumCameraProviderSelected,
+  normalizeCerebrumEtsAccessConfiguration
 } = require('../nodes/cerebrumUltimate').__test
 
 describe('Cerebrum Ultimate standalone package', () => {
   it('publishes only the new standalone node types', () => {
     expect(manifest.name).to.equal('node-red-contrib-cerebrum-ultimate')
     expect(manifest['node-red'].nodes).to.deep.equal({
-      cerebrumUltimate: '/nodes/cerebrumUltimate.js',
-      cerebrumHomeAssistant: '/nodes/cerebrumHomeAssistant.js'
+      cerebrumUltimate: '/nodes/cerebrumUltimate.js'
     })
     expect(manifest.dependencies).not.to.have.property('knxultimate')
     expect(manifest.dependencies).not.to.have.property('node-red-contrib-knx-ultimate')
@@ -47,11 +52,43 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(doctor.status).not.to.equal('blocked')
   })
 
+  it('normalizes persisted ETS access as a selected/read-only ACL', () => {
+    expect(normalizeCerebrumEtsAccessConfiguration({
+      configured: true,
+      exposedGAs: ['1/1/2', '1/1/1', '1/1/2', ''],
+      readOnlyGAs: ['1/1/2', '9/9/9', '1/1/2']
+    })).to.deep.equal({
+      configured: true,
+      exposedGAs: ['1/1/1', '1/1/2'],
+      readOnlyGAs: ['1/1/2']
+    })
+  })
+
   it('exposes one stable global adapter registry', () => {
     const first = publicApi.getAdapterRegistry()
     const second = publicApi.getAdapterRegistry()
     expect(first).to.equal(second)
     expect(publicApi.REGISTRY_VERSION).to.equal(1)
+  })
+
+  it('shares the established KNX AI camera registry with UniFi Protect', () => {
+    const registry = getCerebrumCameraAdapterRegistry()
+    expect(CEREBRUM_CAMERA_REGISTRY_KEY).to.equal(Symbol.for('node-red.knx-ai.camera-adapters.v1'))
+    expect(globalThis[CEREBRUM_CAMERA_REGISTRY_KEY]).to.equal(registry)
+    expect(globalThis[CEREBRUM_CAMERA_REGISTRY_ALIAS_KEY]).to.equal(registry)
+
+    const provider = {
+      id: 'unifi-ultimate:protect-contract-test',
+      adapterId: 'unifi-ultimate',
+      controllerId: 'protect-contract-test',
+      listCameras: async () => [],
+      takeSnapshot: async () => null,
+      subscribe: () => () => {}
+    }
+    registry.registerAdapter({ id: 'unifi-ultimate', title: 'UniFi Ultimate / Protect' })
+    registry.registerProvider(provider)
+    expect(getCerebrumCameraAdapterRegistry().providers.get(provider.id)).to.equal(provider)
+    registry.unregisterProvider(provider.id)
   })
 
   it('uses independent storage and admin routes', () => {
@@ -70,6 +107,12 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(editor).to.include('unifiProtectConfig: { value: "", type: "unifi-protect-config", required: false }')
     expect(editor.indexOf('id="cerebrum-detected-adapters-panel"')).to.be.lessThan(editor.indexOf('id="node-input-server"'))
     expect(editor.indexOf('id="cerebrum-detected-adapters-panel"')).to.be.lessThan(editor.indexOf('id="node-input-unifiProtectConfig"'))
+    expect(editor).to.include('id="cerebrum-open-ets-access"')
+    expect(editor).to.include('params.set("tab", "etsAccess")')
+    expect(editor).not.to.include('id="cerebrum-mount-ets-access"')
+    expect(editor).not.to.include('id="cerebrum-ets-ga-list"')
+    expect(editor).to.include('outputs: 6')
+    expect(editor).to.include("case 5: return this._('cerebrumUltimate.outputs.homeAssistant')")
     expect(editor).to.include('RED.nodes.registerType(\'cerebrumUltimate\'')
   })
 
@@ -98,7 +141,7 @@ describe('Cerebrum Ultimate standalone package', () => {
       cerebrumDiscovery: {
         hue: { nodeCount: 2 },
         matter: { nodeCount: 1 },
-        homeAssistant: { packageDetected: true, ready: false, recommendationCode: 'add_cerebrum_bridge', apiNodes: [{}], bridgeNodes: [] }
+        homeAssistant: { packageDetected: true, ready: false, recommendationCode: 'wire_round_trip', apiNodes: [{}], cerebrumNodes: [{}] }
       },
       wiring: { outputs: [{ id: 'ttsUltimate', connected: true, connectionCount: 1 }] },
       selectedKnxConfigId: 'knx-a',
@@ -119,8 +162,8 @@ describe('Cerebrum Ultimate standalone package', () => {
 
   it('discovers standalone node definitions without reintroducing legacy types', () => {
     const types = buildCerebrumPackageNodeCatalog().map(item => item.type)
-    expect(types).to.include.members(['cerebrumUltimate', 'cerebrumHomeAssistant'])
-    expect(types).not.to.include.members(['knxUltimateAI', 'knxUltimateAIHomeAssistant'])
+    expect(types).to.include('cerebrumUltimate')
+    expect(types).not.to.include.members(['knxUltimateAI', 'knxUltimateAIHomeAssistant', 'cerebrumHomeAssistant'])
   })
 
   it('constructs and closes cleanly without KNX Ultimate or a gateway', async () => {
@@ -164,6 +207,11 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(node.serverKNX).to.equal(undefined)
     expect(node.unifiProtectConfig).to.equal(undefined)
     expect(node.cerebrumStorageDir).to.equal(path.join(userDir, 'cerebrumultimatestorage'))
+    expect(node.getSidebarState().etsAccess).to.include({ configured: false, totalCount: 0, catalogIncluded: false })
+    const savedAccess = await node.saveEtsAccessConfiguration({ configured: true, exposedGAs: [], readOnlyGAs: [] })
+    expect(savedAccess.etsAccess).to.include({ configured: true, selectedCount: 0, catalogIncluded: true })
+    const persistedConfig = JSON.parse(fs.readFileSync(path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'config', 'cerebrum-config-standalone-test.json'), 'utf8'))
+    expect(persistedConfig.etsAccess).to.deep.equal({ configured: true, exposedGAs: [], readOnlyGAs: [] })
     await new Promise(resolve => node.emit('close', resolve))
     fs.rmSync(userDir, { recursive: true, force: true })
   })

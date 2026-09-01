@@ -407,6 +407,11 @@
         font-size: 12px;
     }
 
+    summary .cerebrum-detected-adapter-package,
+    summary .cerebrum-detected-adapter-counts {
+        display: block;
+    }
+
     #cerebrum-chat-learning-link-panel {
         margin: 18px 0 0;
     }
@@ -422,6 +427,36 @@
         margin: 8px 0;
         padding: 0 0 12px;
         border-bottom: 1px solid var(--red-ui-form-input-border-color, #ddd);
+    }
+
+    .cerebrum-compatible-config>summary {
+        cursor: pointer;
+        list-style: none;
+    }
+
+    .cerebrum-compatible-config>summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .cerebrum-compatible-config>summary .cerebrum-detected-adapter-main::before {
+        display: inline-block;
+        width: 14px;
+        margin-right: 3px;
+        color: var(--red-ui-secondary-text-color, #777);
+        content: "\f054";
+        font-family: FontAwesome;
+        font-size: 10px;
+        transition: transform 0.16s ease;
+    }
+
+    .cerebrum-compatible-config[open]>summary .cerebrum-detected-adapter-main::before {
+        transform: rotate(90deg);
+    }
+
+    .cerebrum-compatible-config-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 8px;
     }
 
     .cerebrum-compatible-config-field {
@@ -532,7 +567,7 @@
             llmApiKey: { type: "password" }
         },
         inputs: 1,
-        outputs: 5,
+        outputs: 6,
         outputLabels: function (i) {
             switch (i) {
                 case 0: return this._('cerebrumUltimate.outputs.summary');
@@ -540,6 +575,7 @@
                 case 2: return this._('cerebrumUltimate.outputs.assistant');
                 case 3: return this._('cerebrumUltimate.outputs.knxCommands');
                 case 4: return this._('cerebrumUltimate.outputs.ttsUltimate');
+                case 5: return this._('cerebrumUltimate.outputs.homeAssistant');
             }
         },
         icon: "cerebrum-brain.svg",
@@ -567,7 +603,6 @@
                 if ($mount.length && $section.length) $mount.append($section);
             };
             mountTabSection("#cerebrum-mount-assistant-setup", "#cerebrum-tab-llm-connection");
-            mountTabSection("#cerebrum-mount-ets-access", "#cerebrum-tab-ets-access");
             mountTabSection("#cerebrum-mount-assistant-advanced", "#cerebrum-tab-advanced");
             mountTabSection("#cerebrum-mount-chat-adapter", "#cerebrum-tab-chat-adapter");
             mountTabSection("#cerebrum-mount-home-intelligence", "#cerebrum-tab-home-intelligence");
@@ -610,78 +645,6 @@
                 if (!value || value === key) return fallback || "";
                 return value;
             };
-
-            // Same ETS access selector used by the MQTT profile of IoT Bridge.
-            try {
-                const savedSet = new Set(Array.isArray(node.etsExposedGAs) ? node.etsExposedGAs : []);
-                const readOnlySet = new Set(Array.isArray(node.etsReadOnlyGAs) ? node.etsReadOnlyGAs : []);
-                const exposeConfigured = node.etsExposeConfigured === true;
-
-                const updateEtsCount = () => {
-                    const total = $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-cb").length;
-                    const selected = $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-cb:checked").length;
-                    $("#cerebrum-ets-ga-count").text(selected + " / " + total + " " + t("cerebrumUltimate.messages.etsSelected", "selected"));
-                };
-
-                const buildEtsGaList = () => {
-                    const list = $("#cerebrum-ets-ga-list").empty();
-                    const serverId = String($("#node-input-server").val() || "").trim();
-                    if (!serverId) {
-                        list.append($("<div/>").css("color", "#999").text(t("cerebrumUltimate.messages.etsNoGateway", "Select a KNX gateway.")));
-                        updateEtsCount();
-                        return;
-                    }
-                    $.getJSON("knxUltimatecsv?nodeID=" + encodeURIComponent(serverId), function (data) {
-                        list.empty();
-                        if (!Array.isArray(data) || data.length === 0) {
-                            list.append($("<div/>").css("color", "#999").text(t("cerebrumUltimate.messages.etsNoGa", "No group addresses found. Import the ETS list in the KNX gateway.")));
-                            updateEtsCount();
-                            return;
-                        }
-                        data.forEach(function (item) {
-                            if (!item || !item.ga) return;
-                            const row = $("<div/>").addClass("cerebrum-ets-ga-row").css({
-                                display: "flex", gap: "8px", alignItems: "center", padding: "3px 2px",
-                                width: "100%", whiteSpace: "nowrap", cursor: "pointer", borderBottom: "1px solid #f3f3f3"
-                            }).appendTo(list);
-                            const include = $("<input/>", { type: "checkbox", class: "cerebrum-ets-ga-cb", value: item.ga, style: "width:auto; margin:0; flex:0 0 auto;" }).appendTo(row);
-                            include.prop("checked", exposeConfigured ? savedSet.has(item.ga) : true);
-                            $("<span/>").css({ flex: "0 0 auto", fontFamily: "monospace", minWidth: "64px" }).text(item.ga).appendTo(row);
-                            const name = String(item.devicename || item.ga);
-                            $("<span/>").addClass("cerebrum-ets-ga-name").css({ flex: "1 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#444" }).text(name).attr("title", name).appendTo(row);
-                            $("<span/>").css({ flex: "0 0 auto", color: "#888", fontSize: "11px" }).text("DPT" + (item.dpt || "")).appendTo(row);
-                            const readOnlyLabel = $("<label/>").css({ flex: "0 0 auto", display: "flex", alignItems: "center", gap: "3px", margin: "0", fontSize: "11px", color: "#888", cursor: "pointer" }).appendTo(row);
-                            const readOnly = $("<input/>", { type: "checkbox", class: "cerebrum-ets-ga-ro", value: item.ga, style: "width:auto; margin:0;" }).appendTo(readOnlyLabel);
-                            readOnly.prop("checked", readOnlySet.has(item.ga));
-                            $("<span/>").text(t("cerebrumUltimate.messages.etsReadOnly", "Read only")).appendTo(readOnlyLabel);
-                            readOnlyLabel.on("click", function (event) { event.stopPropagation(); });
-                            row.on("click", function (event) {
-                                if (event.target === include[0] || event.target === readOnly[0]) return;
-                                include.prop("checked", !include.prop("checked"));
-                                updateEtsCount();
-                            });
-                        });
-                        $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-cb").on("change", updateEtsCount);
-                        updateEtsCount();
-                    }).fail(function () {
-                        list.empty().append($("<div/>").css("color", "#c0392b").text(t("cerebrumUltimate.messages.etsCsvError", "Unable to load the group address list from the gateway.")));
-                        updateEtsCount();
-                    });
-                };
-
-                $("#cerebrum-ets-ga-all").on("click", function (event) { event.preventDefault(); $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row:visible").find("input.cerebrum-ets-ga-cb").prop("checked", true); updateEtsCount(); });
-                $("#cerebrum-ets-ga-none").on("click", function (event) { event.preventDefault(); $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row:visible").find("input.cerebrum-ets-ga-cb").prop("checked", false); updateEtsCount(); });
-                $("#cerebrum-ets-ga-ro-all").on("click", function (event) { event.preventDefault(); $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row:visible").find("input.cerebrum-ets-ga-ro").prop("checked", true); });
-                $("#cerebrum-ets-ga-ro-none").on("click", function (event) { event.preventDefault(); $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row:visible").find("input.cerebrum-ets-ga-ro").prop("checked", false); });
-                $("#cerebrum-ets-ga-filter").on("input", function () {
-                    const term = String($(this).val() || "").toLowerCase();
-                    $("#cerebrum-ets-ga-list .cerebrum-ets-ga-row").each(function () {
-                        $(this).toggle($(this).text().toLowerCase().indexOf(term) !== -1);
-                    });
-                });
-                $("#node-input-server").on("change.cerebrumEtsAccess", buildEtsGaList);
-                buildEtsGaList();
-            } catch (error) { }
 
             const applyChatEditorOptions = (editor) => {
                 try {
@@ -1190,6 +1153,8 @@
                     params.set("tab", "cerebrum");
                     params.set("cerebrumTab", "conversation");
                     if (prompt) params.set("prompt", String(prompt));
+                } else if (view === "ets-access") {
+                    params.set("tab", "etsAccess");
                 }
                 const accessToken = resolveAccessToken();
                 if (accessToken) params.set("access_token", accessToken);
@@ -1211,6 +1176,11 @@
             $("#cerebrum-open-cerebrum-memory").on("click", function (evt) {
                 evt.preventDefault();
                 openCerebrumWebPage("cerebrum-memory");
+            });
+
+            $("#cerebrum-open-ets-access").on("click", function (evt) {
+                evt.preventDefault();
+                openCerebrumWebPage("ets-access");
             });
 
             const setRefreshModelsBusy = (busy) => {
@@ -1588,18 +1558,6 @@
         oneditsave: function () {
             try { RED.sidebar.show("info"); } catch (error) { }
             try {
-                const checkboxes = $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-cb");
-                if (checkboxes.length > 0) {
-                    const exposed = [];
-                    const readOnly = [];
-                    checkboxes.each(function () { if ($(this).is(":checked")) exposed.push($(this).val()); });
-                    $("#cerebrum-ets-ga-list input.cerebrum-ets-ga-ro").each(function () { if ($(this).is(":checked")) readOnly.push($(this).val()); });
-                    this.etsExposedGAs = exposed;
-                    this.etsReadOnlyGAs = readOnly;
-                    this.etsExposeConfigured = true;
-                }
-            } catch (error) { }
-            try {
                 if (this.chatInputCodeEditor && typeof this.chatInputCodeEditor.getValue === "function") {
                     this.chatInputCode = this.chatInputCodeEditor.getValue();
                     $("#node-input-chatInputCode").val(this.chatInputCode);
@@ -1668,10 +1626,6 @@
                 <div class="cerebrum-accordion-mount" id="cerebrum-mount-assistant-setup"></div>
             </div>
             <div class="cerebrum-accordion-subsection">
-                <h4><i class="fa fa-list"></i> <span data-i18n="cerebrumUltimate.sections.etsAccess"></span></h4>
-                <div class="cerebrum-accordion-mount" id="cerebrum-mount-ets-access"></div>
-            </div>
-            <div class="cerebrum-accordion-subsection">
                 <h4><i class="fa fa-sliders"></i> <span data-i18n="cerebrumUltimate.sections.advanced"></span></h4>
                 <div class="cerebrum-accordion-mount" id="cerebrum-mount-assistant-advanced"></div>
             </div>
@@ -1703,34 +1657,39 @@
                 <p class="cerebrum-compatible-intro" data-i18n="cerebrumUltimate.messages.compatibleNodesHint"></p>
                 <div id="cerebrum-detected-adapters-status" data-i18n="cerebrumUltimate.messages.detectedAdaptersLoading"></div>
                 <div id="cerebrum-compatible-config-list">
-                    <div id="cerebrum-compatible-knx" class="cerebrum-compatible-config" style="display:none;">
-                        <div class="cerebrum-detected-adapter">
-                            <div class="cerebrum-detected-adapter-main">
+                    <details id="cerebrum-compatible-knx" class="cerebrum-compatible-config" style="display:none;">
+                        <summary class="cerebrum-detected-adapter">
+                            <span class="cerebrum-detected-adapter-main">
                                 <strong>KNX Ultimate</strong>
-                                <div class="cerebrum-detected-adapter-package">node-red-contrib-knx-ultimate</div>
-                                <div class="cerebrum-detected-adapter-counts"></div>
-                            </div>
+                                <span class="cerebrum-detected-adapter-package">node-red-contrib-knx-ultimate</span>
+                                <span class="cerebrum-detected-adapter-counts"></span>
+                            </span>
                             <span class="cerebrum-detected-adapter-badge pending" data-i18n="cerebrumUltimate.messages.detectedAdapterConfigure"></span>
-                        </div>
+                        </summary>
                         <div class="form-row cerebrum-compatible-config-field">
                             <label for="node-input-server"><i class="fa fa-server"></i> <span data-i18n="cerebrumUltimate.properties.server"></span></label>
                             <input type="text" id="node-input-server" style="width:70%;">
                         </div>
-                    </div>
-                    <div id="cerebrum-compatible-unifi" class="cerebrum-compatible-config" style="display:none;">
-                        <div class="cerebrum-detected-adapter">
-                            <div class="cerebrum-detected-adapter-main">
-                                <strong>UniFi Ultimate / Protect</strong>
-                                <div class="cerebrum-detected-adapter-package">node-red-contrib-unifi-ultimate</div>
-                                <div class="cerebrum-detected-adapter-counts"></div>
-                            </div>
-                            <span class="cerebrum-detected-adapter-badge pending" data-i18n="cerebrumUltimate.messages.detectedAdapterConfigure"></span>
+                        <div class="cerebrum-compatible-config-actions">
+                            <button type="button" class="red-ui-button" id="cerebrum-open-ets-access">
+                                <i class="fa fa-external-link"></i> <span data-i18n="cerebrumUltimate.buttons.openEtsAccess"></span>
+                            </button>
                         </div>
+                    </details>
+                    <details id="cerebrum-compatible-unifi" class="cerebrum-compatible-config" style="display:none;">
+                        <summary class="cerebrum-detected-adapter">
+                            <span class="cerebrum-detected-adapter-main">
+                                <strong>UniFi Ultimate / Protect</strong>
+                                <span class="cerebrum-detected-adapter-package">node-red-contrib-unifi-ultimate</span>
+                                <span class="cerebrum-detected-adapter-counts"></span>
+                            </span>
+                            <span class="cerebrum-detected-adapter-badge pending" data-i18n="cerebrumUltimate.messages.detectedAdapterConfigure"></span>
+                        </summary>
                         <div class="form-row cerebrum-compatible-config-field">
                             <label for="node-input-unifiProtectConfig"><i class="fa fa-video-camera"></i> <span data-i18n="cerebrumUltimate.properties.unifiProtectConfig"></span></label>
                             <input type="text" id="node-input-unifiProtectConfig" style="width:70%;">
                         </div>
-                    </div>
+                    </details>
                 </div>
                 <div id="cerebrum-detected-adapters-list"></div>
             </div>
@@ -1898,22 +1857,6 @@
             <div class="form-row">
                 <label style="width:100%" for="node-input-aiEducation"><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.properties.aiEducation"></span></label>
                 <textarea id="node-input-aiEducation" maxlength="16000" style="width:100%; min-height:180px; box-sizing:border-box;" data-i18n="[placeholder]cerebrumUltimate.placeholder.aiEducation"></textarea>
-            </div>
-        </div>
-
-        <div id="cerebrum-tab-ets-access">
-            <div class="form-row">
-                <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.etsAccessHint"></div>
-                <div style="margin:8px 0 4px; display:flex; gap:6px; align-items:center;">
-                    <input type="text" id="cerebrum-ets-ga-filter" data-i18n="[placeholder]cerebrumUltimate.messages.etsFilterPlaceholder" style="flex:1 1 auto;">
-                    <button type="button" id="cerebrum-ets-ga-all" class="ui-button ui-corner-all ui-widget" style="width:auto;" data-i18n="cerebrumUltimate.buttons.etsSelectAll"></button>
-                    <button type="button" id="cerebrum-ets-ga-none" class="ui-button ui-corner-all ui-widget" style="width:auto;" data-i18n="cerebrumUltimate.buttons.etsSelectNone"></button>
-                    <span style="border-left:1px solid #ccc; align-self:stretch;"></span>
-                    <button type="button" id="cerebrum-ets-ga-ro-all" class="ui-button ui-corner-all ui-widget" style="width:auto;" data-i18n="[title]cerebrumUltimate.messages.etsReadOnlyBulk;cerebrumUltimate.buttons.etsReadOnlyAll"></button>
-                    <button type="button" id="cerebrum-ets-ga-ro-none" class="ui-button ui-corner-all ui-widget" style="width:auto;" data-i18n="[title]cerebrumUltimate.messages.etsReadOnlyBulk;cerebrumUltimate.buttons.etsReadOnlyNone"></button>
-                </div>
-                <div id="cerebrum-ets-ga-count" style="font-size:11px; color:#666; margin:2px 0;"></div>
-                <div id="cerebrum-ets-ga-list" style="max-height:220px; overflow:auto; border:1px solid #ccc; padding:6px; border-radius:4px; background:#fff;"></div>
             </div>
         </div>
 

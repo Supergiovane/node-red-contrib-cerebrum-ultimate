@@ -65,7 +65,7 @@ Open the Cerebrum node and use **Compatible nodes detected**. Cerebrum shows the
 
 For integrations such as KNX Ultimate and UniFi Protect, the same field lets you select an existing configuration, edit it or create a new one. Nothing is required if you do not use that integration.
 
-## KNX: Areas, Tests and Test Results
+## KNX: ETS Access, Areas, Tests and Test Results
 
 The KNX test workspace is designed for commissioning and troubleshooting. It helps answer practical questions such as:
 
@@ -78,7 +78,9 @@ This is useful when checking a new installation, after changing an ETS project, 
 
 Install KNX Ultimate, select or create its gateway under **Compatible nodes detected**, and make sure the gateway contains your ETS group addresses. Cerebrum then provides this guided path:
 
-`ETS group addresses → Areas → Test plans → Test Results`
+`ETS Access → Areas → Test plans → Test Results`
+
+Open **KNX → ETS Access** in the Cerebrum Web UI to choose the group addresses Cerebrum may use. Selected addresses are readable; selected addresses not marked **Read only** are writable after the normal local validation and, when enabled, user confirmation. Existing selections stored in the Node-RED flow are migrated automatically when this page is first saved.
 
 ### 1. Areas
 
@@ -148,13 +150,13 @@ Each report contains the command used, the received feedback, timing details and
 
 ## Home Assistant
 
-Add **Cerebrum Home Assistant** and connect it through the Home Assistant `ha-api` node:
+Connect Cerebrum's dedicated **Home Assistant** output to a Home Assistant `ha-api` node, then return the API output to Cerebrum's input:
 
 ```text
-Cerebrum Home Assistant → API (ha-api) → Cerebrum Home Assistant
+Cerebrum output 6 (Home Assistant) → API (ha-api) → Cerebrum input
 ```
 
-Deploy the flow and use Setup Doctor if Cerebrum reports a missing connection.
+Select the Home Assistant server in `ha-api`, deploy the flow and use Setup Doctor if Cerebrum reports a missing connection. Cerebrum correlates API responses internally; no additional bridge node is required.
 
 ## Safety and privacy
 

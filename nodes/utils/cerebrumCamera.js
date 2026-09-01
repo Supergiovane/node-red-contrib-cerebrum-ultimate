@@ -1,4 +1,9 @@
-const CEREBRUM_CAMERA_REGISTRY_KEY = Symbol.for('node-red.cerebrum.camera-adapters.v1')
+// Keep the established KNX AI symbol as the canonical vendor-neutral camera
+// contract. UniFi Ultimate and existing third-party camera suites publish here.
+// The Cerebrum-specific alias is retained so adapters built during the
+// standalone extraction continue to resolve the very same registry object.
+const CEREBRUM_CAMERA_REGISTRY_KEY = Symbol.for('node-red.knx-ai.camera-adapters.v1')
+const CEREBRUM_CAMERA_REGISTRY_ALIAS_KEY = Symbol.for('node-red.cerebrum.camera-adapters.v1')
 const CEREBRUM_CAMERA_IMAGE_MAX_BYTES = 6 * 1024 * 1024
 const CEREBRUM_CAMERA_MAX_ACTIONS = 8
 
@@ -25,8 +30,15 @@ const uniqueTexts = values => Array.from(new Set((Array.isArray(values) ? values
 // The global Symbol lets separately installed Node-RED packages share the same
 // in-process registry without either package importing the other one.
 const getCerebrumCameraAdapterRegistry = () => {
-  const existing = globalThis[CEREBRUM_CAMERA_REGISTRY_KEY]
-  if (existing && existing.version === 1 && existing.adapters instanceof Map && existing.providers instanceof Map) return existing
+  const isCompatibleRegistry = value => value && value.version === 1 && value.adapters instanceof Map && value.providers instanceof Map
+  const canonical = globalThis[CEREBRUM_CAMERA_REGISTRY_KEY]
+  const alias = globalThis[CEREBRUM_CAMERA_REGISTRY_ALIAS_KEY]
+  const existing = isCompatibleRegistry(canonical) ? canonical : (isCompatibleRegistry(alias) ? alias : null)
+  if (existing) {
+    globalThis[CEREBRUM_CAMERA_REGISTRY_KEY] = existing
+    globalThis[CEREBRUM_CAMERA_REGISTRY_ALIAS_KEY] = existing
+    return existing
+  }
   const registry = {
     version: 1,
     adapters: new Map(),
@@ -62,6 +74,7 @@ const getCerebrumCameraAdapterRegistry = () => {
     }
   }
   globalThis[CEREBRUM_CAMERA_REGISTRY_KEY] = registry
+  globalThis[CEREBRUM_CAMERA_REGISTRY_ALIAS_KEY] = registry
   return registry
 }
 
@@ -286,6 +299,7 @@ const buildCerebrumCameraNotificationText = ({ language, event } = {}) => {
 module.exports = {
   CEREBRUM_CAMERA_IMAGE_MAX_BYTES,
   CEREBRUM_CAMERA_MAX_ACTIONS,
+  CEREBRUM_CAMERA_REGISTRY_ALIAS_KEY,
   CEREBRUM_CAMERA_REGISTRY_KEY,
   buildCerebrumCameraNotificationText,
   cameraWatchMatchesEvent,

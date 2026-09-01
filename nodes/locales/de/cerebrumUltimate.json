@@ -45,7 +45,8 @@
       "anomalies": "Anomalien",
       "assistant": "KI-Assistent",
       "knxCommands": "KNX-Operationen",
-      "ttsUltimate": "TTS-Ultimate-Ansagen"
+      "ttsUltimate": "TTS-Ultimate-Ansagen",
+      "homeAssistant": "Home Assistant (ha-api)"
     },
     "selectlists": {
       "llmProvider": {
@@ -229,6 +230,7 @@
       "downloadOllamaModel": "1) Download model",
       "openChatLearning": "Cerebrum-Lernen öffnen",
       "openCerebrumMemory": "Cerebrum-Speicher öffnen",
+      "openEtsAccess": "GA-Zugriff konfigurieren",
       "etsSelectAll": "Alle auswählen",
       "etsSelectNone": "Alle abwählen",
       "etsReadOnlyAll": "Nur lesen setzen",

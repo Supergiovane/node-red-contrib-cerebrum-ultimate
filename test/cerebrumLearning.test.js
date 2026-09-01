@@ -1,5 +1,8 @@
 const { expect } = require('chai')
 const { EventEmitter } = require('events')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
 
 const {
   buildCerebrumLearningPromptContext,
@@ -11,13 +14,13 @@ const {
 } = require('../nodes/utils/cerebrumLearning')
 const { buildCerebrumSetupDoctorSnapshot, summarizeCerebrumFlowWiring } = require('../nodes/cerebrumUltimate').__test
 
-describe('Cerebrum discovery and Home Assistant bridge', () => {
+describe('Cerebrum discovery and Home Assistant round trip', () => {
   it('discovers flow logic, HUE, Matter and a complete ha-api round trip', () => {
     const flowNodes = [
       { id: 'ha-server', type: 'server', addon: true },
-      { id: 'bridge', type: 'cerebrumHomeAssistant', wires: [['ha-api']] },
-      { id: 'ha-api', type: 'ha-api', wires: [['bridge']] },
-      { id: 'ha-events', type: 'server-state-changed', wires: [['bridge']] },
+      { id: 'cerebrum', type: 'cerebrumUltimate', wires: [[], [], [], [], [], ['ha-api']] },
+      { id: 'ha-api', type: 'ha-api', wires: [['cerebrum']] },
+      { id: 'ha-events', type: 'server-state-changed', wires: [['cerebrum']] },
       { id: 'logic', type: 'function', func: 'return msg', wires: [] },
       { id: 'hue', type: 'knxUltimateHueController', wires: [] },
       { id: 'matter', type: 'knxUltimateMatterControllerDevice', wires: [] }
@@ -30,7 +33,7 @@ describe('Cerebrum discovery and Home Assistant bridge', () => {
     expect(snapshot.homeAssistant).to.include({
       addonDetected: true,
       apiNodePresent: true,
-      bridgeNodePresent: true,
+      cerebrumNodePresent: true,
       roundTripWired: true,
       ready: true,
       recommendationCode: 'ready'
@@ -58,7 +61,7 @@ describe('Cerebrum discovery and Home Assistant bridge', () => {
       gateway: { configured: true, connectionState: 'connected' },
       llm: { enabled: true, provider: 'ollama', baseUrl: 'http://localhost/api/chat', model: 'local' },
       catalog: [{ ga: '1/1/1', dpt: '1.001', label: 'Luce', semantic: { kind: 'light' } }],
-      wiring: summarizeCerebrumFlowWiring({ wires: [[], [], [], [], []] }),
+      wiring: summarizeCerebrumFlowWiring({ wires: [[], [], [], [], [], []] }),
       integrations: { cerebrum: snapshot },
       providerProbe: { state: 'reachable', modelCount: 1 }
     })
@@ -175,38 +178,63 @@ describe('Cerebrum discovery and Home Assistant bridge', () => {
     expect(context).not.to.include('must-not-leak')
   })
 
-  it('routes dynamic get_states requests through ha-api and correlates the response', async () => {
+  it('routes dynamic get_states requests through Cerebrum output 6 and correlates the ha-api response', async () => {
+    const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-ha-round-trip-'))
     let Constructor
     const sent = []
+    const noop = () => {}
+    const flowNodes = [
+      { id: 'cerebrum-ha-test', type: 'cerebrumUltimate', wires: [[], [], [], [], [], ['ha-api-test']] },
+      { id: 'ha-api-test', type: 'ha-api', wires: [['cerebrum-ha-test']] }
+    ]
     const RED = {
+      auth: { needsPermission: () => noop },
+      httpAdmin: { get: noop, post: noop, use: noop },
+      settings: { userDir, httpAdminRoot: '/' },
       nodes: {
         createNode (node) {
           const emitter = new EventEmitter()
-          node.id = 'ha-bridge-test'
-          node.type = 'cerebrumHomeAssistant'
+          node.id = 'cerebrum-ha-test'
+          node.type = 'cerebrumUltimate'
+          node.credentials = {}
           node.on = emitter.on.bind(emitter)
           node.emit = emitter.emit.bind(emitter)
-          node.send = message => sent.push(message)
+          node.send = outputs => sent.push(outputs)
           node.status = () => {}
+          node.warn = () => {}
           node.error = () => {}
+          node.log = () => {}
         },
+        eachNode: callback => flowNodes.forEach(callback),
+        getNode: () => undefined,
         registerType (type, ctor) {
-          if (type === 'cerebrumHomeAssistant') Constructor = ctor
+          if (type === 'cerebrumUltimate') Constructor = ctor
         }
-      }
+      },
+      util: { cloneMessage: message => JSON.parse(JSON.stringify(message)) }
     }
-    require('../nodes/cerebrumHomeAssistant')(RED)
-    const bridge = new Constructor({ requestTimeoutMs: 3000 })
+    require('../nodes/cerebrumUltimate')(RED)
+    const cerebrum = new Constructor({
+      name: 'Cerebrum HA',
+      server: '',
+      unifiProtectConfig: '',
+      llmEnabled: false,
+      etsExposedGAs: [],
+      etsReadOnlyGAs: [],
+      wires: flowNodes[0].wires
+    })
     const registry = getCerebrumHomeAutomationRegistry()
-    const provider = registry.providers.get('ha-bridge-test')
+    const providerId = 'cerebrum-ultimate:cerebrum-ha-test:home-assistant'
+    const provider = registry.providers.get(providerId)
+    expect(provider.isReady()).to.equal(true)
     const pending = provider.listEntities()
 
-    expect(sent).to.have.length(1)
-    expect(sent[0].payload).to.deep.include({ protocol: 'websocket', location: 'payload', locationType: 'msg' })
-    expect(sent[0].payload.data).to.deep.equal({ type: 'get_states' })
-    bridge.emit('input', {
+    const request = sent[sent.length - 1][5]
+    expect(request.payload).to.deep.include({ protocol: 'websocket', location: 'payload', locationType: 'msg' })
+    expect(request.payload.data).to.deep.equal({ type: 'get_states' })
+    cerebrum.emit('input', {
       payload: [{ entity_id: 'sensor.temperature', state: '21.5' }],
-      cerebrum: sent[0].cerebrum
+      cerebrum: request.cerebrum
     })
     expect(await pending).to.deep.equal([{ entity_id: 'sensor.temperature', state: '21.5' }])
 
@@ -219,7 +247,8 @@ describe('Cerebrum discovery and Home Assistant bridge', () => {
     expect(deniedError).to.be.an('error')
     expect(deniedError.message).to.include('confirmation authorization')
 
-    await new Promise(resolve => bridge.emit('close', resolve))
-    expect(registry.providers.has('ha-bridge-test')).to.equal(false)
+    await new Promise(resolve => cerebrum.emit('close', resolve))
+    expect(registry.providers.has(providerId)).to.equal(false)
+    fs.rmSync(userDir, { recursive: true, force: true })
   })
 })

@@ -43,7 +43,7 @@ describe('example flows', function () {
         }
 
         if (node.type === 'cerebrumUltimate') {
-          expect(node.wires, `${file}: Cerebrum exposes five outputs`).to.be.an('array').with.lengthOf(5)
+          expect(node.wires, `${file}: Cerebrum exposes six outputs`).to.be.an('array').with.lengthOf(6)
           expect(node.llmRequireCommandConfirmation, `${file}: confirmation remains enabled`).to.equal(true)
         }
 

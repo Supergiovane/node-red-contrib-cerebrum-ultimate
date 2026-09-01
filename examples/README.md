@@ -8,7 +8,7 @@ Start with **01 - First Conversation**. Open the Cerebrum node, configure an AI 
 
 1. First conversation
 2. Onboarding and summary
-3. All five outputs
+3. Five general outputs (Home Assistant uses the dedicated sixth output shown in example 8)
 4. Independent chat sessions
 5. Reminders and monitors
 6. Web intelligence

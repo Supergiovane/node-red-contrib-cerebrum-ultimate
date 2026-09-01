@@ -4,14 +4,14 @@
     "type": "tab",
     "label": "Cerebrum · Home Assistant",
     "disabled": false,
-    "info": "Connect Cerebrum to Home Assistant through the optional Home Assistant WebSocket nodes."
+    "info": "Connect Cerebrum output 6 to Home Assistant ha-api, then return ha-api output to the Cerebrum input."
   },
   {
     "id": "ce08000000000002",
     "type": "comment",
     "z": "ce08000000000001",
     "name": "Configure Home Assistant before deploying",
-    "info": "Install node-red-contrib-home-assistant-websocket. Open the Home Assistant API node below, select your Home Assistant server, then deploy. The Cerebrum bridge sends requests to the API node and receives its responses.",
+    "info": "Install node-red-contrib-home-assistant-websocket. Open the Home Assistant API node below, select your Home Assistant server, then deploy. Cerebrum output 6 sends requests to ha-api; its output returns correlated responses to the Cerebrum input.",
     "x": 290,
     "y": 80,
     "wires": []
@@ -44,17 +44,7 @@
     "aiEducation": "",
     "x": 170,
     "y": 180,
-    "wires": [[], [], [], [], []]
-  },
-  {
-    "id": "ce08000000000004",
-    "type": "cerebrumHomeAssistant",
-    "z": "ce08000000000001",
-    "name": "Cerebrum Home Assistant",
-    "requestTimeoutMs": 15000,
-    "x": 230,
-    "y": 290,
-    "wires": [["ce08000000000005"]]
+    "wires": [[], [], [], [], [], ["ce08000000000005"]]
   },
   {
     "id": "ce08000000000005",
@@ -80,7 +70,7 @@
     ],
     "x": 560,
     "y": 290,
-    "wires": [["ce08000000000004", "ce08000000000006"]]
+    "wires": [["ce08000000000003", "ce08000000000006"]]
   },
   {
     "id": "ce08000000000006",
