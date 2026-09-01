@@ -628,8 +628,18 @@
             const resolveAdminRoot = () => {
                 const raw = (RED.settings && typeof RED.settings.httpAdminRoot === "string") ? RED.settings.httpAdminRoot : "/";
                 const trimmed = String(raw || "/").trim();
-                if (trimmed === "" || trimmed === "/") return "";
-                return "/" + trimmed.replace(/^\/+|\/+$/g, "");
+                const configuredRoot = (trimmed === "" || trimmed === "/")
+                    ? ""
+                    : "/" + trimmed.replace(/^\/+|\/+$/g, "");
+                try {
+                    // Home Assistant exposes the Node-RED editor below a dynamic
+                    // ingress prefix that is intentionally absent from httpAdminRoot.
+                    // Preserve that prefix when opening Cerebrum in a new tab.
+                    const currentPath = String(window.location.pathname || "");
+                    const ingressMatch = currentPath.match(/^(.*\/api\/hassio_ingress\/[^/]+)(?:\/|$)/);
+                    if (ingressMatch && ingressMatch[1]) return ingressMatch[1].replace(/\/+$/g, "");
+                } catch (error) { }
+                return configuredRoot;
             };
             const resolveAccessToken = () => {
                 try {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.5 — 2026-09-01
+
+- Fixed Cerebrum web dashboard links under the Home Assistant add-on by preserving the dynamic Ingress prefix instead of routing requests to the Home Assistant root.
+
 ## 0.0.4 — 2026-09-01
 
 - Added the branded Max Supervibe README, Cerebrum artwork, npm badges and a concise first-time-user guide.

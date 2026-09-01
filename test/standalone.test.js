@@ -7,6 +7,7 @@ const fs = require('fs')
 const Module = require('module')
 const os = require('os')
 const path = require('path')
+const vm = require('vm')
 
 const packageRoot = path.resolve(__dirname, '..')
 const manifest = require('../package.json')
@@ -114,6 +115,26 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(editor).to.include('outputs: 6')
     expect(editor).to.include("case 5: return this._('cerebrumUltimate.outputs.homeAssistant')")
     expect(editor).to.include('RED.nodes.registerType(\'cerebrumUltimate\'')
+  })
+
+  it('opens the web dashboard through the Home Assistant ingress prefix', () => {
+    const editor = fs.readFileSync(path.join(packageRoot, 'nodes', 'cerebrumUltimate.html'), 'utf8')
+    const resolverSource = editor.match(/const resolveAdminRoot = \(\) => \{[\s\S]*?\n {12}\};(?=\n {12}const resolveAccessToken)/)
+    expect(resolverSource).not.to.equal(null)
+    const resolve = (RED, window) => {
+      const context = { RED, window, resolvedAdminRoot: '' }
+      vm.runInNewContext(`${resolverSource[0]} resolvedAdminRoot = resolveAdminRoot();`, context)
+      return context.resolvedAdminRoot
+    }
+
+    expect(resolve(
+      { settings: { httpAdminRoot: '/' } },
+      { location: { pathname: '/api/hassio_ingress/session-token/' } }
+    )).to.equal('/api/hassio_ingress/session-token')
+    expect(resolve(
+      { settings: { httpAdminRoot: '/red' } },
+      { location: { pathname: '/red/' } }
+    )).to.equal('/red')
   })
 
   it('selects only the configured UniFi Protect provider while leaving generic adapters automatic', () => {
