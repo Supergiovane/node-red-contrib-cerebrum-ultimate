@@ -1,7 +1,35 @@
+# Dependencies
 node_modules/
+
+# Test and local build output
 coverage/
 .cache/
-.DS_Store
+*.tgz
+
+# Logs
 npm-debug.log*
-AGENTS/*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+
+# Operating systems and editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local agent instructions and state
 AGENTS/
+AGENTS.md
+CODEX_HANDOFF.md
+.agents/
+.codex/

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.2 — 2026-09-01
+
+- Added the branded Max Supervibe README, Cerebrum artwork, npm badges and a concise first-time-user guide.
+- Added 15 safe, importable Node-RED example flows covering conversations, memory, schedules, Web intelligence, Home Assistant, Telegram, TTS and supervised KNX workflows.
+- Expanded npm discovery metadata with AI, LLM, local AI, semantic memory, tool calling, human-in-the-loop and intelligent-automation keywords.
+
 ## 0.0.1 — 2026-09-01
 
 - Extracted Cerebrum into the standalone `node-red-contrib-cerebrum-ultimate` package and introduced the new `cerebrumUltimate` node type.
