@@ -1,0 +1,102 @@
+[
+  {
+    "id": "ce08000000000001",
+    "type": "tab",
+    "label": "Cerebrum · Home Assistant",
+    "disabled": false,
+    "info": "Connect Cerebrum to Home Assistant through the optional Home Assistant WebSocket nodes."
+  },
+  {
+    "id": "ce08000000000002",
+    "type": "comment",
+    "z": "ce08000000000001",
+    "name": "Configure Home Assistant before deploying",
+    "info": "Install node-red-contrib-home-assistant-websocket. Open the Home Assistant API node below, select your Home Assistant server, then deploy. The Cerebrum bridge sends requests to the API node and receives its responses.",
+    "x": 290,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "ce08000000000003",
+    "type": "cerebrumUltimate",
+    "z": "ce08000000000001",
+    "server": "",
+    "unifiProtectConfig": "",
+    "name": "Cerebrum",
+    "topic": "",
+    "llmEnabled": false,
+    "llmProvider": "openai_compat",
+    "llmBaseUrl": "https://api.openai.com/v1/chat/completions",
+    "llmModel": "gpt-5.4",
+    "llmReasoningEffort": "default",
+    "llmContextLength": 0,
+    "llmLocalContextTokens": 0,
+    "llmAllowKnxCommands": false,
+    "llmRequireCommandConfirmation": true,
+    "etsExposedGAs": [],
+    "etsReadOnlyGAs": [],
+    "etsExposeConfigured": false,
+    "webAccessEnabled": true,
+    "webMaxCallsPerHour": 40,
+    "chatAdapterPreset": "none",
+    "chatInputCode": "",
+    "chatOutputCode": "",
+    "aiEducation": "",
+    "x": 170,
+    "y": 180,
+    "wires": [[], [], [], [], []]
+  },
+  {
+    "id": "ce08000000000004",
+    "type": "cerebrumHomeAssistant",
+    "z": "ce08000000000001",
+    "name": "Cerebrum Home Assistant",
+    "requestTimeoutMs": 15000,
+    "x": 230,
+    "y": 290,
+    "wires": [["ce08000000000005"]]
+  },
+  {
+    "id": "ce08000000000005",
+    "type": "ha-api",
+    "z": "ce08000000000001",
+    "name": "Select Home Assistant server",
+    "server": "",
+    "version": 1,
+    "debugenabled": false,
+    "protocol": "websocket",
+    "method": "get",
+    "path": "",
+    "data": "",
+    "dataType": "jsonata",
+    "responseType": "json",
+    "outputProperties": [
+      {
+        "property": "payload",
+        "propertyType": "msg",
+        "value": "",
+        "valueType": "results"
+      }
+    ],
+    "x": 560,
+    "y": 290,
+    "wires": [["ce08000000000004", "ce08000000000006"]]
+  },
+  {
+    "id": "ce08000000000006",
+    "type": "debug",
+    "z": "ce08000000000001",
+    "name": "Home Assistant response",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 870,
+    "y": 290,
+    "wires": []
+  }
+]

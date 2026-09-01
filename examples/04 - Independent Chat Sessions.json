@@ -1,0 +1,100 @@
+[
+  {
+    "id": "ce04000000000001",
+    "type": "tab",
+    "label": "Cerebrum 04 - Independent Chat Sessions",
+    "disabled": false,
+    "info": "Two users keep separate recent conversations, pending confirmations and schedules."
+  },
+  {
+    "id": "ce04000000000002",
+    "type": "comment",
+    "z": "ce04000000000001",
+    "name": "Each msg.sessionId identifies one independent conversation",
+    "info": "Click the questions in any order and inspect msg.cerebrum.sessionId in the replies.",
+    "x": 330,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "ce04000000000003",
+    "type": "inject",
+    "z": "ce04000000000001",
+    "name": "Alice asks a question",
+    "props": [
+      { "p": "topic", "v": "ask", "vt": "str" },
+      { "p": "prompt", "v": "Remember that I am Alice. What name should you use for me?", "vt": "str" },
+      { "p": "sessionId", "v": "alice", "vt": "str" }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 170,
+    "wires": [["ce04000000000005"]]
+  },
+  {
+    "id": "ce04000000000004",
+    "type": "inject",
+    "z": "ce04000000000001",
+    "name": "Bob asks a question",
+    "props": [
+      { "p": "topic", "v": "ask", "vt": "str" },
+      { "p": "prompt", "v": "Remember that I am Bob. What name should you use for me?", "vt": "str" },
+      { "p": "sessionId", "v": "bob", "vt": "str" }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 160,
+    "y": 230,
+    "wires": [["ce04000000000005"]]
+  },
+  {
+    "id": "ce04000000000005",
+    "type": "cerebrumUltimate",
+    "z": "ce04000000000001",
+    "name": "Cerebrum",
+    "server": "",
+    "unifiProtectConfig": "",
+    "topic": "",
+    "llmEnabled": false,
+    "llmProvider": "openai_compat",
+    "llmBaseUrl": "https://api.openai.com/v1/chat/completions",
+    "llmModel": "gpt-5.4",
+    "llmReasoningEffort": "default",
+    "llmContextLength": 0,
+    "llmLocalContextTokens": 0,
+    "llmAllowKnxCommands": false,
+    "llmRequireCommandConfirmation": true,
+    "etsExposedGAs": [],
+    "etsReadOnlyGAs": [],
+    "etsExposeConfigured": false,
+    "webAccessEnabled": true,
+    "webMaxCallsPerHour": 40,
+    "chatAdapterPreset": "none",
+    "chatInputCode": "",
+    "chatOutputCode": "",
+    "aiEducation": "",
+    "x": 430,
+    "y": 200,
+    "wires": [[], [], ["ce04000000000006"], [], []]
+  },
+  {
+    "id": "ce04000000000006",
+    "type": "debug",
+    "z": "ce04000000000001",
+    "name": "Session replies",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 680,
+    "y": 200,
+    "wires": []
+  }
+]

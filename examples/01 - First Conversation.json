@@ -1,0 +1,82 @@
+[
+  {
+    "id": "ce01000000000001",
+    "type": "tab",
+    "label": "Cerebrum 01 - First Conversation",
+    "disabled": false,
+    "info": "Configure the Cerebrum AI provider, deploy, then click the Inject node."
+  },
+  {
+    "id": "ce01000000000002",
+    "type": "comment",
+    "z": "ce01000000000001",
+    "name": "1. Open Cerebrum and configure an AI provider\n2. Deploy\n3. Click the question",
+    "info": "The answer appears in the Debug sidebar from output 3 (Cerebrum).",
+    "x": 340,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "ce01000000000003",
+    "type": "inject",
+    "z": "ce01000000000001",
+    "name": "Ask what Cerebrum can do",
+    "props": [
+      { "p": "topic", "v": "ask", "vt": "str" },
+      { "p": "prompt", "v": "Explain in a few simple sentences what you can help me do in my smart home.", "vt": "str" },
+      { "p": "sessionId", "v": "example-user", "vt": "str" }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 180,
+    "wires": [["ce01000000000004"]]
+  },
+  {
+    "id": "ce01000000000004",
+    "type": "cerebrumUltimate",
+    "z": "ce01000000000001",
+    "name": "Cerebrum",
+    "server": "",
+    "unifiProtectConfig": "",
+    "topic": "",
+    "llmEnabled": false,
+    "llmProvider": "openai_compat",
+    "llmBaseUrl": "https://api.openai.com/v1/chat/completions",
+    "llmModel": "gpt-5.4",
+    "llmReasoningEffort": "default",
+    "llmContextLength": 0,
+    "llmLocalContextTokens": 0,
+    "llmAllowKnxCommands": false,
+    "llmRequireCommandConfirmation": true,
+    "etsExposedGAs": [],
+    "etsReadOnlyGAs": [],
+    "etsExposeConfigured": false,
+    "webAccessEnabled": true,
+    "webMaxCallsPerHour": 40,
+    "chatAdapterPreset": "none",
+    "chatInputCode": "",
+    "chatOutputCode": "",
+    "aiEducation": "",
+    "x": 430,
+    "y": 180,
+    "wires": [[], [], ["ce01000000000005"], [], []]
+  },
+  {
+    "id": "ce01000000000005",
+    "type": "debug",
+    "z": "ce01000000000001",
+    "name": "Cerebrum answer",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 700,
+    "y": 180,
+    "wires": []
+  }
+]
