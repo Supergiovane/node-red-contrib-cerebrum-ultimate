@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.6 — 2026-09-02
+
+- Added a read-only `historyActions` tool that lets the conversational model autonomously query decoded KNX archive records by time range, source/destination, event, DPT and text, then refine the query in a second reasoning pass.
+- Added an opt-in privileged local JavaScript tool for the conversational model. Generated synchronous code can inspect the live Node-RED runtime through direct `node` and `RED` access, and its bounded result is returned to the model for the next reasoning pass.
+- Added explicit editor and documentation warnings that privileged JavaScript is not a security sandbox and that runtime results are sent to the configured AI provider.
+
 ## 0.0.5 — 2026-09-01
 
 - Fixed Cerebrum web dashboard links under the Home Assistant add-on by preserving the dynamic Ingress prefix instead of routing requests to the Home Assistant root.

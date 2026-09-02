@@ -164,6 +164,20 @@ Cerebrum separates observation, suggestion, confirmation and execution. A learne
 
 Home data stays local unless a configured remote AI provider needs it to answer a request. For a fully local setup, use a compatible local provider such as Ollama or LM Studio.
 
+### Autonomous KNX history queries
+
+The conversational model has a read-only `historyActions` tool for the daily KNX archive. It can autonomously query a precise ISO 8601 time range, filter by destination or source address, event type, DPT and free text, optionally request raw hex, and receive both decoded telegrams and aggregate counts in a following reasoning pass. Empty dates query the latest 20 minutes. Requests are clamped to the 10-day archive retention and never expose a general filesystem API.
+
+Each pass accepts up to two queries with at most 200 returned telegrams per query, and the model may perform a second, narrower history pass when the first result suggests further investigation. Results are bounded to the active model context and, like other prompt data, are sent to the configured AI provider.
+
+### Privileged local JavaScript
+
+The advanced **Allow the AI to run privileged local JavaScript** option is off by default. When enabled, the conversational model may generate a synchronous JavaScript function body that Cerebrum executes locally with direct access to the live `node` and `RED` runtime objects, plus the current `question` and `sessionId`. The returned JSON-compatible value is supplied to the model in a following pass so it can inspect Node-RED state before answering.
+
+This feature is intentionally powerful and is **not a security sandbox**. Direct runtime access can mutate Node-RED state, reach capabilities exposed by installed nodes and, in practice, operate with the permissions of the Node-RED process. Enable it only with a model and instructions you trust. Prefer a local model when runtime data must remain local: execution results become part of the next model request and can therefore leave the system when a remote provider is selected. Cerebrum asks the model to inspect rather than mutate and omits obvious credential-like result fields, but neither measure is a security boundary.
+
+Execution is synchronous and bounded to one action per model pass, at most two execution passes, 12,000 source characters, 500 ms per script and a 64 KB serialized result. These limits protect responsiveness and context size; they do not restrict which `node` or `RED` methods the generated code can call.
+
 ## Local memory and backup
 
 Cerebrum stores its memory inside the Node-RED user directory. The Web interface provides simple views for **Cerebrum Memory** and **Cerebrum Learning**, plus **Settings → Import / Export** for backups.

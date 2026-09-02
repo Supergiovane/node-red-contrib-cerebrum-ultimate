@@ -553,6 +553,7 @@
             llmLocalContextTokens: { value: 0 },
             llmAllowKnxCommands: { value: false },
             llmRequireCommandConfirmation: { value: true },
+            llmAllowRuntimeCode: { value: false },
             etsExposedGAs: { value: [] },
             etsReadOnlyGAs: { value: [] },
             etsExposeConfigured: { value: false },
@@ -1872,6 +1873,11 @@
 
         <div id="cerebrum-tab-advanced">
             <div id="cerebrum-llm-advanced-settings">
+                <div class="form-row">
+                    <input type="checkbox" id="node-input-llmAllowRuntimeCode" style="display:inline-block; width:auto; vertical-align:top;">
+                    <label style="width:auto" for="node-input-llmAllowRuntimeCode">&nbsp;&nbsp;<span data-i18n="cerebrumUltimate.properties.llmAllowRuntimeCode"></span></label>
+                    <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.runtimeCodeHint"></div>
+                </div>
                 <div class="form-row">
                     <label style="width:290px" for="node-input-llmBaseUrl"><i class="fa fa-link"></i> <span data-i18n="cerebrumUltimate.properties.llmBaseUrl"></span></label>
                     <input type="text" id="node-input-llmBaseUrl" data-i18n="[placeholder]cerebrumUltimate.placeholder.llmBaseUrl">
