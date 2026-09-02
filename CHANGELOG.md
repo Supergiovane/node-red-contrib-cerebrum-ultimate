@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.7 — 2026-09-02
+
+- Fixed autonomous KNX state refreshes in Universal mode so every `GroupValue_Read` carries the mandatory `msg.readstatus = true` flag and cannot fall through to a bus write.
+- Added **Cerebrum Operations** beside Cerebrum Memory in the Web dashboard. It merges the last three days of KNX telegrams with a persistent audit of LLM requests, structured tools, KNX commands and reads, schedules, camera/TTS/memory actions, autonomous state refreshes, habit learning and proactive notifications.
+- Added category totals, search, filters, outcome and duration indicators, expandable technical details, automatic refresh while open, fixed three-day audit retention and credential redaction.
+
 ## 0.0.6 — 2026-09-02
 
 - Added a read-only `historyActions` tool that lets the conversational model autonomously query decoded KNX archive records by time range, source/destination, event, DPT and text, then refine the query in a second reasoning pass.

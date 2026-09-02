@@ -123,6 +123,15 @@ const {
   normalizeCerebrumCodeActions
 } = require('./utils/cerebrumRuntimeCode')
 const {
+  CEREBRUM_OPERATIONS_DEFAULT_LIMIT,
+  CEREBRUM_OPERATIONS_MAX_LIMIT,
+  CEREBRUM_OPERATIONS_RETENTION_DAYS,
+  buildCerebrumOperationsSnapshot,
+  normalizeCerebrumOperation,
+  parseCerebrumOperationRecord,
+  serializeCerebrumOperationRecord
+} = require('./utils/cerebrumOperations')
+const {
   CEREBRUM_CATALOG_MAX_ACTIONS_PER_ROUND,
   CEREBRUM_CATALOG_MAX_RESEARCH_ROUNDS,
   CEREBRUM_CATALOG_MAX_RESULTS_PER_ACTION,
@@ -2787,6 +2796,30 @@ const applyCerebrumChatConfirmationPresetFallback = ({ preset, message } = {}) =
   return message
 }
 
+const buildCerebrumUniversalReadMessage = message => {
+  const source = message && typeof message === 'object' ? message : {}
+  const destination = source.destination || source.topic
+  return Object.assign({}, source, {
+    topic: destination,
+    destination,
+    payload: '',
+    event: 'GroupValue_Read',
+    readstatus: true
+  })
+}
+
+const buildCerebrumStateRefreshMessage = ({ destination, dpt, requestedAt }) => buildCerebrumUniversalReadMessage({
+  topic: destination,
+  destination,
+  dpt,
+  cerebrum: {
+    type: 'cerebrum_state_refresh',
+    autonomous: true,
+    source: 'state_reconciler',
+    requestedAt
+  }
+})
+
 const buildCerebrumUniversalMessage = ({
   command,
   question,
@@ -2815,8 +2848,9 @@ const buildCerebrumUniversalMessage = ({
       reason: operation.reason || ''
     }
   }
-  if (event === 'GroupValue_Read') outputMessage.readstatus = true
-  return outputMessage
+  return event === 'GroupValue_Read'
+    ? buildCerebrumUniversalReadMessage(outputMessage)
+    : outputMessage
 }
 
 const formatCerebrumCommandPreview = ({ commands, copy, routine, readResults }) => {
@@ -6318,6 +6352,24 @@ module.exports = function (RED) {
       }
     })
 
+    RED.httpAdmin.get('/cerebrumUltimate/sidebar/operations', RED.auth.needsPermission('cerebrumUltimate.read'), async (req, res) => {
+      try {
+        const nodeId = req.query?.nodeId ? String(req.query.nodeId) : ''
+        if (!nodeId) {
+          res.status(400).json({ error: 'Missing nodeId' })
+          return
+        }
+        const n = aiRuntimeNodes.get(nodeId) || RED.nodes.getNode(nodeId)
+        if (!n || n.type !== 'cerebrumUltimate' || typeof n.getCerebrumOperationsSnapshot !== 'function') {
+          res.status(404).json({ error: 'Cerebrum node not found' })
+          return
+        }
+        res.json(await n.getCerebrumOperationsSnapshot({ limit: req.query?.limit }))
+      } catch (error) {
+        res.status(error.status || 500).json({ error: error.message || String(error) })
+      }
+    })
+
     RED.httpAdmin.get('/cerebrumUltimate/sidebar/ets-access', RED.auth.needsPermission('cerebrumUltimate.read'), async (req, res) => {
       try {
         const nodeId = req.query?.nodeId ? String(req.query.nodeId) : ''
@@ -8763,6 +8815,13 @@ module.exports = function (RED) {
 
     const getHistoryArchiveFile = (dayKey) => path.join(getHistoryArchiveDir(), `${String(dayKey || '').trim() || formatArchiveDayKey(Date.now())}.${CEREBRUM_COMPACT_ARCHIVE_EXTENSION}`)
 
+    const getOperationsArchiveDir = () => {
+      const baseDir = node.cerebrumStorageDir
+      return path.join(baseDir, 'cerebrum', 'operations', getSafeStorageNodeId())
+    }
+
+    const getOperationsArchiveFile = dayKey => path.join(getOperationsArchiveDir(), `${String(dayKey || '').trim() || formatArchiveDayKey(Date.now())}.jsonl`)
+
     const getAdapterHistoryArchiveDir = () => {
       const baseDir = node.cerebrumStorageDir
       return path.join(baseDir, 'cerebrum', 'adapter-history', node.id)
@@ -9501,6 +9560,90 @@ module.exports = function (RED) {
         node.sysLogger?.warn(`Cerebrum history load slice error: ${error.message || error}`)
         return emptyAccumulator()
       }
+    }
+
+    const pruneCerebrumOperationFiles = ({ force = false } = {}) => {
+      const now = nowMs()
+      if (!force && (now - Number(node._operationsLastPruneAt || 0)) < (60 * 60 * 1000)) return
+      node._operationsLastPruneAt = now
+      const dirPath = getOperationsArchiveDir()
+      try {
+        if (!fs.existsSync(dirPath)) return
+        const cutoffDayKey = formatArchiveDayKey(now - (CEREBRUM_OPERATIONS_RETENTION_DAYS * 24 * 60 * 60 * 1000))
+        fs.readdirSync(dirPath, { withFileTypes: true }).forEach(entry => {
+          if (!entry || !entry.isFile()) return
+          const match = String(entry.name || '').match(/^(\d{4}-\d{2}-\d{2})\.jsonl$/)
+          if (!match || match[1] >= cutoffDayKey) return
+          try { fs.unlinkSync(path.join(dirPath, entry.name)) } catch (error) { /* best effort */ }
+        })
+      } catch (error) {
+        try { node.sysLogger?.warn(`Cerebrum operations prune error: ${error.message || error}`) } catch (logError) { /* ignore */ }
+      }
+    }
+
+    const recordCerebrumOperation = entry => {
+      try {
+        const operation = normalizeCerebrumOperation(entry)
+        const archiveDir = getOperationsArchiveDir()
+        if (!ensureDirectorySync(archiveDir)) return null
+        const filePath = getOperationsArchiveFile(formatArchiveDayKey(operation.ts))
+        fs.appendFileSync(filePath, `${serializeCerebrumOperationRecord(operation)}\n`, {
+          encoding: 'utf8',
+          flag: 'a',
+          mode: 0o600
+        })
+        try { fs.chmodSync(filePath, 0o600) } catch (error) { /* best effort */ }
+        pruneCerebrumOperationFiles()
+        return operation
+      } catch (error) {
+        try { node.sysLogger?.warn(`Cerebrum operations append error: ${error.message || error}`) } catch (logError) { /* ignore */ }
+        return null
+      }
+    }
+
+    const loadCerebrumOperationsFromDisk = ({ fromTs, toTs } = {}) => {
+      const out = []
+      const dirPath = getOperationsArchiveDir()
+      try {
+        const from = Number(fromTs || 0)
+        const to = Number(toTs || 0)
+        if (!Number.isFinite(from) || !Number.isFinite(to) || to < from || !fs.existsSync(dirPath)) return out
+        collectArchiveDayKeysBetween({ fromTs: from, toTs: to }).forEach(dayKey => {
+          const filePath = getOperationsArchiveFile(dayKey)
+          if (!fs.existsSync(filePath)) return
+          const stat = fs.statSync(filePath)
+          if (Number(stat.size || 0) > (32 * 1024 * 1024)) throw new Error(`operations archive ${dayKey} exceeds the safe read limit`)
+          fs.readFileSync(filePath, 'utf8').split(/\r?\n/).forEach(line => {
+            const operation = parseCerebrumOperationRecord(line)
+            if (operation && operation.ts >= from && operation.ts <= to) out.push(operation)
+          })
+        })
+      } catch (error) {
+        try { node.sysLogger?.warn(`Cerebrum operations load error: ${error.message || error}`) } catch (logError) { /* ignore */ }
+      }
+      return out
+    }
+
+    node.recordCerebrumOperation = recordCerebrumOperation
+    node.getCerebrumOperationsSnapshot = ({ limit = CEREBRUM_OPERATIONS_DEFAULT_LIMIT } = {}) => {
+      pruneCerebrumOperationFiles()
+      const toTs = nowMs()
+      const fromTs = toTs - (CEREBRUM_OPERATIONS_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+      const requestedLimit = Math.max(1, Math.min(CEREBRUM_OPERATIONS_MAX_LIMIT, Math.round(Number(limit) || CEREBRUM_OPERATIONS_DEFAULT_LIMIT)))
+      const operations = loadCerebrumOperationsFromDisk({ fromTs, toTs })
+      const history = loadHistoryQueryFromDisk({ fromTs, toTs, limit: requestedLimit, question: '' })
+      const snapshot = buildCerebrumOperationsSnapshot({
+        operations,
+        telegrams: history.events,
+        knxTotal: history.summary && history.summary.totalEvents,
+        fromTs,
+        toTs,
+        limit: requestedLimit
+      })
+      snapshot.archivePath = getOperationsArchiveDir()
+      snapshot.knxArchivePath = getHistoryArchiveDir()
+      snapshot.knxArchiveEnabled = node.historyStoreToDisk === true
+      return snapshot
     }
 
     const clampArchiveRangeToRetention = ({ range, retentionDays }) => {
@@ -12969,6 +13112,28 @@ module.exports = function (RED) {
           catalog,
           priorResults: catalogResearchResults
         })
+        newCatalogResults.forEach(result => {
+          const action = result && result.action && typeof result.action === 'object' ? result.action : {}
+          recordCerebrumOperation({
+            category: 'tool',
+            source: 'catalogActions',
+            operation: action.operation || 'catalog_query',
+            status: result && result.ok === true ? 'succeeded' : 'failed',
+            title: 'LLM queried the local ETS catalog',
+            summary: action.reason || action.query || action.area || (Array.isArray(action.destinations) ? action.destinations.join(', ') : ''),
+            sessionId,
+            details: {
+              query: action.query,
+              area: action.area,
+              destinations: action.destinations,
+              semanticKinds: action.semanticKinds,
+              purpose: action.purpose,
+              totalMatches: result && result.totalMatches,
+              returnedItems: Array.isArray(result && result.items) ? result.items.length : 0,
+              returnedAreas: Array.isArray(result && result.areas) ? result.areas.length : 0
+            }
+          })
+        })
         const nextCatalogResults = catalogResearchResults.concat(newCatalogResults)
         const nextCatalogRound = Math.max(0, Number(catalogResearchRound) || 0) + 1
         return callConversationalLLM({
@@ -13003,6 +13168,24 @@ module.exports = function (RED) {
           retentionDays: node.historyStoreRetentionDays,
           queryArchive: query => loadHistoryQueryFromDisk(Object.assign({}, query, { question: '' }))
         }))
+        newHistoryResults.forEach(result => {
+          recordCerebrumOperation({
+            category: 'tool',
+            source: 'historyActions',
+            operation: 'query',
+            status: result && result.ok === true ? 'succeeded' : 'failed',
+            title: 'LLM queried the KNX traffic archive',
+            summary: result && (result.reason || result.error),
+            sessionId,
+            details: {
+              range: result && result.range,
+              filters: result && result.filters,
+              totalMatches: result && result.totalMatches,
+              returnedEvents: result && result.returnedEvents,
+              error: result && result.error
+            }
+          })
+        })
         const nextHistoryResults = historyResearchResults.concat(newHistoryResults)
         const nextHistoryRound = Math.max(0, Number(historyResearchRound) || 0) + 1
         return callConversationalLLM({
@@ -13039,6 +13222,26 @@ module.exports = function (RED) {
           question,
           sessionId
         }))
+        newCodeResults.forEach(result => {
+          const resultValue = result && result.result
+          recordCerebrumOperation({
+            category: 'tool',
+            source: 'codeActions',
+            operation: 'run',
+            status: result && result.ok === true ? 'succeeded' : 'failed',
+            title: 'LLM ran local JavaScript on the node',
+            summary: result && (result.reason || result.error),
+            sessionId,
+            durationMs: result && result.durationMs,
+            details: {
+              reason: result && result.reason,
+              resultType: Array.isArray(resultValue) ? 'array' : resultValue === null ? 'null' : typeof resultValue,
+              resultKeys: resultValue && typeof resultValue === 'object' && !Array.isArray(resultValue) ? Object.keys(resultValue).slice(0, 40) : [],
+              resultItems: Array.isArray(resultValue) ? resultValue.length : undefined,
+              error: result && result.error
+            }
+          })
+        })
         const nextCodeResults = codeExecutionResults.concat(newCodeResults)
         const nextCodeRound = Math.max(0, Number(codeExecutionRound) || 0) + 1
         return callConversationalLLM({
@@ -13339,6 +13542,25 @@ module.exports = function (RED) {
           break
         }
         const execution = await executeBoundedCerebrumWebActions(candidates, { maxActions: remaining })
+        execution.results.forEach(result => {
+          recordCerebrumOperation({
+            category: 'tool',
+            source: 'webActions',
+            operation: result && result.operation || 'web_request',
+            status: result && result.ok === true ? 'succeeded' : 'failed',
+            title: result && result.operation === 'search' ? 'LLM searched the Web' : 'LLM opened a Web page',
+            summary: result && (result.query || result.url || result.error),
+            sessionId,
+            details: {
+              query: result && result.query,
+              url: result && result.url,
+              title: result && result.title,
+              resultCount: Array.isArray(result && result.results) ? result.results.length : undefined,
+              retrievedAt: result && result.retrievedAt,
+              error: result && result.error
+            }
+          })
+        })
         results.push(...execution.results)
         budget = execution.budget
         actionCount += candidates.length
@@ -14584,6 +14806,25 @@ module.exports = function (RED) {
             at: event.at
           })
           scheduleHomeMemoryPersist()
+          recordCerebrumOperation({
+            ts: Date.parse(event.at || '') || nowMs(),
+            category: 'autonomous',
+            source: 'habit-learner',
+            operation: 'habit_observed',
+            status: 'observed',
+            title: 'Cerebrum learned from an adapter state transition',
+            summary: `${event.resourceName || event.deviceName || event.entityId} · ${String(previous)} → ${String(event.state)}`,
+            details: {
+              adapterId: event.adapterId,
+              entityId: event.entityId,
+              label: event.resourceName || event.deviceName || event.entityId,
+              area: event.area,
+              kind: event.resourceType,
+              previousValue: previous,
+              value: event.state,
+              eventType: event.eventType
+            }
+          })
         }
       }
       return true
@@ -14684,6 +14925,20 @@ module.exports = function (RED) {
           lastError: ''
         })
         scheduleHomeMemoryPersist()
+        recordCerebrumOperation({
+          category: 'autonomous',
+          source: 'state-reconciler',
+          operation: 'home_assistant_refresh',
+          status: 'succeeded',
+          title: 'Autonomous Home Assistant state refresh',
+          summary: `${observations.length} state(s) refreshed`,
+          details: {
+            providerCount: providers.length,
+            stateCount: observations.length,
+            nextRefreshAt: new Date(now + (intervalSeconds * 1000)).toISOString(),
+            intervalSeconds
+          }
+        })
         return true
       } catch (error) {
         const previousInterval = Math.max(CEREBRUM_HA_WARM_REFRESH_SECONDS, Number(reconciler.homeAssistantRefreshIntervalSeconds) || CEREBRUM_HA_WARM_REFRESH_SECONDS)
@@ -14695,6 +14950,15 @@ module.exports = function (RED) {
           lastError: error.message || String(error)
         })
         scheduleHomeMemoryPersist()
+        recordCerebrumOperation({
+          category: 'autonomous',
+          source: 'state-reconciler',
+          operation: 'home_assistant_refresh',
+          status: 'failed',
+          title: 'Autonomous Home Assistant state refresh failed',
+          summary: error.message || String(error),
+          details: { retrySeconds, error: error.message || String(error) }
+        })
         try { node.sysLogger?.warn(`Home Assistant refresh error: ${error.message || error}`) } catch (logError) { /* ignore */ }
         return false
       }
@@ -14734,22 +14998,30 @@ module.exports = function (RED) {
           retrySeconds: Math.max(300, Number(state.refreshIntervalSeconds) || 300)
         })
         node._cerebrumKnxReadTimestamps.push(now)
-        return {
-          topic: state.objectId,
+        return buildCerebrumStateRefreshMessage({
           destination: state.objectId,
           dpt: catalogItem.dpt,
-          payload: '',
-          event: 'GroupValue_Read',
-          cerebrum: {
-            type: 'cerebrum_state_refresh',
-            autonomous: true,
-            source: 'state_reconciler',
-            requestedAt: new Date(now).toISOString()
-          }
-        }
+          requestedAt: new Date(now).toISOString()
+        })
       })
       const syntheticInput = { topic: 'cerebrum_state_refresh', payload: '', cerebrum: { type: 'cerebrum_state_refresh', autonomous: true } }
       if (!sendCerebrumOutputs([null, null, null, messages, null], syntheticInput)) return 0
+      messages.forEach(message => {
+        recordCerebrumOperation({
+          category: 'autonomous',
+          source: 'state-reconciler',
+          operation: 'knx_state_read',
+          status: 'sent',
+          title: 'Autonomous KNX state refresh',
+          summary: `${message.destination}${message.dpt ? ` · ${message.dpt}` : ''}`,
+          details: {
+            destination: message.destination,
+            dpt: message.dpt,
+            event: message.event,
+            requestedAt: message.cerebrum && message.cerebrum.requestedAt
+          }
+        })
+      })
       const reconciler = normalizeCerebrumHomeMemory(node._homeMemory).reconciler
       node._homeMemory = updateCerebrumReconciler(node._homeMemory, {
         autonomousReadCount: Number(reconciler.autonomousReadCount || 0) + messages.length
@@ -14874,7 +15146,18 @@ module.exports = function (RED) {
       if (llmError) metadata.llmError = llmError
       const replyMessage = buildCerebrumReplyMessage({ inputMessage: syntheticInputMessage, content, metadata })
       replyMessage.boot = true
-      return sendCerebrumOutputs([null, null, replyMessage, null, null], syntheticInputMessage)
+      const sent = sendCerebrumOutputs([null, null, replyMessage, null, null], syntheticInputMessage)
+      recordCerebrumOperation({
+        category: 'autonomous',
+        source: 'startup-monitor',
+        operation: 'boot_notification',
+        status: sent ? 'sent' : 'failed',
+        title: 'Cerebrum startup notification',
+        summary: llmTest === 'passed' ? 'Startup notification generated by the LLM' : 'Startup notification used the local fallback',
+        sessionId,
+        details: { llmTest, provider, model, error: llmError }
+      })
+      return sent
     }
 
     const createCerebrumHabitProposalText = async ({ habit, language }) => {
@@ -15000,6 +15283,25 @@ module.exports = function (RED) {
         })
         rememberConversationTurn({ sessionId: recipient, question: '[Cerebrum habit proposal]', reply: content })
         scheduleHomeMemoryPersist({ immediate: true })
+        recordCerebrumOperation({
+          category: 'autonomous',
+          source: 'habit-learner',
+          operation: 'habit_proposed',
+          status: 'awaiting_confirmation',
+          title: 'Cerebrum proposed a learned habit',
+          summary: `${habit.label || habit.objectId} · ${formatCerebrumHabitTime(habit)} · ${habit.dayType}`,
+          sessionId: recipient,
+          details: {
+            habitId: habit.id,
+            objectId: habit.objectId,
+            source: habit.source,
+            label: habit.label,
+            value: habit.value,
+            confidence: habit.confidence,
+            samples: habit.samples,
+            observationDays: habit.observationDays
+          }
+        })
         return true
       } catch (error) {
         try { node.sysLogger?.warn(`Cerebrum habit proposal error: ${error.message || error}`) } catch (logError) { /* ignore */ }
@@ -15103,6 +15405,21 @@ module.exports = function (RED) {
       })
       scheduleHomeMemoryPersist({ immediate: true })
       rememberConversationTurn({ sessionId, question, reply: content })
+      recordCerebrumOperation({
+        category: 'autonomous',
+        source: 'habit-learner',
+        operation: `habit_${effectiveOperation === 'reject' ? 'rejected' : effectiveOperation === 'modify' ? 'modified' : 'confirmed'}`,
+        status: effectiveOperation === 'reject' ? 'rejected' : 'confirmed',
+        title: 'Occupant decision on a learned habit',
+        summary: `${habit.label || habit.objectId} · ${effectiveOperation}`,
+        sessionId,
+        details: {
+          habitId: habit.id,
+          objectId: habit.objectId,
+          decision: effectiveOperation,
+          userOverride
+        }
+      })
       const replyMessage = await buildCerebrumVoiceAwareReplyMessage({
         inputMessage: msg,
         content,
@@ -15174,6 +15491,18 @@ module.exports = function (RED) {
           metadata: { type: 'knx_confirmation_expired', sessionId }
         })
         if (!sendCerebrumOutputs([null, null, reply, null], msg)) return
+        ;(Array.isArray(pending.commands) ? pending.commands : []).forEach(command => {
+          recordCerebrumOperation({
+            category: 'tool',
+            source: 'knxActions',
+            operation: 'write',
+            status: 'expired',
+            title: 'KNX command confirmation expired',
+            summary: `${command.destination || '?'} · ${String(command.payload)}`,
+            sessionId,
+            details: { destination: command.destination, dpt: command.dpt, payload: command.payload, event: command.event }
+          })
+        })
         updateStatus({ fill: 'grey', shape: 'dot', text: 'AI KNX confirmation expired' })
         return
       }
@@ -15203,6 +15532,18 @@ module.exports = function (RED) {
         })
         rememberConversationTurn({ sessionId, question: question || 'CANCEL', reply: copy.cancelled })
         if (!sendCerebrumOutputs([null, null, reply, null], msg)) return
+        ;(Array.isArray(pending.commands) ? pending.commands : []).forEach(command => {
+          recordCerebrumOperation({
+            category: 'tool',
+            source: 'knxActions',
+            operation: 'write',
+            status: 'cancelled',
+            title: 'Occupant cancelled a KNX command',
+            summary: `${command.destination || '?'} · ${String(command.payload)}`,
+            sessionId,
+            details: { destination: command.destination, dpt: command.dpt, payload: command.payload, event: command.event }
+          })
+        })
         updateStatus({ fill: 'grey', shape: 'dot', text: 'AI KNX commands cancelled' })
         return
       }
@@ -15263,6 +15604,18 @@ module.exports = function (RED) {
           }
         })
         if (!sendCerebrumOutputs([null, null, startedReply, commandMessages], msg)) return
+        normalized.accepted.forEach(command => {
+          recordCerebrumOperation({
+            category: 'tool',
+            source: 'knxActions',
+            operation: 'write',
+            status: 'sent',
+            title: 'Confirmed KNX routine command sent',
+            summary: `${command.destination || '?'} · ${String(command.payload)}`,
+            sessionId,
+            details: { destination: command.destination, dpt: command.dpt, payload: command.payload, event: command.event, routine: routine.name }
+          })
+        })
         updateStatus({ fill: 'blue', shape: 'ring', text: `AI routine ${routine.name || 'multi-step'}: checking KNX feedback` })
         const feedbackResults = await feedbackPromise
         const report = formatCerebrumRoutineExecutionReport({
@@ -15313,6 +15666,18 @@ module.exports = function (RED) {
         const reply = buildCerebrumReplyMessage({ inputMessage: msg, content, metadata: replyMetadata })
         if (!sendCerebrumOutputs([null, null, reply, commandMessages], msg)) return
       }
+      normalized.accepted.forEach(command => {
+        recordCerebrumOperation({
+          category: 'tool',
+          source: 'knxActions',
+          operation: 'write',
+          status: 'sent',
+          title: 'Confirmed KNX command sent',
+          summary: `${command.destination || '?'} · ${String(command.payload)}`,
+          sessionId,
+          details: { destination: command.destination, dpt: command.dpt, payload: command.payload, event: command.event }
+        })
+      })
       updateStatus({ fill: 'green', shape: 'dot', text: `AI confirmed, ${commandMessages.length} KNX command(s)` })
     }
 
@@ -15714,6 +16079,24 @@ module.exports = function (RED) {
         at: new Date(Number(telegram.ts || nowMs())).toISOString()
       })
       scheduleHomeMemoryPersist()
+      recordCerebrumOperation({
+        ts: Number(telegram.ts || nowMs()),
+        category: 'autonomous',
+        source: 'habit-learner',
+        operation: 'habit_observed',
+        status: 'observed',
+        title: 'Cerebrum learned from a KNX state transition',
+        summary: `${catalogItem.label || telegram.devicename || catalogItem.ga} · ${String(previous)} → ${String(value)}`,
+        details: {
+          objectId: catalogItem.ga,
+          label: catalogItem.label || telegram.devicename || catalogItem.ga,
+          area: catalogItem.semantic.area || '',
+          kind: catalogItem.semantic.kind || '',
+          previousValue: previous,
+          value,
+          event
+        }
+      })
     }
 
     const recordCerebrumKnxState = telegram => {
@@ -15859,6 +16242,21 @@ module.exports = function (RED) {
         reply: content
       })
       scheduleHomeMemoryPersist({ immediate: true })
+      recordCerebrumOperation({
+        category: 'autonomous',
+        source: 'proactive-monitor',
+        operation: 'proactive_notification',
+        status: 'sent',
+        title: 'Cerebrum sent a proactive home notification',
+        summary: `${state.catalogItem.label || state.ga} · open for ${Number(durationMinutes.toFixed(1))} minutes`,
+        sessionId: recipient || 'proactive',
+        details: {
+          destination: state.ga,
+          dpt: state.catalogItem.dpt,
+          reason: 'open_too_long',
+          durationMinutes: Number(durationMinutes.toFixed(1))
+        }
+      })
       return { sent: true, recheckAfterMinutes: notification.recheckAfterMinutes }
     }
 
@@ -15956,6 +16354,23 @@ module.exports = function (RED) {
       })
       rememberConversationTurn({ sessionId: recipient, question: '[Cerebrum learned habit]', reply: decision.content })
       scheduleHomeMemoryPersist({ immediate: true })
+      recordCerebrumOperation({
+        category: 'autonomous',
+        source: 'habit-learner',
+        operation: 'habit_suggestion',
+        status: 'sent',
+        title: 'Cerebrum suggested a confirmed habit',
+        summary: `${prediction.label || prediction.objectId} · ${prediction.value}`,
+        sessionId: recipient,
+        details: {
+          objectId: prediction.objectId,
+          source: prediction.source,
+          predictedValue: prediction.value,
+          confidence: prediction.confidence,
+          samples: prediction.samples,
+          minutesUntil: prediction.minutesUntil
+        }
+      })
       return true
     }
 
@@ -16204,6 +16619,7 @@ module.exports = function (RED) {
           const interactiveRequestToken = backgroundExecution ? '' : crypto.randomBytes(8).toString('hex')
           const confirmationOwnerToken = interactiveRequestToken || (scheduledTaskRun ? `schedule-${scheduledTask.id}-${crypto.randomBytes(6).toString('hex')}` : '')
           if (interactiveRequestToken) node._interactiveChatRequests.set(sessionId, interactiveRequestToken)
+          const conversationStartedAt = nowMs()
           try {
             const requestLanguage = resolveCerebrumLanguage(msg, 'en', question)
             if (!backgroundExecution) updateConversationStatus({ type: 'thinking', question, language: requestLanguage })
@@ -16566,6 +16982,170 @@ module.exports = function (RED) {
               node._assistantLog.push(assistantEntry)
               while (node._assistantLog.length > 50) node._assistantLog.shift()
             }
+            recordCerebrumOperation({
+              category: 'llm',
+              source: scheduledTaskRun ? 'scheduler' : 'conversation',
+              operation: scheduledTaskRun ? 'scheduled_conversation' : 'conversation',
+              status: 'succeeded',
+              title: scheduledTaskRun ? 'LLM completed a scheduled task' : 'LLM completed a conversation request',
+              summary: scheduledTaskRun ? (scheduledTask.title || scheduledTask.id) : question,
+              sessionId,
+              durationMs: nowMs() - conversationStartedAt,
+              details: {
+                provider: ret.provider,
+                model: ret.model,
+                commandCount: writeCommands.length,
+                readCount: readCommands.length + routineInspectionResults.length,
+                cameraActionCount: preparedCameraActions.length,
+                speechActionCount: speechActionResult.sent.length,
+                memoryActionCount: appliedMemoryActions.length,
+                scheduleActionCount: scheduleActionResult.results.length,
+                webActionCount: webResearch.actionCount,
+                historyActionCount: preparedHistoryResults.length,
+                codeActionCount: preparedCodeResults.length,
+                awaitingConfirmation,
+                structuredOutputError: ret.structuredOutputError || ''
+              }
+            })
+            appliedMemoryActions.forEach(action => {
+              recordCerebrumOperation({
+                category: 'tool',
+                source: 'memoryActions',
+                operation: action && (action.operation || action.type) || 'update',
+                status: action && action.ok === false ? 'failed' : 'succeeded',
+                title: 'LLM updated Cerebrum memory',
+                summary: action && (action.reason || action.instruction || action.label),
+                sessionId,
+                details: action
+              })
+            })
+            scheduleActionResult.results.forEach(result => {
+              recordCerebrumOperation({
+                category: 'tool',
+                source: 'scheduleActions',
+                operation: result && result.operation || 'schedule',
+                status: result && result.ok === true ? 'succeeded' : 'failed',
+                title: 'LLM used the Cerebrum scheduler',
+                summary: result && (result.task && result.task.title || result.error || result.taskId),
+                sessionId,
+                details: {
+                  operation: result && result.operation,
+                  taskId: result && (result.taskId || result.task && result.task.id),
+                  title: result && result.task && result.task.title,
+                  startAt: result && result.task && result.task.startAt,
+                  nextRunAt: result && result.task && result.task.nextRunAt,
+                  intervalMinutes: result && result.task && result.task.intervalMinutes,
+                  count: result && result.count,
+                  error: result && result.error
+                }
+              })
+            })
+            preparedCameraActions.forEach(action => {
+              recordCerebrumOperation({
+                category: 'tool',
+                source: 'cameraActions',
+                operation: action && action.type || 'camera',
+                status: 'submitted',
+                title: 'LLM used a camera tool',
+                summary: action && (action.cameraName || action.cameraId || action.reason),
+                sessionId,
+                details: {
+                  type: action && action.type,
+                  cameraId: action && action.cameraId,
+                  cameraName: action && action.cameraName,
+                  eventType: action && action.eventType,
+                  scopeId: action && action.scopeId,
+                  scopeName: action && action.scopeName,
+                  reason: action && action.reason
+                }
+              })
+            })
+            speechActionResult.sent.forEach(action => {
+              recordCerebrumOperation({
+                category: 'tool',
+                source: 'speechActions',
+                operation: 'announce',
+                status: 'sent',
+                title: 'LLM sent a TTS announcement',
+                summary: action && (action.reason || action.text),
+                sessionId,
+                details: { reason: action && action.reason, text: action && action.text }
+              })
+            })
+            if (awaitingConfirmation) {
+              writeCommands.forEach(command => {
+                recordCerebrumOperation({
+                  category: 'tool',
+                  source: 'knxActions',
+                  operation: 'write',
+                  status: 'awaiting_confirmation',
+                  title: 'LLM proposed a KNX command',
+                  summary: `${command.destination || '?'} · ${String(command.payload)}`,
+                  sessionId,
+                  details: { destination: command.destination, dpt: command.dpt, payload: command.payload, event: command.event, label: command.label }
+                })
+              })
+            }
+            readResultMetadata.forEach(result => {
+              recordCerebrumOperation({
+                category: 'tool',
+                source: 'knxActions',
+                operation: 'read',
+                status: result.received ? 'succeeded' : 'timed_out',
+                title: 'LLM read a KNX group address',
+                summary: `${result.destination || '?'}${result.label ? ` · ${result.label}` : ''}`,
+                sessionId,
+                details: result
+              })
+            })
+            routineInspectionResults.forEach(result => {
+              recordCerebrumOperation({
+                category: 'tool',
+                source: 'knxActions',
+                operation: 'read',
+                status: result && result.received ? 'succeeded' : 'timed_out',
+                title: 'LLM inspected a KNX state before planning a routine',
+                summary: `${result && result.destination || '?'}${result && result.label ? ` · ${result.label}` : ''}`,
+                sessionId,
+                details: result
+              })
+            })
+            ;(Array.isArray(ret.rejectedHistoryActions) ? ret.rejectedHistoryActions : []).forEach(item => {
+              recordCerebrumOperation({
+                category: 'tool',
+                source: 'historyActions',
+                operation: 'query',
+                status: 'rejected',
+                title: 'KNX history query rejected',
+                summary: item && item.reason,
+                sessionId,
+                details: { reason: item && item.reason }
+              })
+            })
+            ;(Array.isArray(ret.rejectedCodeActions) ? ret.rejectedCodeActions : []).forEach(item => {
+              recordCerebrumOperation({
+                category: 'tool',
+                source: 'codeActions',
+                operation: 'run',
+                status: 'rejected',
+                title: 'Local JavaScript execution rejected',
+                summary: item && item.reason,
+                sessionId,
+                details: { reason: item && item.reason }
+              })
+            })
+            ;(Array.isArray(ret.rejectedCommands) ? ret.rejectedCommands : []).forEach(item => {
+              recordCerebrumOperation({
+                category: 'tool',
+                source: 'knxActions',
+                operation: 'command',
+                status: 'rejected',
+                title: 'LLM KNX command rejected by node policy',
+                summary: item && item.reason,
+                sessionId,
+                details: { reason: item && item.reason }
+              })
+            })
             if (!safeReadOnly && !backgroundExecution && !deferCameraReply) rememberConversationTurn({ sessionId, question, reply: content })
             const replyMetadata = {
               type: scheduledTaskRun ? 'scheduled_task_notification' : 'llm',
@@ -16633,6 +17213,20 @@ module.exports = function (RED) {
             } else if (!sendCerebrumOutputs([null, null, replyMessage, commandMessagesSent ? null : (commandMessages.length ? commandMessages : null)], msg)) {
               return
             }
+            if (!awaitingConfirmation) {
+              writeCommands.forEach(command => {
+                recordCerebrumOperation({
+                  category: 'tool',
+                  source: 'knxActions',
+                  operation: 'write',
+                  status: 'sent',
+                  title: 'LLM sent a KNX command',
+                  summary: `${command.destination || '?'} · ${String(command.payload)}`,
+                  sessionId,
+                  details: { destination: command.destination, dpt: command.dpt, payload: command.payload, event: command.event, label: command.label }
+                })
+              })
+            }
             if (scheduledTaskRun && !hasPendingScheduledCamera) {
               const notifiedAt = new Date().toISOString()
               const completion = completeCerebrumScheduleRun({
@@ -16682,6 +17276,21 @@ module.exports = function (RED) {
               error: error.message || String(error)
             })
             while (node._assistantLog.length > 50) node._assistantLog.shift()
+            recordCerebrumOperation({
+              category: 'llm',
+              source: scheduledTaskRun ? 'scheduler' : 'conversation',
+              operation: scheduledTaskRun ? 'scheduled_conversation' : 'conversation',
+              status: 'failed',
+              title: scheduledTaskRun ? 'Scheduled LLM task failed' : 'LLM conversation request failed',
+              summary: error.message || String(error),
+              sessionId,
+              durationMs: nowMs() - conversationStartedAt,
+              details: {
+                question: scheduledTaskRun ? '' : question,
+                scheduledTaskId: scheduledTaskRun ? scheduledTask.id : '',
+                error: error.message || String(error)
+              }
+            })
             if (backgroundExecution) {
               if (scheduledTaskRun && node._closing !== true) {
                 const completion = completeCerebrumScheduleRun({ store: node._scheduleStore, taskId: scheduledTask.id, ok: false, error: error.message || String(error) })
@@ -16859,6 +17468,22 @@ module.exports = function (RED) {
       }
       const task = claim.claimed[0]
       if (!task || node._closing === true) return
+      recordCerebrumOperation({
+        category: 'autonomous',
+        source: 'scheduler',
+        operation: 'scheduled_task_run',
+        status: 'started',
+        title: 'Cerebrum started a scheduled task',
+        summary: task.title || task.id,
+        sessionId: task.sessionId,
+        details: {
+          taskId: task.id,
+          kind: task.kind,
+          reason: task.reason,
+          scheduledFor: task.lastRunAt || task.nextRunAt,
+          runCount: task.runCount
+        }
+      })
       node._scheduleTickInFlight = true
       node._scheduledTaskIdsInFlight.add(task.id)
       try {
@@ -16867,6 +17492,16 @@ module.exports = function (RED) {
         const completion = completeCerebrumScheduleRun({ store: node._scheduleStore, taskId: task.id, ok: false, error: error.message || String(error) })
         node._scheduleStore = completion.store
         scheduleScheduleStorePersist({ immediate: true })
+        recordCerebrumOperation({
+          category: 'autonomous',
+          source: 'scheduler',
+          operation: 'scheduled_task_run',
+          status: 'failed',
+          title: 'Cerebrum scheduled task failed',
+          summary: task.title || task.id,
+          sessionId: task.sessionId,
+          details: { taskId: task.id, error: error.message || String(error) }
+        })
         try { node.sysLogger?.warn(`Cerebrum scheduled task error: ${error.message || error}`) } catch (logError) { /* ignore */ }
       } finally {
         releaseScheduledTaskIfNoPendingCamera(task.id)
@@ -17480,6 +18115,8 @@ module.exports.__test = {
   buildCerebrumConfirmationRequest,
   buildCerebrumReadResultMetadata,
   buildCerebrumRoutineInspectionContext,
+  buildCerebrumStateRefreshMessage,
+  buildCerebrumUniversalReadMessage,
   buildCerebrumUniversalMessage,
   collectCerebrumWebSources,
   classifyCerebrumConfirmation,

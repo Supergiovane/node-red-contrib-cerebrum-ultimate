@@ -21,6 +21,8 @@ const {
   buildCerebrumCompatibleNodeSummary,
   buildCerebrumPackageNodeCatalog,
   buildCerebrumSetupDoctorSnapshot,
+  buildCerebrumStateRefreshMessage,
+  buildCerebrumUniversalMessage,
   isCerebrumCameraProviderSelected,
   normalizeCerebrumEtsAccessConfiguration
 } = require('../nodes/cerebrumUltimate').__test
@@ -63,6 +65,56 @@ describe('Cerebrum Ultimate standalone package', () => {
       exposedGAs: ['1/1/1', '1/1/2'],
       readOnlyGAs: ['1/1/2']
     })
+  })
+
+  it('builds KNX Ultimate Universal reads with the mandatory readstatus flag', () => {
+    const autonomousRead = buildCerebrumStateRefreshMessage({
+      destination: '2/6/4',
+      dpt: '1.001',
+      requestedAt: '2026-09-02T04:23:55.180Z'
+    })
+    const llmRead = buildCerebrumUniversalMessage({
+      command: { destination: '1/2/3', dpt: '9.001', event: 'GroupValue_Read' },
+      question: 'Temperatura attuale?',
+      sessionId: 'universal-read-test',
+      confirmed: false,
+      index: 0,
+      inputMessage: { payload: 'Temperatura attuale?' }
+    })
+    const write = buildCerebrumUniversalMessage({
+      command: { destination: '1/2/4', dpt: '1.001', event: 'GroupValue_Write', payload: true },
+      question: 'Accendi',
+      sessionId: 'universal-write-test',
+      confirmed: true,
+      index: 0,
+      inputMessage: { payload: 'Accendi' }
+    })
+
+    expect(autonomousRead).to.include({
+      topic: '2/6/4',
+      destination: '2/6/4',
+      dpt: '1.001',
+      payload: '',
+      event: 'GroupValue_Read',
+      readstatus: true
+    })
+    expect(autonomousRead.cerebrum).to.deep.equal({
+      type: 'cerebrum_state_refresh',
+      autonomous: true,
+      source: 'state_reconciler',
+      requestedAt: '2026-09-02T04:23:55.180Z'
+    })
+    expect(llmRead).to.include({
+      destination: '1/2/3',
+      event: 'GroupValue_Read',
+      readstatus: true
+    })
+    expect(write).to.include({
+      destination: '1/2/4',
+      event: 'GroupValue_Write',
+      payload: true
+    })
+    expect(write).not.to.have.property('readstatus')
   })
 
   it('exposes one stable global adapter registry', () => {
@@ -231,6 +283,18 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(node.cerebrumStorageDir).to.equal(path.join(userDir, 'cerebrumultimatestorage'))
     expect(node.getSidebarState().node.llmAllowRuntimeCode).to.equal(false)
     expect(node.getSidebarState().etsAccess).to.include({ configured: false, totalCount: 0, catalogIncluded: false })
+    expect(node.recordCerebrumOperation({
+      category: 'autonomous',
+      source: 'standalone-test',
+      operation: 'self_check',
+      status: 'succeeded',
+      title: 'Standalone operation audit test'
+    })).to.include({ category: 'autonomous', operation: 'self_check' })
+    const operationSnapshot = node.getCerebrumOperationsSnapshot({ limit: 20 })
+    expect(operationSnapshot).to.include({ ok: true, retentionDays: 3 })
+    expect(operationSnapshot.counts).to.include({ total: 1, autonomous: 1, knx: 0 })
+    expect(operationSnapshot.items[0]).to.include({ source: 'standalone-test', operation: 'self_check' })
+    expect(fs.existsSync(path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'operations', 'standalone-test'))).to.equal(true)
     const savedAccess = await node.saveEtsAccessConfiguration({ configured: true, exposedGAs: [], readOnlyGAs: [] })
     expect(savedAccess.etsAccess).to.include({ configured: true, selectedCount: 0, catalogIncluded: true })
     const persistedConfig = JSON.parse(fs.readFileSync(path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'config', 'cerebrum-config-standalone-test.json'), 'utf8'))

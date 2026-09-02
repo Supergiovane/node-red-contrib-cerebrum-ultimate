@@ -182,6 +182,8 @@ Execution is synchronous and bounded to one action per model pass, at most two e
 
 Cerebrum stores its memory inside the Node-RED user directory. The Web interface provides simple views for **Cerebrum Memory** and **Cerebrum Learning**, plus **Settings → Import / Export** for backups.
 
+The adjacent **Cerebrum Operations** view provides a searchable three-day audit timeline. It combines the existing daily KNX traffic archive with LLM requests, catalog/history/Web/JavaScript tools, KNX reads and writes, schedules, camera/TTS/memory actions and autonomous activities such as state reconciliation, habit learning, habit proposals and proactive notifications. The node-operation archive is stored per Cerebrum node under `cerebrumultimatestorage/cerebrum/operations/`; credentials and obvious secret fields are redacted, and files older than three days are removed automatically.
+
 ## Adapter API
 
 Optional packages can register an adapter and one or more providers without importing KNX Ultimate:

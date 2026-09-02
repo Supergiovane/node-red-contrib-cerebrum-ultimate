@@ -125,7 +125,9 @@ const queryCerebrumTab = (() => {
     const requested = String(
       new URLSearchParams(window.location.search).get("cerebrumTab") || "",
     );
-    return ["conversation", "learning", "memory"].includes(requested)
+    return ["conversation", "learning", "memory", "operations"].includes(
+      requested,
+    )
       ? requested
       : "";
   } catch (error) {
@@ -825,6 +827,26 @@ const state = reactive({
   cerebrumMemoryResetting: false,
   cerebrumMemoryCopied: false,
   cerebrumMemoryError: "",
+  cerebrumOperationsItems: [],
+  cerebrumOperationsCounts: {
+    total: 0,
+    knx: 0,
+    llm: 0,
+    tool: 0,
+    autonomous: 0,
+    system: 0,
+  },
+  cerebrumOperationsFrom: "",
+  cerebrumOperationsTo: "",
+  cerebrumOperationsArchivePath: "",
+  cerebrumOperationsKnxArchivePath: "",
+  cerebrumOperationsLoadedNodeId: "",
+  cerebrumOperationsLoadedAt: 0,
+  cerebrumOperationsLoading: false,
+  cerebrumOperationsError: "",
+  cerebrumOperationsTruncated: false,
+  cerebrumOperationsFilter: "all",
+  cerebrumOperationsSearch: "",
   pollStateHandle: null,
   pollNodesHandle: null,
 });
@@ -848,6 +870,7 @@ let testPlanBaselineData = null;
 let pendingTestPlanAction = null;
 let chatLearningOperationGeneration = 0;
 let cerebrumMemoryOperationGeneration = 0;
+let cerebrumOperationsGeneration = 0;
 
 function stopActiveStepAudio() {
   if (!activeStepAudio) return;
@@ -1546,6 +1569,51 @@ function formatDateTime(value) {
   }
 }
 
+function formatOperationDuration(value) {
+  const milliseconds = Math.max(0, Number(value) || 0);
+  if (!milliseconds) return "";
+  if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
+  return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0)} s`;
+}
+
+function operationCategoryLabel(category) {
+  const labels = {
+    knx: "KNX",
+    llm: "LLM",
+    tool: "Tool",
+    autonomous: "Autonomous",
+    system: "System",
+  };
+  return labels[String(category || "")] || String(category || "Activity");
+}
+
+function formatOperationDetails(details) {
+  if (!details || typeof details !== "object" || !Object.keys(details).length)
+    return "";
+  try {
+    return JSON.stringify(details, null, 2);
+  } catch (error) {
+    return String(details);
+  }
+}
+
+function formatOperationsRangeSummary() {
+  if (!state.cerebrumOperationsFrom) return "";
+  const from = formatDateTime(state.cerebrumOperationsFrom);
+  const to = formatDateTime(state.cerebrumOperationsTo);
+  const count = filteredCerebrumOperations.value.length;
+  const truncated = state.cerebrumOperationsTruncated;
+  const copies = {
+    it: `Da ${from} a ${to} · ${count} elementi mostrati${truncated ? " · l’elenco è limitato a 2.000 elementi, preservando le operazioni del nodo e i telegrammi KNX più recenti" : ""}`,
+    de: `Von ${from} bis ${to} · ${count} Einträge angezeigt${truncated ? " · die Liste ist auf 2.000 Einträge begrenzt und bewahrt Knotenoperationen sowie die neuesten KNX-Telegramme" : ""}`,
+    fr: `Du ${from} au ${to} · ${count} entrées affichées${truncated ? " · la liste est limitée à 2 000 entrées en conservant les opérations du nœud et les télégrammes KNX les plus récents" : ""}`,
+    es: `De ${from} a ${to} · ${count} entradas mostradas${truncated ? " · la lista está limitada a 2.000 entradas, conservando las operaciones del nodo y los telegramas KNX más recientes" : ""}`,
+    "zh-CN": `${from} 至 ${to} · 显示 ${count} 条记录${truncated ? " · 列表限制为 2,000 条，同时保留节点操作和最新的 KNX 报文" : ""}`,
+    en: `From ${from} to ${to} · showing ${count} entries${truncated ? " · the list is limited to 2,000 entries while preserving node operations and the newest KNX telegrams" : ""}`,
+  };
+  return copies[uiLanguage.value] || copies.en;
+}
+
 function formatByteSize(value) {
   const bytes = Math.max(0, Number(value) || 0);
   if (bytes < 1024) return `${bytes} B`;
@@ -2094,6 +2162,29 @@ const cerebrumMemoryViewError = computed(() => {
       "The Cerebrum JSON is not valid. Switch to JSON to correct it."
     );
   }
+});
+const filteredCerebrumOperations = computed(() => {
+  const category = String(state.cerebrumOperationsFilter || "all");
+  const search = normalizeComparableText(state.cerebrumOperationsSearch);
+  return (Array.isArray(state.cerebrumOperationsItems)
+    ? state.cerebrumOperationsItems
+    : []
+  ).filter((item) => {
+    if (category !== "all" && String(item && item.category) !== category)
+      return false;
+    if (!search) return true;
+    const details = item && item.details ? JSON.stringify(item.details) : "";
+    return normalizeComparableText(
+      [
+        item && item.title,
+        item && item.summary,
+        item && item.source,
+        item && item.operation,
+        item && item.status,
+        details,
+      ].join(" "),
+    ).includes(search);
+  });
 });
 const summary = computed(() =>
   state.stateData && state.stateData.summary ? state.stateData.summary : {},
@@ -2644,6 +2735,7 @@ watch(
     state.testAreaSelectedId = loadSelectedTestAreaIdForNode(value || "");
     resetChatLearningEditor();
     resetCerebrumMemoryEditor();
+    resetCerebrumOperations();
     state.etsAccessFilter = "";
     state.etsAccessSelected = [];
     state.etsAccessReadOnly = [];
@@ -3949,6 +4041,12 @@ async function fetchNodes() {
     state.selectedNodeId = queryNodeId;
     state.lastError = "";
     setStatus("Ready");
+    if (
+      state.activeTab === "cerebrum" &&
+      state.cerebrumTab === "operations" &&
+      Date.now() - Number(state.cerebrumOperationsLoadedAt || 0) >= 10000
+    )
+      loadCerebrumOperations();
   } catch (error) {
     state.lastError = error.message || "Failed to load nodes";
     setStatus(state.lastError);
@@ -4171,6 +4269,8 @@ async function onRefresh() {
   await fetchNodes();
   await fetchState({ fresh: true });
   if (state.activeTab === "etsAccess") await loadEtsAccessConfiguration();
+  if (state.activeTab === "cerebrum" && state.cerebrumTab === "operations")
+    await loadCerebrumOperations({ force: true });
   await fetchGaCatalog();
 }
 
@@ -4263,11 +4363,17 @@ function closeTestPlanEditor() {
 
 function activateCerebrumTab(tabId) {
   const target = String(tabId || "").trim();
-  if (target !== "conversation" && target !== "learning" && target !== "memory")
+  if (
+    target !== "conversation" &&
+    target !== "learning" &&
+    target !== "memory" &&
+    target !== "operations"
+  )
     return;
   state.cerebrumTab = target;
   if (target === "learning") loadChatLearningFile();
   if (target === "memory") loadCerebrumMemoryFile();
+  if (target === "operations") loadCerebrumOperations();
 }
 
 function activateSidebarTab(tabId) {
@@ -4290,6 +4396,8 @@ function activateSidebarTab(tabId) {
     loadChatLearningFile();
   if (target === "cerebrum" && state.cerebrumTab === "memory")
     loadCerebrumMemoryFile();
+  if (target === "cerebrum" && state.cerebrumTab === "operations")
+    loadCerebrumOperations();
   if (state.activeTab !== target) {
     state.activeTab = target;
   } else {
@@ -6303,10 +6411,13 @@ async function importFullConfig(event) {
     await fetchGaCatalog();
     resetChatLearningEditor();
     resetCerebrumMemoryEditor();
+    resetCerebrumOperations();
     if (state.activeTab === "cerebrum" && state.cerebrumTab === "learning")
       await loadChatLearningFile();
     if (state.activeTab === "cerebrum" && state.cerebrumTab === "memory")
       await loadCerebrumMemoryFile();
+    if (state.activeTab === "cerebrum" && state.cerebrumTab === "operations")
+      await loadCerebrumOperations({ force: true });
     setStatus("Cerebrum and Cerebrum backup imported");
   } catch (error) {
     state.lastError =
@@ -6851,6 +6962,91 @@ async function importCerebrumMemoryBackup(event) {
   }
 }
 
+function resetCerebrumOperations() {
+  cerebrumOperationsGeneration += 1;
+  state.cerebrumOperationsItems = [];
+  state.cerebrumOperationsCounts = {
+    total: 0,
+    knx: 0,
+    llm: 0,
+    tool: 0,
+    autonomous: 0,
+    system: 0,
+  };
+  state.cerebrumOperationsFrom = "";
+  state.cerebrumOperationsTo = "";
+  state.cerebrumOperationsArchivePath = "";
+  state.cerebrumOperationsKnxArchivePath = "";
+  state.cerebrumOperationsLoadedNodeId = "";
+  state.cerebrumOperationsLoadedAt = 0;
+  state.cerebrumOperationsLoading = false;
+  state.cerebrumOperationsError = "";
+  state.cerebrumOperationsTruncated = false;
+}
+
+async function loadCerebrumOperations({ force = false } = {}) {
+  if (!state.selectedNodeId || state.cerebrumOperationsLoading) return;
+  if (
+    !force &&
+    state.cerebrumOperationsLoadedNodeId === state.selectedNodeId &&
+    Date.now() - Number(state.cerebrumOperationsLoadedAt || 0) < 10000
+  )
+    return;
+  const nodeId = state.selectedNodeId;
+  const generation = ++cerebrumOperationsGeneration;
+  state.cerebrumOperationsLoading = true;
+  state.cerebrumOperationsError = "";
+  try {
+    const data = await requestJson(
+      apiUrl(
+        `operations?nodeId=${encodeURIComponent(nodeId)}&limit=2000&ts=${Date.now()}`,
+      ),
+    );
+    if (
+      generation !== cerebrumOperationsGeneration ||
+      state.selectedNodeId !== nodeId
+    )
+      return;
+    state.cerebrumOperationsItems = Array.isArray(data && data.items)
+      ? data.items
+      : [];
+    state.cerebrumOperationsCounts = Object.assign(
+      {
+        total: 0,
+        knx: 0,
+        llm: 0,
+        tool: 0,
+        autonomous: 0,
+        system: 0,
+      },
+      data && data.counts ? data.counts : {},
+    );
+    state.cerebrumOperationsFrom = String(data && data.from ? data.from : "");
+    state.cerebrumOperationsTo = String(data && data.to ? data.to : "");
+    state.cerebrumOperationsArchivePath = String(
+      data && data.archivePath ? data.archivePath : "",
+    );
+    state.cerebrumOperationsKnxArchivePath = String(
+      data && data.knxArchivePath ? data.knxArchivePath : "",
+    );
+    state.cerebrumOperationsTruncated = data && data.truncated === true;
+    state.cerebrumOperationsLoadedNodeId = nodeId;
+    state.cerebrumOperationsLoadedAt = Date.now();
+  } catch (error) {
+    if (
+      generation !== cerebrumOperationsGeneration ||
+      state.selectedNodeId !== nodeId
+    )
+      return;
+    state.cerebrumOperationsError =
+      error.message || "Failed to load Cerebrum operations";
+    setStatus(state.cerebrumOperationsError);
+  } finally {
+    if (generation === cerebrumOperationsGeneration)
+      state.cerebrumOperationsLoading = false;
+  }
+}
+
 function startTimers() {
   if (!state.pollStateHandle) {
     state.pollStateHandle = window.setInterval(() => {
@@ -6889,6 +7085,8 @@ onMounted(async () => {
     await loadChatLearningFile();
   if (state.activeTab === "cerebrum" && state.cerebrumTab === "memory")
     await loadCerebrumMemoryFile();
+  if (state.activeTab === "cerebrum" && state.cerebrumTab === "operations")
+    await loadCerebrumOperations({ force: true });
   startTimers();
   startUiTranslationObserver();
 });
@@ -9608,7 +9806,8 @@ onBeforeUnmount(() => {
             <div>
               <h2>Cerebrum <span class="beta-badge">BETA</span></h2>
               <p class="area-detail-subhead">
-                Conversation, learning and home memory in one place.
+                Conversation, learning, home memory and the three-day operation
+                audit in one place.
               </p>
             </div>
             <span class="meta-chip">{{
@@ -9649,6 +9848,16 @@ onBeforeUnmount(() => {
               @click="activateCerebrumTab('memory')"
             >
               Cerebrum Memory
+            </button>
+            <button
+              class="settings-tab-button"
+              :class="{ active: state.cerebrumTab === 'operations' }"
+              type="button"
+              role="tab"
+              :aria-selected="state.cerebrumTab === 'operations'"
+              @click="activateCerebrumTab('operations')"
+            >
+              Cerebrum Operations
             </button>
           </div>
         </section>
@@ -10094,7 +10303,7 @@ onBeforeUnmount(() => {
             </p>
           </article>
           <article
-            v-else
+            v-else-if="state.cerebrumTab === 'memory'"
             class="area-detail settings-panel chat-learning-panel"
           >
             <div class="card-head settings-panel-head">
@@ -10312,6 +10521,139 @@ onBeforeUnmount(() => {
             >
               Last saved: {{ formatDateTime(state.cerebrumMemoryModifiedAt) }}
             </p>
+          </article>
+          <article
+            v-else-if="state.cerebrumTab === 'operations'"
+            class="area-detail settings-panel cerebrum-operations-panel"
+          >
+            <div class="card-head settings-panel-head operations-panel-head">
+              <div>
+                <h3>
+                  Cerebrum Operations <span class="beta-badge">LAST 3 DAYS</span>
+                </h3>
+                <p class="area-detail-subhead">
+                  Audit of KNX telegrams, LLM requests, node tools and autonomous
+                  Cerebrum activities such as habit learning and state refreshes.
+                </p>
+              </div>
+              <button
+                class="secondary-button"
+                type="button"
+                :disabled="
+                  !state.selectedNodeId || state.cerebrumOperationsLoading
+                "
+                @click="loadCerebrumOperations({ force: true })"
+              >
+                {{ state.cerebrumOperationsLoading ? "Loading..." : "Refresh" }}
+              </button>
+            </div>
+
+            <div class="operations-counts" aria-label="Operation totals">
+              <span class="meta-chip"
+                >{{ state.cerebrumOperationsCounts.total }} total</span
+              >
+              <span class="meta-chip operation-count-knx"
+                >{{ state.cerebrumOperationsCounts.knx }} KNX</span
+              >
+              <span class="meta-chip operation-count-llm"
+                >{{ state.cerebrumOperationsCounts.llm }} LLM</span
+              >
+              <span class="meta-chip operation-count-tool"
+                >{{ state.cerebrumOperationsCounts.tool }} tools</span
+              >
+              <span class="meta-chip operation-count-autonomous"
+                >{{ state.cerebrumOperationsCounts.autonomous }} autonomous</span
+              >
+            </div>
+
+            <div class="operations-toolbar">
+              <label class="flow-field operations-filter-field">
+                <span>Category</span>
+                <select v-model="state.cerebrumOperationsFilter">
+                  <option value="all">All operations</option>
+                  <option value="knx">KNX telegrams</option>
+                  <option value="llm">LLM requests</option>
+                  <option value="tool">Node tools</option>
+                  <option value="autonomous">Autonomous activities</option>
+                  <option value="system">System</option>
+                </select>
+              </label>
+              <label class="flow-field operations-search-field">
+                <span>Search operations</span>
+                <input
+                  v-model="state.cerebrumOperationsSearch"
+                  type="search"
+                  placeholder="Address, tool, device, operation..."
+                />
+              </label>
+            </div>
+
+            <p
+              v-if="state.cerebrumOperationsFrom"
+              class="area-detail-subhead operations-range"
+            >
+              {{ formatOperationsRangeSummary() }}
+            </p>
+            <p
+              v-if="state.cerebrumOperationsError"
+              class="error-banner chat-learning-error"
+              role="alert"
+            >
+              {{ state.cerebrumOperationsError }}
+            </p>
+            <div
+              v-if="state.cerebrumOperationsLoading && !state.cerebrumOperationsItems.length"
+              class="operations-loading"
+              role="status"
+            >
+              <span class="chat-pending-spinner" aria-hidden="true"></span>
+              <span>Loading the last three days...</span>
+            </div>
+            <div v-else-if="filteredCerebrumOperations.length" class="operations-list">
+              <article
+                v-for="item in filteredCerebrumOperations"
+                :key="item.id"
+                class="operation-entry"
+                :class="`operation-entry-${item.category}`"
+              >
+                <div class="operation-entry-marker" aria-hidden="true"></div>
+                <div class="operation-entry-body">
+                  <div class="operation-entry-meta">
+                    <span
+                      class="operation-category"
+                      :class="`operation-category-${item.category}`"
+                      >{{ operationCategoryLabel(item.category) }}</span
+                    >
+                    <strong>{{ item.source }}</strong>
+                    <span>{{ item.operation }}</span>
+                    <span
+                      class="operation-status"
+                      :class="`operation-status-${item.status}`"
+                      >{{ item.status }}</span
+                    >
+                    <time :datetime="item.at">{{ formatDateTime(item.at) }}</time>
+                    <span v-if="item.durationMs">{{ formatOperationDuration(item.durationMs) }}</span>
+                  </div>
+                  <h4>{{ item.title }}</h4>
+                  <p v-if="item.summary">{{ item.summary }}</p>
+                  <details v-if="formatOperationDetails(item.details)" class="operation-details">
+                    <summary>Technical details</summary>
+                    <pre>{{ formatOperationDetails(item.details) }}</pre>
+                  </details>
+                </div>
+              </article>
+            </div>
+            <p v-else-if="!state.cerebrumOperationsLoading" class="empty-state">
+              No matching operations in the last three days.
+            </p>
+            <div class="operations-paths">
+              <span v-if="state.cerebrumOperationsArchivePath">
+                Node operations: <code>{{ state.cerebrumOperationsArchivePath }}</code>
+              </span>
+              <span v-if="state.cerebrumOperationsKnxArchivePath">
+                KNX traffic: <code>{{ state.cerebrumOperationsKnxArchivePath }}</code>
+              </span>
+            </div>
           </article>
           <input
             ref="configImportRef"
@@ -11956,6 +12298,233 @@ onBeforeUnmount(() => {
 
 .chat-learning-panel {
   min-height: 520px;
+}
+
+.cerebrum-operations-panel {
+  min-height: 520px;
+}
+
+.operations-panel-head,
+.operations-toolbar,
+.operations-counts,
+.operation-entry-meta,
+.operations-paths,
+.operations-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.operations-panel-head {
+  justify-content: space-between;
+}
+
+.operations-counts {
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.operation-count-knx,
+.operation-category-knx {
+  border-color: rgba(21, 101, 192, 0.34) !important;
+  background: rgba(227, 242, 253, 0.95) !important;
+  color: #15539a !important;
+}
+
+.operation-count-llm,
+.operation-category-llm {
+  border-color: rgba(123, 31, 162, 0.34) !important;
+  background: rgba(243, 229, 245, 0.95) !important;
+  color: #6a1b9a !important;
+}
+
+.operation-count-tool,
+.operation-category-tool {
+  border-color: rgba(239, 108, 0, 0.34) !important;
+  background: rgba(255, 243, 224, 0.96) !important;
+  color: #9a4f00 !important;
+}
+
+.operation-count-autonomous,
+.operation-category-autonomous {
+  border-color: rgba(46, 125, 50, 0.34) !important;
+  background: rgba(232, 245, 233, 0.96) !important;
+  color: #256b2a !important;
+}
+
+.operations-toolbar {
+  align-items: flex-end;
+  flex-wrap: wrap;
+  padding: 12px;
+  border: 1px solid rgba(103, 114, 132, 0.22);
+  border-radius: var(--soft-radius);
+  background: rgba(244, 247, 251, 0.78);
+}
+
+.operations-filter-field {
+  flex: 0 1 230px;
+  margin: 0;
+}
+
+.operations-search-field {
+  flex: 1 1 320px;
+  margin: 0;
+}
+
+.operations-range {
+  margin: 12px 0;
+}
+
+.operations-list {
+  position: relative;
+  max-height: min(68vh, 820px);
+  overflow: auto;
+  padding-left: 18px;
+  border: 1px solid rgba(84, 96, 116, 0.22);
+  border-radius: var(--soft-radius);
+  background: #fff;
+}
+
+.operations-list::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 25px;
+  width: 2px;
+  background: rgba(118, 132, 153, 0.22);
+  content: "";
+}
+
+.operation-entry {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px 14px 14px 0;
+  border-bottom: 1px solid rgba(84, 96, 116, 0.13);
+}
+
+.operation-entry:last-child {
+  border-bottom: 0;
+}
+
+.operation-entry-marker {
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #78909c;
+  box-shadow: 0 0 0 2px rgba(120, 144, 156, 0.34);
+}
+
+.operation-entry-knx .operation-entry-marker {
+  background: #1976d2;
+}
+
+.operation-entry-llm .operation-entry-marker {
+  background: #8e24aa;
+}
+
+.operation-entry-tool .operation-entry-marker {
+  background: #ef6c00;
+}
+
+.operation-entry-autonomous .operation-entry-marker {
+  background: #2e7d32;
+}
+
+.operation-entry-body {
+  min-width: 0;
+}
+
+.operation-entry-meta {
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.operation-category,
+.operation-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid rgba(103, 114, 132, 0.26);
+  border-radius: 999px;
+  background: #f1f4f7;
+  color: #455364;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.operation-status-failed,
+.operation-status-timed_out,
+.operation-status-rejected,
+.operation-status-cancelled,
+.operation-status-expired {
+  border-color: rgba(196, 57, 57, 0.36);
+  background: rgba(255, 227, 227, 0.94);
+  color: #a42828;
+}
+
+.operation-entry-body h4 {
+  margin: 7px 0 3px;
+  font-size: 14px;
+}
+
+.operation-entry-body > p {
+  margin: 0;
+  color: #536273;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.operation-details {
+  margin-top: 8px;
+}
+
+.operation-details summary {
+  color: #59687a;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.operation-details pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 7px 0 0;
+  padding: 10px;
+  border-radius: var(--soft-radius);
+  background: #17202b;
+  color: #e8eef5;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.operations-loading {
+  justify-content: center;
+  min-height: 180px;
+  color: var(--muted);
+}
+
+.operations-paths {
+  align-items: flex-start;
+  flex-direction: column;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.operations-paths code {
+  overflow-wrap: anywhere;
 }
 
 .chat-learning-meta {
