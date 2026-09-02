@@ -846,6 +846,7 @@ const state = reactive({
   cerebrumOperationsError: "",
   cerebrumOperationsTruncated: false,
   cerebrumOperationsFilter: "all",
+  cerebrumOperationsStatusFilter: "all",
   cerebrumOperationsSearch: "",
   pollStateHandle: null,
   pollNodesHandle: null,
@@ -1587,6 +1588,68 @@ function operationCategoryLabel(category) {
   return labels[String(category || "")] || String(category || "Activity");
 }
 
+function operationStatusLabel(status) {
+  const labels = {
+    observed: "Observed",
+    sent: "Sent",
+    succeeded: "Succeeded",
+    failed: "Failed",
+    submitted: "Submitted",
+    started: "Started",
+    awaiting_confirmation: "Awaiting confirmation",
+    timed_out: "Timed out",
+    rejected: "Rejected",
+    cancelled: "Cancelled",
+    expired: "Expired",
+    confirmed: "Confirmed",
+  };
+  const key = String(status || "");
+  return labels[key] || key.replace(/_/g, " ") || "Unknown";
+}
+
+function operationFlowLabel(item) {
+  const direction = String(item && item.direction ? item.direction : "internal");
+  const action = String(item && item.action ? item.action : "activity");
+  const category = String(item && item.category ? item.category : "");
+  const source = String(item && item.source ? item.source : "").toLowerCase();
+  const status = String(item && item.status ? item.status : "");
+  if (direction === "outbound") {
+    if (action === "knx_write")
+      return category === "knx"
+        ? "Local interface → KNX bus · write transmitted"
+        : "LLM/tool → KNX · command sent";
+    if (action === "knx_read") {
+      if (category === "knx")
+        return "Local interface → KNX bus · read transmitted";
+      return source === "state-reconciler"
+        ? "Reconciler → KNX · read sent"
+        : "LLM/tool → KNX · read sent";
+    }
+    if (action === "knx_response")
+      return "Local interface → KNX bus · response transmitted";
+    if (action === "notification")
+      return "Cerebrum → user · notification sent";
+    if (action === "tool_request")
+      return "LLM → external tool · request sent";
+  }
+  if (direction === "inbound")
+    return "KNX bus → Node · telegram received";
+  if (action === "knx_write") {
+    if (status === "awaiting_confirmation")
+      return "KNX command awaiting confirmation · not sent";
+    if (["cancelled", "expired", "rejected"].includes(status))
+      return "KNX command not sent";
+  }
+  return "";
+}
+
+function operationFlowClasses(item) {
+  return [
+    `operation-direction-${String(item && item.direction ? item.direction : "internal")}`,
+    `operation-action-${String(item && item.action ? item.action : "activity")}`,
+  ];
+}
+
 function formatOperationDetails(details) {
   if (!details || typeof details !== "object" || !Object.keys(details).length)
     return "";
@@ -2163,8 +2226,36 @@ const cerebrumMemoryViewError = computed(() => {
     );
   }
 });
+const cerebrumOperationStatusOptions = computed(() => {
+  const preferredOrder = [
+    "observed",
+    "sent",
+    "succeeded",
+    "confirmed",
+    "submitted",
+    "started",
+    "awaiting_confirmation",
+    "timed_out",
+    "failed",
+    "rejected",
+    "cancelled",
+    "expired",
+  ];
+  const statuses = new Set(
+    (Array.isArray(state.cerebrumOperationsItems)
+      ? state.cerebrumOperationsItems
+      : []
+    )
+      .map((item) => String(item && item.status ? item.status : ""))
+      .filter(Boolean),
+  );
+  return preferredOrder
+    .filter((status) => statuses.delete(status))
+    .concat(Array.from(statuses).sort());
+});
 const filteredCerebrumOperations = computed(() => {
   const category = String(state.cerebrumOperationsFilter || "all");
+  const status = String(state.cerebrumOperationsStatusFilter || "all");
   const search = normalizeComparableText(state.cerebrumOperationsSearch);
   return (Array.isArray(state.cerebrumOperationsItems)
     ? state.cerebrumOperationsItems
@@ -2172,6 +2263,7 @@ const filteredCerebrumOperations = computed(() => {
   ).filter((item) => {
     if (category !== "all" && String(item && item.category) !== category)
       return false;
+    if (status !== "all" && String(item && item.status) !== status) return false;
     if (!search) return true;
     const details = item && item.details ? JSON.stringify(item.details) : "";
     return normalizeComparableText(
@@ -2181,6 +2273,8 @@ const filteredCerebrumOperations = computed(() => {
         item && item.source,
         item && item.operation,
         item && item.status,
+        item && item.direction,
+        item && item.action,
         details,
       ].join(" "),
     ).includes(search);
@@ -6982,6 +7076,7 @@ function resetCerebrumOperations() {
   state.cerebrumOperationsLoading = false;
   state.cerebrumOperationsError = "";
   state.cerebrumOperationsTruncated = false;
+  state.cerebrumOperationsStatusFilter = "all";
 }
 
 async function loadCerebrumOperations({ force = false } = {}) {
@@ -10578,6 +10673,19 @@ onBeforeUnmount(() => {
                   <option value="system">System</option>
                 </select>
               </label>
+              <label class="flow-field operations-filter-field">
+                <span>Status</span>
+                <select v-model="state.cerebrumOperationsStatusFilter">
+                  <option value="all">All statuses</option>
+                  <option
+                    v-for="status in cerebrumOperationStatusOptions"
+                    :key="status"
+                    :value="status"
+                  >
+                    {{ operationStatusLabel(status) }}
+                  </option>
+                </select>
+              </label>
               <label class="flow-field operations-search-field">
                 <span>Search operations</span>
                 <input
@@ -10627,9 +10735,16 @@ onBeforeUnmount(() => {
                     <strong>{{ item.source }}</strong>
                     <span>{{ item.operation }}</span>
                     <span
+                      v-if="operationFlowLabel(item)"
+                      class="operation-flow"
+                      :class="operationFlowClasses(item)"
+                      >{{ operationFlowLabel(item) }}</span
+                    >
+                    <span
                       class="operation-status"
                       :class="`operation-status-${item.status}`"
-                      >{{ item.status }}</span
+                      ><span class="operation-status-prefix">Outcome:</span>
+                      {{ operationStatusLabel(item.status) }}</span
                     >
                     <time :datetime="item.at">{{ formatDateTime(item.at) }}</time>
                     <span v-if="item.durationMs">{{ formatOperationDuration(item.durationMs) }}</span>
@@ -12446,6 +12561,7 @@ onBeforeUnmount(() => {
 }
 
 .operation-category,
+.operation-flow,
 .operation-status {
   display: inline-flex;
   align-items: center;
@@ -12461,14 +12577,105 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
-.operation-status-failed,
-.operation-status-timed_out,
-.operation-status-rejected,
-.operation-status-cancelled,
+.operation-flow {
+  border-color: rgba(46, 125, 50, 0.38);
+  background: rgba(224, 244, 226, 0.95);
+  color: #22652a;
+}
+
+.operation-direction-inbound {
+  border-color: rgba(25, 118, 210, 0.34);
+  background: rgba(226, 239, 252, 0.96);
+  color: #175d9c;
+}
+
+.operation-direction-outbound.operation-action-knx_write {
+  border-color: rgba(211, 84, 0, 0.46);
+  background: rgba(255, 235, 218, 0.98);
+  color: #a44508;
+}
+
+.operation-direction-internal.operation-action-knx_write {
+  border-color: rgba(141, 110, 0, 0.34);
+  background: rgba(255, 247, 204, 0.96);
+  color: #725a00;
+}
+
+.operation-status-prefix {
+  margin-right: 3px;
+  opacity: 0.72;
+}
+
+.operation-status-observed {
+  border-color: rgba(21, 101, 192, 0.38);
+  background: rgba(227, 242, 253, 0.98);
+  color: #0d5aa7;
+}
+
+.operation-status-sent {
+  border-color: rgba(46, 125, 50, 0.38);
+  background: rgba(232, 245, 233, 0.98);
+  color: #256b2a;
+}
+
+.operation-status-succeeded {
+  border-color: rgba(85, 139, 47, 0.4);
+  background: rgba(241, 248, 233, 0.98);
+  color: #33691e;
+}
+
+.operation-status-confirmed {
+  border-color: rgba(0, 121, 107, 0.38);
+  background: rgba(224, 242, 241, 0.98);
+  color: #00695c;
+}
+
+.operation-status-submitted {
+  border-color: rgba(106, 27, 154, 0.36);
+  background: rgba(243, 229, 245, 0.98);
+  color: #6a1b9a;
+}
+
+.operation-status-started {
+  border-color: rgba(0, 96, 100, 0.36);
+  background: rgba(224, 247, 250, 0.98);
+  color: #006064;
+}
+
+.operation-status-awaiting_confirmation {
+  border-color: rgba(141, 110, 0, 0.38);
+  background: rgba(255, 248, 225, 0.98);
+  color: #795f00;
+}
+
+.operation-status-timed_out {
+  border-color: rgba(191, 54, 12, 0.4);
+  background: rgba(251, 233, 231, 0.98);
+  color: #a8320d;
+}
+
+.operation-status-failed {
+  border-color: rgba(183, 28, 28, 0.42);
+  background: rgba(255, 235, 238, 0.98);
+  color: #a31616;
+}
+
+.operation-status-rejected {
+  border-color: rgba(136, 14, 79, 0.4);
+  background: rgba(252, 228, 236, 0.98);
+  color: #880e4f;
+}
+
+.operation-status-cancelled {
+  border-color: rgba(84, 110, 122, 0.42);
+  background: rgba(225, 229, 232, 0.98);
+  color: #37474f;
+}
+
 .operation-status-expired {
-  border-color: rgba(196, 57, 57, 0.36);
-  background: rgba(255, 227, 227, 0.94);
-  color: #a42828;
+  border-color: rgba(93, 64, 55, 0.4);
+  background: rgba(239, 235, 233, 0.98);
+  color: #5d4037;
 }
 
 .operation-entry-body h4 {

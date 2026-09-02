@@ -169,6 +169,26 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(editor).to.include('RED.nodes.registerType(\'cerebrumUltimate\'')
   })
 
+  it('provides an independent operation-status filter and color for every audit outcome', () => {
+    const dashboard = fs.readFileSync(path.join(packageRoot, 'ui', 'cerebrumUltimate-vue', 'src', 'App.vue'), 'utf8')
+    expect(dashboard).to.include('v-model="state.cerebrumOperationsStatusFilter"')
+    expect(dashboard).to.include('<option value="all">All statuses</option>')
+    ;[
+      'observed',
+      'sent',
+      'succeeded',
+      'confirmed',
+      'submitted',
+      'started',
+      'awaiting_confirmation',
+      'timed_out',
+      'failed',
+      'rejected',
+      'cancelled',
+      'expired'
+    ].forEach(status => expect(dashboard).to.include(`.operation-status-${status} {`))
+  })
+
   it('opens the web dashboard through the Home Assistant ingress prefix', () => {
     const editor = fs.readFileSync(path.join(packageRoot, 'nodes', 'cerebrumUltimate.html'), 'utf8')
     const resolverSource = editor.match(/const resolveAdminRoot = \(\) => \{[\s\S]*?\n {12}\};(?=\n {12}const resolveAccessToken)/)

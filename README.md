@@ -8,9 +8,7 @@
 
 ## The supervised home intelligence for Node-RED
 
-Cerebrum Ultimate adds a simple, conversational layer to your Node-RED smart home. It can understand the devices already available in your flows, answer questions, help with everyday automation and learn recurring habits while keeping you in control.
-
-KNX Ultimate, Home Assistant, HUE, Matter, UniFi Protect and TTS Ultimate are optional integrations. Cerebrum continues to work when they are not installed.
+Cerebrum Ultimate adds a simple, conversational layer to your Node-RED smart home. It can understand the devices already available in your flows, answer questions, help with everyday automation and learn recurring habits while keeping you in control. KNX Ultimate, Home Assistant, HUE, Matter, UniFi Protect and TTS Ultimate are optional fully functional integrations.
 
 <br/>
 
@@ -29,19 +27,9 @@ KNX Ultimate, Home Assistant, HUE, Matter, UniFi Protect and TTS Ultimate are op
   </a>
 </p>
 
-## Install
+## IMPORTANT NOTICE
 
-From **Node-RED → Manage palette → Install**, search for:
-
-`node-red-contrib-cerebrum-ultimate`
-
-Or install it from the command line:
-
-```bash
-npm install node-red-contrib-cerebrum-ultimate
-```
-
-Then add a **Cerebrum** node to a flow, choose your AI provider and select any compatible nodes detected in the project. Deploy the flow and open the Cerebrum Web interface from the node editor.
+> When Cerebrum Ultimate is set to use cloud AI Models, the AI Models will receive data that are read from your local Node-RED. If you wish to maintain all data private, please use a local provider, like Ollama, LM Studio etc., that are natively supported by Cerebrum Ultimate.
 
 ## What you can do
 
@@ -182,32 +170,32 @@ Execution is synchronous and bounded to one action per model pass, at most two e
 
 Cerebrum stores its memory inside the Node-RED user directory. The Web interface provides simple views for **Cerebrum Memory** and **Cerebrum Learning**, plus **Settings → Import / Export** for backups.
 
-The adjacent **Cerebrum Operations** view provides a searchable three-day audit timeline. It combines the existing daily KNX traffic archive with LLM requests, catalog/history/Web/JavaScript tools, KNX reads and writes, schedules, camera/TTS/memory actions and autonomous activities such as state reconciliation, habit learning, habit proposals and proactive notifications. The node-operation archive is stored per Cerebrum node under `cerebrumultimatestorage/cerebrum/operations/`; credentials and obvious secret fields are redacted, and files older than three days are removed automatically.
+The adjacent **Cerebrum Operations** view provides a searchable three-day audit timeline. It combines the existing daily KNX traffic archive with LLM requests, catalog/history/Web/JavaScript tools, KNX reads and writes, schedules, camera/TTS/memory actions and autonomous activities such as state reconciliation, habit learning, habit proposals and proactive notifications. Direction badges distinguish commands and reads sent by the LLM, tools or reconciler from telegrams received from the bus, echoed local-interface transmissions and commands that were never sent; separate, color-coded outcomes can be filtered by status. The node-operation archive is stored per Cerebrum node under `cerebrumultimatestorage/cerebrum/operations/`; credentials and obvious secret fields are redacted, and files older than three days are removed automatically.
 
 ## Adapter API
 
 Optional packages can register an adapter and one or more providers without importing KNX Ultimate:
 
 ```js
-const { getAdapterRegistry } = require('node-red-contrib-cerebrum-ultimate')
+const { getAdapterRegistry } = require("node-red-contrib-cerebrum-ultimate");
 
-const registry = getAdapterRegistry()
+const registry = getAdapterRegistry();
 registry.registerAdapter({
-  id: 'my-adapter',
-  title: 'My adapter',
-  capabilities: ['states', 'events'],
-  access: 'observe'
-})
+  id: "my-adapter",
+  title: "My adapter",
+  capabilities: ["states", "events"],
+  access: "observe",
+});
 registry.registerProvider({
-  id: 'my-controller',
-  adapterId: 'my-adapter',
-  title: 'My controller',
-  capabilities: ['states'],
-  subscribe: listener => {
+  id: "my-controller",
+  adapterId: "my-adapter",
+  title: "My controller",
+  capabilities: ["states"],
+  subscribe: (listener) => {
     // Return an unsubscribe function.
-    return () => {}
-  }
-})
+    return () => {};
+  },
+});
 ```
 
 Provider callbacks must catch their own I/O errors. Cerebrum also isolates provider, flow-hook, timer, storage and output failures so an adapter cannot terminate Node-RED.

@@ -52,6 +52,43 @@ const boundDetails = value => {
   }
 }
 
+const resolveCerebrumOperationAction = entry => {
+  const source = entry && typeof entry === 'object' ? entry : {}
+  const details = source.details && typeof source.details === 'object' ? source.details : {}
+  const event = clampText(details.event, 120).toLowerCase()
+  const operation = clampText(source.operation, 120).toLowerCase()
+  const actor = clampText(source.source, 160).toLowerCase()
+  if (event === 'groupvalue_write' || operation === 'groupvalue_write' || operation === 'write' || operation === 'command') return 'knx_write'
+  if (event === 'groupvalue_read' || operation === 'groupvalue_read' || operation === 'read' || operation === 'knx_state_read') return 'knx_read'
+  if (event === 'groupvalue_response' || operation === 'groupvalue_response' || operation === 'response') return 'knx_response'
+  if (actor === 'speechactions' || operation === 'proactive_notification' || operation === 'boot_notification' || operation === 'habit_suggestion') return 'notification'
+  if (actor === 'webactions' || actor === 'cameraactions') return 'tool_request'
+  return 'activity'
+}
+
+const classifyCerebrumOperationTransport = entry => {
+  const source = entry && typeof entry === 'object' ? entry : {}
+  const details = source.details && typeof source.details === 'object' ? source.details : {}
+  const category = clampText(source.category, 40).toLowerCase()
+  const actor = clampText(source.source, 160).toLowerCase()
+  const operation = clampText(source.operation, 120).toLowerCase()
+  const status = clampText(source.status, 60).toLowerCase()
+  const action = resolveCerebrumOperationAction(source)
+  if (category === 'knx') {
+    return {
+      direction: details.echoed === true ? 'outbound' : 'inbound',
+      action
+    }
+  }
+  const dispatched = new Set(['sent', 'submitted', 'started', 'succeeded', 'timed_out']).has(status)
+  if ((actor === 'knxactions' || (actor === 'state-reconciler' && operation === 'knx_state_read')) && action.startsWith('knx_')) {
+    return { direction: dispatched ? 'outbound' : 'internal', action }
+  }
+  if (action === 'notification' && status === 'sent') return { direction: 'outbound', action }
+  if (action === 'tool_request' && dispatched) return { direction: 'outbound', action }
+  return { direction: 'internal', action }
+}
+
 const normalizeCerebrumOperation = (entry, { now = Date.now() } = {}) => {
   const source = entry && typeof entry === 'object' ? entry : {}
   const parsedTs = typeof source.ts === 'number'
@@ -76,6 +113,9 @@ const normalizeCerebrumOperation = (entry, { now = Date.now() } = {}) => {
     durationMs: Math.max(0, Math.round(Number(source.durationMs) || 0)),
     details: boundDetails(source.details)
   }
+  const transport = classifyCerebrumOperationTransport(normalized)
+  normalized.direction = transport.direction
+  normalized.action = transport.action
   if (!normalized.id) {
     normalized.id = crypto.createHash('sha256')
       .update(JSON.stringify([
@@ -191,6 +231,7 @@ module.exports = {
   CEREBRUM_OPERATIONS_MAX_LIMIT,
   CEREBRUM_OPERATIONS_RETENTION_DAYS,
   buildCerebrumOperationsSnapshot,
+  classifyCerebrumOperationTransport,
   mapKnxTelegramToOperation,
   normalizeCerebrumOperation,
   parseCerebrumOperationRecord,

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.8 — 2026-09-02
+
+- Clarified the operations timeline with explicit direction badges for LLM/tool KNX commands, autonomous reads, outgoing local-interface telegrams, incoming bus traffic and commands that were never sent.
+- Added a dedicated operation-status filter and distinct outcome colors, including green for sent operations and blue for observed events.
+- Expanded the README with a prominent privacy notice for cloud AI providers, guidance for keeping data local and clearer wording for optional integrations.
+
 ## 0.0.7 — 2026-09-02
 
 - Fixed autonomous KNX state refreshes in Universal mode so every `GroupValue_Read` carries the mandatory `msg.readstatus = true` flag and cannot fall through to a bus write.

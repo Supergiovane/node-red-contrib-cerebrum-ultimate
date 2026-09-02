@@ -50,6 +50,53 @@ describe('Cerebrum operations audit', function () {
     expect(parsed.id).to.be.a('string').and.not.equal('')
   })
 
+  it('distinguishes commands sent by tools from incoming and transmitted KNX telegrams', function () {
+    const snapshot = buildCerebrumOperationsSnapshot({
+      fromTs: Date.parse('2026-09-02T09:00:00Z'),
+      toTs: Date.parse('2026-09-02T12:00:00Z'),
+      operations: [{
+        ts: Date.parse('2026-09-02T10:00:00Z'),
+        category: 'tool',
+        source: 'knxActions',
+        operation: 'write',
+        status: 'sent',
+        details: { event: 'GroupValue_Write', destination: '2/6/4', payload: false }
+      }, {
+        ts: Date.parse('2026-09-02T10:01:00Z'),
+        category: 'tool',
+        source: 'knxActions',
+        operation: 'write',
+        status: 'awaiting_confirmation',
+        details: { event: 'GroupValue_Write', destination: '2/6/5', payload: true }
+      }],
+      telegrams: [{
+        ts: Date.parse('2026-09-02T10:00:00.020Z'),
+        event: 'GroupValue_Write',
+        source: '15.15.200',
+        destination: '2/6/4',
+        payload: false,
+        echoed: true
+      }, {
+        ts: Date.parse('2026-09-02T10:02:00Z'),
+        event: 'GroupValue_Write',
+        source: '1.1.20',
+        destination: '2/6/6',
+        payload: true,
+        echoed: false
+      }],
+      limit: 10
+    })
+    const sentCommand = snapshot.items.find(item => item.source === 'knxActions' && item.status === 'sent')
+    const pendingCommand = snapshot.items.find(item => item.source === 'knxActions' && item.status === 'awaiting_confirmation')
+    const transmittedTelegram = snapshot.items.find(item => item.category === 'knx' && item.details.echoed === true)
+    const receivedTelegram = snapshot.items.find(item => item.category === 'knx' && item.details.echoed === false)
+
+    expect(sentCommand).to.include({ direction: 'outbound', action: 'knx_write' })
+    expect(pendingCommand).to.include({ direction: 'internal', action: 'knx_write' })
+    expect(transmittedTelegram).to.include({ direction: 'outbound', action: 'knx_write' })
+    expect(receivedTelegram).to.include({ direction: 'inbound', action: 'knx_write' })
+  })
+
   it('merges node operations and KNX telegrams newest first', function () {
     const snapshot = buildCerebrumOperationsSnapshot({
       fromTs: Date.parse('2026-08-30T12:00:00Z'),
