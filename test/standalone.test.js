@@ -17,6 +17,7 @@ const {
   CEREBRUM_CAMERA_REGISTRY_KEY,
   getCerebrumCameraAdapterRegistry
 } = require('../nodes/utils/cerebrumCamera')
+const { parseCerebrumHomeMemoryMarkdownStrict } = require('../nodes/utils/homeMemory')
 const {
   buildCerebrumCompatibleNodeSummary,
   buildCerebrumPackageNodeCatalog,
@@ -321,6 +322,164 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(persistedConfig.etsAccess).to.deep.equal({ configured: true, exposedGAs: [], readOnlyGAs: [] })
     await new Promise(resolve => node.emit('close', resolve))
     fs.rmSync(userDir, { recursive: true, force: true })
+  })
+
+  it('persists acquired home habits immediately and restores them after a Node-RED restart', async () => {
+    const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-habit-restart-'))
+    const providerListeners = new Set()
+    const noop = () => {}
+    let Constructor
+    let firstNode
+    let restartedNode
+    const RED = {
+      auth: { needsPermission: () => noop },
+      httpAdmin: { get: noop, post: noop, use: noop },
+      settings: { userDir, httpAdminRoot: '/' },
+      nodes: {
+        getNode: () => undefined,
+        eachNode: noop,
+        registerType: (type, constructor) => { if (type === 'cerebrumUltimate') Constructor = constructor },
+        createNode: node => {
+          const emitter = new EventEmitter()
+          node.id = 'habit-restart-test'
+          node.type = 'cerebrumUltimate'
+          node.credentials = {}
+          node.on = emitter.on.bind(emitter)
+          node.emit = emitter.emit.bind(emitter)
+          node.status = noop
+          node.warn = noop
+          node.error = noop
+          node.send = noop
+          node.log = noop
+        }
+      },
+      util: { cloneMessage: message => JSON.parse(JSON.stringify(message)) }
+    }
+    const registry = publicApi.getAdapterRegistry()
+    const unregisterAdapter = registry.registerAdapter({
+      id: 'habit-restart-adapter',
+      title: 'Habit restart adapter',
+      capabilities: ['events']
+    })
+    const unregisterProvider = registry.registerProvider({
+      id: 'habit-restart-provider',
+      adapterId: 'habit-restart-adapter',
+      subscribe: listener => {
+        providerListeners.add(listener)
+        return () => providerListeners.delete(listener)
+      }
+    })
+    const closeNode = node => node && new Promise(resolve => node.emit('close', resolve))
+
+    try {
+      require('../nodes/cerebrumUltimate')(RED)
+      const config = {
+        name: 'Habit restart',
+        server: '',
+        unifiProtectConfig: '',
+        llmEnabled: false,
+        etsExposedGAs: [],
+        etsReadOnlyGAs: []
+      }
+      firstNode = new Constructor(config)
+      expect(providerListeners.size).to.be.greaterThan(0)
+
+      const memoryPath = path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'memory', 'cerebrum-home-memory.md')
+      const checkpointPath = path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'memory', 'cerebrum-habit-learning.json')
+      const memoryBeforeLearning = fs.readFileSync(memoryPath, 'utf8')
+      const emitProviderEvent = event => providerListeners.forEach(listener => listener(event))
+      emitProviderEvent({
+        entityId: 'light.kitchen',
+        resourceName: 'Kitchen light',
+        resourceType: 'light',
+        eventType: 'state_changed',
+        state: 'off',
+        at: '2026-08-03T06:10:00.000Z'
+      })
+      emitProviderEvent({
+        entityId: 'light.kitchen',
+        resourceName: 'Kitchen light',
+        resourceType: 'light',
+        eventType: 'state_changed',
+        state: 'on',
+        at: '2026-08-03T06:15:00.000Z'
+      })
+
+      const learningCheckpoint = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'))
+      expect(learningCheckpoint).to.include({ version: 1 })
+      expect(learningCheckpoint.habits).to.have.length(1)
+      expect(parseCerebrumHomeMemoryMarkdownStrict(fs.readFileSync(memoryPath, 'utf8')).habits).to.deep.equal([])
+      expect(learningCheckpoint.habits[0]).to.include({
+        type: 'temporal_state_pattern',
+        source: 'habit-restart-adapter',
+        objectId: 'light.kitchen',
+        value: 'on',
+        samples: 1
+      })
+
+      await closeNode(firstNode)
+      firstNode = null
+      fs.writeFileSync(memoryPath, memoryBeforeLearning, 'utf8')
+      restartedNode = new Constructor(config)
+      let restoredSnapshot = await restartedNode.getCerebrumMemoryFile()
+      let restoredMemory = JSON.parse(restoredSnapshot.jsonContent)
+      expect(restoredMemory.habits).to.have.length(1)
+      expect(restoredMemory.habits[0]).to.include({
+        type: 'temporal_state_pattern',
+        source: 'habit-restart-adapter',
+        objectId: 'light.kitchen',
+        value: 'on',
+        samples: 1
+      })
+
+      emitProviderEvent({
+        entityId: 'light.kitchen',
+        resourceName: 'Kitchen light',
+        resourceType: 'light',
+        eventType: 'state_changed',
+        state: 'off',
+        at: '2026-08-10T06:10:00.000Z'
+      })
+      emitProviderEvent({
+        entityId: 'light.kitchen',
+        resourceName: 'Kitchen light',
+        resourceType: 'light',
+        eventType: 'state_changed',
+        state: 'on',
+        at: '2026-08-10T06:15:00.000Z'
+      })
+      const continuedCheckpoint = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'))
+      expect(continuedCheckpoint.habits[0]).to.include({ samples: 2, observationDays: 2 })
+
+      restoredSnapshot = await restartedNode.getCerebrumMemoryFile()
+      restoredMemory = JSON.parse(restoredSnapshot.jsonContent)
+      restoredMemory.habits[0].status = 'confirmed'
+      restoredMemory.habits[0].decidedAt = '2026-08-10T06:16:00.000Z'
+      const confirmedSnapshot = await restartedNode.updateCerebrumMemoryFile({
+        jsonContent: JSON.stringify(restoredMemory),
+        revision: restoredSnapshot.revision
+      })
+      const confirmedMemory = parseCerebrumHomeMemoryMarkdownStrict(fs.readFileSync(memoryPath, 'utf8'))
+      expect(confirmedMemory.habits[0]).to.include({ status: 'confirmed', samples: 2 })
+      expect(JSON.parse(fs.readFileSync(checkpointPath, 'utf8')).habits).to.deep.equal([])
+
+      const memoryWithoutRoutine = JSON.parse(confirmedSnapshot.jsonContent)
+      memoryWithoutRoutine.habits = []
+      await restartedNode.updateCerebrumMemoryFile({
+        jsonContent: JSON.stringify(memoryWithoutRoutine),
+        revision: confirmedSnapshot.revision
+      })
+      await closeNode(restartedNode)
+      restartedNode = new Constructor(config)
+      const afterDeletion = JSON.parse((await restartedNode.getCerebrumMemoryFile()).jsonContent)
+      expect(afterDeletion.habits).to.deep.equal([])
+    } finally {
+      await closeNode(firstNode)
+      await closeNode(restartedNode)
+      unregisterProvider()
+      unregisterAdapter()
+      fs.rmSync(userDir, { recursive: true, force: true })
+    }
   })
 
   it('falls back safely when no KNX runtime package can be resolved', () => {

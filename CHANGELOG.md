@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.9 — 2026-09-03
+
+- Added an atomic checkpoint for home routines that are still being learned or awaiting confirmation, preserving every collected sample across Node-RED restarts.
+- Kept confirmed, corrected, rejected and paused routines in the normal Web-editable Cerebrum Memory, while clearing their temporary acquisition checkpoint so deleted routines are not restored.
+- Isolated memory recovery from unrelated startup archives so a history-loading problem cannot prevent learned routines from being restored.
+
 ## 0.0.8 — 2026-09-02
 
 - Clarified the operations timeline with explicit direction badges for LLM/tool KNX commands, autonomous reads, outgoing local-interface telegrams, incoming bus traffic and commands that were never sent.

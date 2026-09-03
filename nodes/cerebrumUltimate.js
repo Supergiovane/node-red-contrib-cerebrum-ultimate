@@ -8834,6 +8834,11 @@ module.exports = function (RED) {
       return path.join(baseDir, 'cerebrum', 'memory', 'cerebrum-home-memory.md')
     }
 
+    const getHabitLearningCheckpointFile = () => {
+      const baseDir = node.cerebrumStorageDir
+      return path.join(baseDir, 'cerebrum', 'memory', 'cerebrum-habit-learning.json')
+    }
+
     const getChatContextFile = () => {
       const baseDir = node.cerebrumStorageDir
       return path.join(baseDir, 'cerebrum', 'memory', 'cerebrum-chat-context.knxctx')
@@ -8982,12 +8987,12 @@ module.exports = function (RED) {
 
     const cleanupHomeMemoryTempFiles = () => {
       try {
-        const filePath = getHomeMemoryFile()
-        const dirPath = path.dirname(filePath)
+        const filePaths = [getHomeMemoryFile(), getHabitLearningCheckpointFile()]
+        const dirPath = path.dirname(filePaths[0])
         if (!fs.existsSync(dirPath)) return
-        const prefix = `${path.basename(filePath)}.tmp-`
+        const prefixes = filePaths.map(filePath => `${path.basename(filePath)}.tmp-`)
         fs.readdirSync(dirPath)
-          .filter(name => String(name).startsWith(prefix))
+          .filter(name => prefixes.some(prefix => String(name).startsWith(prefix)))
           .forEach(name => {
             try { fs.unlinkSync(path.join(dirPath, name)) } catch (error) { /* ignore */ }
           })
@@ -9030,6 +9035,74 @@ module.exports = function (RED) {
       node._homeMemory.updatedAt = new Date().toISOString()
     }
 
+    const isHabitLearningInProgress = habit => habit &&
+      habit.type === 'temporal_state_pattern' &&
+      ['learning', 'pending_confirmation'].includes(String(habit.status || 'learning'))
+
+    const getHabitLearningProgress = memory => normalizeCerebrumHomeMemory(memory).habits
+      .filter(isHabitLearningInProgress)
+
+    const persistHabitLearningCheckpointNow = () => {
+      try {
+        const habits = getHabitLearningProgress(node._homeMemory)
+        const checkpoint = {
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          habits
+        }
+        const filePath = getHabitLearningCheckpointFile()
+        const content = `${JSON.stringify(checkpoint, null, 2)}\n`
+        writeAtomicUtf8File({ filePath, content })
+        return { filePath, habitCount: habits.length, bytes: Buffer.byteLength(content, 'utf8') }
+      } catch (error) {
+        try { node.sysLogger?.warn(`Cerebrum habit learning checkpoint write error: ${error.message || error}`) } catch (logError) { /* ignore */ }
+        return null
+      }
+    }
+
+    const mergeHabitLearningCheckpoint = memory => {
+      const target = normalizeCerebrumHomeMemory(memory)
+      const filePath = getHabitLearningCheckpointFile()
+      if (!fs.existsSync(filePath)) return target
+      try {
+        const stat = fs.statSync(filePath)
+        const maxBytes = 2 * 1024 * 1024
+        if (Number(stat.size || 0) > maxBytes) throw new Error(`habit learning checkpoint exceeds the safe read limit (${maxBytes} bytes)`)
+        const checkpoint = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+        if (!checkpoint || Number(checkpoint.version) !== 1 || !Array.isArray(checkpoint.habits)) {
+          throw new Error('habit learning checkpoint has an unsupported format')
+        }
+        const checkpointHabits = getHabitLearningProgress({ habits: checkpoint.habits })
+        const habitsById = new Map(target.habits.map(habit => [String(habit && habit.id || ''), habit]))
+        checkpointHabits.forEach(checkpointHabit => {
+          const habitId = String(checkpointHabit.id || '')
+          if (!habitId) return
+          const current = habitsById.get(habitId)
+          if (current && !isHabitLearningInProgress(current)) return
+          const currentSamples = Math.max(0, Number(current && current.samples) || 0)
+          const checkpointSamples = Math.max(0, Number(checkpointHabit.samples) || 0)
+          const currentProgressAt = Math.max(
+            Date.parse(current && current.updatedAt || '') || 0,
+            Date.parse(current && current.proposedAt || '') || 0,
+            Date.parse(current && current.lastProposalAttemptAt || '') || 0
+          )
+          const checkpointProgressAt = Math.max(
+            Date.parse(checkpointHabit.updatedAt || '') || 0,
+            Date.parse(checkpointHabit.proposedAt || '') || 0,
+            Date.parse(checkpointHabit.lastProposalAttemptAt || '') || 0
+          )
+          if (!current || checkpointSamples > currentSamples || (checkpointSamples === currentSamples && checkpointProgressAt > currentProgressAt)) {
+            habitsById.set(habitId, checkpointHabit)
+          }
+        })
+        target.habits = Array.from(habitsById.values())
+        return normalizeCerebrumHomeMemory(target)
+      } catch (error) {
+        try { node.sysLogger?.warn(`Cerebrum habit learning checkpoint load error: ${error.message || error}`) } catch (logError) { /* ignore */ }
+        return target
+      }
+    }
+
     const persistHomeMemoryNow = () => {
       try {
         synchronizeHomeMemorySemanticObjects()
@@ -9049,6 +9122,7 @@ module.exports = function (RED) {
           try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath) } catch (cleanupError) { /* ignore */ }
           throw error
         }
+        persistHabitLearningCheckpointNow()
         return {
           filePath,
           bytes: rendered.bytes,
@@ -9100,6 +9174,7 @@ module.exports = function (RED) {
           }
           loadedMemory = normalizeCerebrumHomeMemory(parseCerebrumHomeMemoryMarkdown(fs.readFileSync(filePath, 'utf8')))
         }
+        loadedMemory = mergeHabitLearningCheckpoint(loadedMemory)
         bindSharedCerebrumState({
           registry: sharedCerebrumHomeMemoryStores,
           filePath,
@@ -9114,7 +9189,7 @@ module.exports = function (RED) {
           filePath,
           node,
           property: '_homeMemory',
-          initialValue: createEmptyCerebrumHomeMemory()
+          initialValue: mergeHabitLearningCheckpoint(createEmptyCerebrumHomeMemory())
         })
         try { node.sysLogger?.warn(`Cerebrum home memory load error: ${error.message || error}`) } catch (logError) { /* ignore */ }
         return scheduleHomeMemoryPersist({ immediate: true })
@@ -14805,6 +14880,7 @@ module.exports = function (RED) {
             event: event.eventType,
             at: event.at
           })
+          persistHabitLearningCheckpointNow()
           scheduleHomeMemoryPersist()
           recordCerebrumOperation({
             ts: Date.parse(event.at || '') || nowMs(),
@@ -16043,6 +16119,7 @@ module.exports = function (RED) {
           telegram,
           event: `${openState.reason || 'closed'} after ${durationMinutes.toFixed(1)} minutes`
         })
+        scheduleHomeMemoryPersist({ immediate: true })
       }
       node._proactiveStates.set(ga, {
         ga,
@@ -16078,6 +16155,7 @@ module.exports = function (RED) {
         event,
         at: new Date(Number(telegram.ts || nowMs())).toISOString()
       })
+      persistHabitLearningCheckpointNow()
       scheduleHomeMemoryPersist()
       recordCerebrumOperation({
         ts: Number(telegram.ts || nowMs()),
@@ -17959,16 +18037,20 @@ module.exports = function (RED) {
       }, Math.max(5, node.emitIntervalSec) * 1000)
     }
 
-    try {
-      pruneHistoryArchiveFiles({ force: true })
-      pruneAdapterHistoryArchiveFiles({ force: true })
-      loadRecentHistoryFromDisk()
-      loadHomeMemoryFromDisk()
-      loadChatContextFromDisk()
-      loadScheduleStoreFromDisk()
-    } catch (error) {
-      node.sysLogger?.warn(`Cerebrum history startup error: ${error.message || error}`)
-    }
+    ;[
+      ['history archive pruning', () => pruneHistoryArchiveFiles({ force: true })],
+      ['adapter history archive pruning', () => pruneAdapterHistoryArchiveFiles({ force: true })],
+      ['recent history', () => loadRecentHistoryFromDisk()],
+      ['home memory', () => loadHomeMemoryFromDisk()],
+      ['chat context', () => loadChatContextFromDisk()],
+      ['schedule store', () => loadScheduleStoreFromDisk()]
+    ].forEach(([label, load]) => {
+      try {
+        load()
+      } catch (error) {
+        try { node.sysLogger?.warn(`Cerebrum ${label} startup error: ${error.message || error}`) } catch (logError) { /* ignore */ }
+      }
+    })
 
     try {
       const cameraRegistry = getCerebrumCameraAdapterRegistry()

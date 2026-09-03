@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-cerebrum-ultimate",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Cerebrum Ultimate is a local-first, supervised home-automation intelligence for Node-RED that learns routines across KNX, Home Assistant, HUE, Matter and flow events.",
   "main": "index.js",
   "engines": {

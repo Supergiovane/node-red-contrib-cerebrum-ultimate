@@ -168,7 +168,7 @@ Execution is synchronous and bounded to one action per model pass, at most two e
 
 ## Local memory and backup
 
-Cerebrum stores its memory inside the Node-RED user directory. The Web interface provides simple views for **Cerebrum Memory** and **Cerebrum Learning**, plus **Settings → Import / Export** for backups.
+Cerebrum saves its memory automatically, including habits that are still being learned, so progress is not lost when Node-RED restarts. Confirmed routines remain available in the **Cerebrum Memory** Web interface, where they can be reviewed or removed. **Settings → Import / Export** provides an easy way to create and restore backups.
 
 The adjacent **Cerebrum Operations** view provides a searchable three-day audit timeline. It combines the existing daily KNX traffic archive with LLM requests, catalog/history/Web/JavaScript tools, KNX reads and writes, schedules, camera/TTS/memory actions and autonomous activities such as state reconciliation, habit learning, habit proposals and proactive notifications. Direction badges distinguish commands and reads sent by the LLM, tools or reconciler from telegrams received from the bus, echoed local-interface transmissions and commands that were never sent; separate, color-coded outcomes can be filtered by status. The node-operation archive is stored per Cerebrum node under `cerebrumultimatestorage/cerebrum/operations/`; credentials and obvious secret fields are redacted, and files older than three days are removed automatically.
 
