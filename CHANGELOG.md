@@ -2,6 +2,7 @@
 
 ## 0.0.10 — 2026-09-05
 
+- Adapt OpenAI requests specifically for GPT-6 Astra: omit unsupported sampling/logprob parameters before the first request and map `none`/`minimal` reasoning to `low`, preserving other models and supported effort levels.
 - Added version 2 Cerebrum backups with all retained KNX/adapter/operation archives, learning checkpoints and diagnostics, plus portable Node-RED flows, integration credentials, ETS data and package requirements. Cerebrum AI provider keys remain excluded.
 - Added checked archive restoration across different node IDs, rollback on write failures, pending-write synchronization and chunked uploads for large backups. Version 1 imports remain supported.
 - Added a Web flow-extraction action and migration instructions explaining how to restore node settings and the surrounding integrations.

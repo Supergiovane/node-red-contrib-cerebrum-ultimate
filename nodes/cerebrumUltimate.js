@@ -5417,12 +5417,30 @@ const supportsOpenAiExplicitPromptCaching = (model) => {
   return major > 5 || (major === 5 && minor >= 6)
 }
 
+const isOpenAiAstraModel = model => /^gpt-6-astra(?:-\d{4}-\d{2}-\d{2})?$/.test(String(model || '').trim().toLowerCase())
+
 const normalizeOpenAiReasoningEffortForModel = (model, effort) => {
   const normalized = normalizeCerebrumReasoningEffort(effort)
+  if (isOpenAiAstraModel(model) && ['none', 'minimal'].includes(normalized)) return 'low'
   if (normalized === 'minimal') return 'none'
   if (supportsOpenAiExplicitPromptCaching(model)) return normalized
   if (normalized === 'max') return 'xhigh'
   return normalized
+}
+
+// Apply Astra's parameter contract before the first request, including custom
+// OpenAI-compatible endpoints. Never mutate the caller's body or other models.
+const normalizeOpenAiModelRequest = (body) => {
+  const request = Object.assign({}, body)
+  if (!isOpenAiAstraModel(request.model)) return request
+  for (const key of ['temperature', 'top_p', 'top_logprobs', 'logprobs']) delete request[key]
+  if (request.reasoning && typeof request.reasoning === 'object') {
+    request.reasoning = Object.assign({}, request.reasoning)
+    if (['none', 'minimal'].includes(request.reasoning.effort)) request.reasoning.effort = 'low'
+  }
+  if (['none', 'minimal'].includes(request.reasoning_effort)) request.reasoning_effort = 'low'
+  if (Array.isArray(request.include)) request.include = request.include.filter(value => value !== 'message.output_text.logprobs')
+  return request
 }
 
 const resolveOllamaChatUrl = (value) => {
@@ -5690,7 +5708,7 @@ const postOpenAiCompatibleChatWithFallbacks = async ({
   model,
   post = postJson
 }) => {
-  let requestBody = Object.assign({}, body)
+  let requestBody = normalizeOpenAiModelRequest(body)
   let lastError = null
   const rejectedTokenParameters = new Set()
   const hasOwn = key => Object.prototype.hasOwnProperty.call(requestBody, key)
@@ -5762,7 +5780,7 @@ const postOpenAiResponsesWithFallbacks = async ({
   timeoutMs,
   post = postJson
 }) => {
-  let requestBody = Object.assign({}, body)
+  let requestBody = normalizeOpenAiModelRequest(body)
   let lastError = null
   let promptCacheOptionsUnsupported = false
 
@@ -12229,7 +12247,7 @@ module.exports = function (RED) {
         if (explicitPromptCaching && node._openAiPromptCacheOptionsUnsupported !== true) {
           responseBody.prompt_cache_options = { mode: 'explicit', ttl: '30m' }
         }
-        if (Number.isFinite(Number(node.llmTemperature))) responseBody.temperature = Number(node.llmTemperature)
+        if (!isOpenAiAstraModel(node.llmModel) && Number.isFinite(Number(node.llmTemperature))) responseBody.temperature = Number(node.llmTemperature)
         if (normalizedEffort !== 'default') responseBody.reasoning = { effort: normalizedEffort }
         if (jsonSchema && jsonSchema.schema) {
           responseBody.text = {
@@ -18312,6 +18330,7 @@ module.exports.__test = {
   normalizeCerebrumReasoningEffort,
   normalizeCerebrumWebMaxCallsPerHour,
   normalizeCerebrumLlmProvider,
+  normalizeOpenAiReasoningEffortForModel,
   normalizeCerebrumRoutineDescriptor,
   normalizeCerebrumSpeechActionCandidate,
   normalizeLmStudioModelCatalog,
