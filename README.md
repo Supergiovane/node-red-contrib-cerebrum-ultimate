@@ -170,6 +170,22 @@ Execution is synchronous and bounded to one action per model pass, at most two e
 
 Cerebrum saves its memory automatically, including habits that are still being learned, so progress is not lost when Node-RED restarts. Confirmed routines remain available in the **Cerebrum Memory** Web interface, where they can be reviewed or removed. **Settings → Import / Export** provides an easy way to create and restore backups.
 
+Backups created by this version use format **2**. They include the selected node's AI configuration (areas, GA roles, ETS access, profiles, tests and results), shared conversations/instructions/camera watches, home memory and learning checkpoint, scheduled tasks, all retained KNX and adapter event archives, the operations archive, the last prompt diagnostic and any legacy area file. Pending archive writes finish before the snapshot is taken. History already deleted by the normal retention policy cannot be recovered by a backup.
+
+The same JSON also contains **Node-RED migration flows**: the containing flow tab, recursively referenced config nodes, linked tabs and subflows, node settings, chat adapter code, integration credentials, the ETS text (including a CSV/ESF originally loaded from a file), a runtime ETS catalog snapshot and the package dependency list. **Cerebrum AI provider API keys are excluded**; destination AI keys are left unchanged. Other integration credentials are included, so keep the backup private. Export requires the Node-RED `flows.write` permission.
+
+To move Cerebrum to another installation:
+
+1. Download **Export Backup** from the source node's Web settings.
+2. On the destination, install Cerebrum and the integration packages listed in the backup. Use **Extract Node-RED flows from backup** to download the embedded `cerebrum-flows.json`; this also displays the package list.
+3. Import that flow JSON in the Node-RED editor, review connections and deploy. Preserve the source IDs where possible, particularly IDs used by camera subscriptions and external integrations.
+4. Open the destination Cerebrum node's Web settings and choose **Import Backup** with the original backup JSON. This restores its data and archives, remapping storage filenames to the destination node ID, and replaces the shared learning/memory used by other Cerebrum nodes on that storage.
+5. Re-enter the AI provider API key and verify external service addresses. The data survives subsequent Node-RED restarts.
+
+Importing Cerebrum data does not deploy or overwrite Node-RED flows automatically: node options and integration credentials are restored by the editor import in step 3. Each backup covers one selected Cerebrum node plus the shared memory; export each Cerebrum node separately if you have several. Custom context stores, external certificates/files/modules, environment variables, installed AI models and the external services themselves belong to the surrounding Node-RED installation and must be provisioned there as well. The backup is not an operating-system or whole-Node-RED disk image.
+
+Version 1 backups remain importable, but cannot recover the archives and flow settings they never contained. Version 2 checks file sizes and SHA-256 digests before changing data, rejects unsafe filenames, replaces destination archives instead of merging stale history, and rolls back on write errors. Large imports are uploaded in small chunks. The Web backup limit is 256 MiB; an oversized export fails explicitly rather than omitting files. For larger installations, stop Node-RED and copy the entire `cerebrumultimatestorage` directory along with your Node-RED installation backup.
+
 The adjacent **Cerebrum Operations** view provides a searchable three-day audit timeline. It combines the existing daily KNX traffic archive with LLM requests, catalog/history/Web/JavaScript tools, KNX reads and writes, schedules, camera/TTS/memory actions and autonomous activities such as state reconciliation, habit learning, habit proposals and proactive notifications. Direction badges distinguish commands and reads sent by the LLM, tools or reconciler from telegrams received from the bus, echoed local-interface transmissions and commands that were never sent; separate, color-coded outcomes can be filtered by status. The node-operation archive is stored per Cerebrum node under `cerebrumultimatestorage/cerebrum/operations/`; credentials and obvious secret fields are redacted, and files older than three days are removed automatically.
 
 ## Adapter API

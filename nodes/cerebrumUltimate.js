@@ -4,6 +4,7 @@ const { dptlib, knxDptAvailable } = require('./utils/optionalKnx')
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
+const { MAX_BACKUP_BYTES, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads } = require('./utils/cerebrumBackup')
 const { spawn } = require('child_process')
 const simpleGet = require('simple-get')
 const CEREBRUM_CHAT_ADAPTER_MAPPINGS = require('../resources/CerebrumChatAdapterMappings')
@@ -6805,7 +6806,7 @@ module.exports = function (RED) {
       }
     })
 
-    RED.httpAdmin.post('/cerebrumUltimate/sidebar/config/export', RED.auth.needsPermission('cerebrumUltimate.read'), async (req, res) => {
+    RED.httpAdmin.post('/cerebrumUltimate/sidebar/config/export', RED.auth.needsPermission('flows.write'), async (req, res) => {
       try {
         const nodeId = req.body?.nodeId ? String(req.body.nodeId) : ''
         if (!nodeId) {
@@ -6824,10 +6825,24 @@ module.exports = function (RED) {
       }
     })
 
+    const backupUploads = createBackupUploads()
+    RED.httpAdmin.post('/cerebrumUltimate/sidebar/config/import-chunk', RED.auth.needsPermission('cerebrumUltimate.write'), (req, res) => {
+      try {
+        const nodeId = String(req.body?.nodeId || '')
+        const target = aiRuntimeNodes.get(nodeId) || RED.nodes.getNode(nodeId)
+        if (!target || target.type !== 'cerebrumUltimate') throw Object.assign(new Error('Cerebrum node not found'), { status: 404 })
+        res.json(backupUploads.append({ ...req.body, nodeId, owner: String(req.user?.username || '') }))
+      } catch (error) {
+        res.status(error.status || 400).json({ error: error.message || String(error) })
+      }
+    })
+
     RED.httpAdmin.post('/cerebrumUltimate/sidebar/config/import', RED.auth.needsPermission('cerebrumUltimate.write'), async (req, res) => {
       try {
         const nodeId = req.body?.nodeId ? String(req.body.nodeId) : ''
-        const configPayload = req.body?.config
+        const configPayload = req.body?.uploadId
+          ? backupUploads.take({ owner: String(req.user?.username || ''), nodeId, uploadId: req.body.uploadId })
+          : req.body?.config
         if (!nodeId) {
           res.status(400).json({ error: 'Missing nodeId' })
           return
@@ -9545,6 +9560,25 @@ module.exports = function (RED) {
       }
     }
 
+    const backupArchiveWrites = new Set()
+    let backupArchiveWriteError = null
+    const appendBackupArchive = (filePath, content, callback) => {
+      let resolveWrite
+      const pending = new Promise(resolve => { resolveWrite = resolve })
+      backupArchiveWrites.add(pending)
+      const complete = error => {
+        if (error) backupArchiveWriteError = error
+        backupArchiveWrites.delete(pending)
+        resolveWrite()
+        callback(error)
+      }
+      try { fs.appendFile(filePath, content, 'utf8', complete) } catch (error) { complete(error) }
+    }
+    const flushBackupArchiveWrites = async () => {
+      while (backupArchiveWrites.size) await Promise.all(Array.from(backupArchiveWrites))
+      if (backupArchiveWriteError) throw new Error(`Archive write failed; backup cannot guarantee completeness: ${backupArchiveWriteError.message}`)
+    }
+
     const persistTelegramToDisk = (telegram) => {
       if (node.historyStoreToDisk !== true || !telegram || typeof telegram !== 'object') return
       const archiveDir = getHistoryArchiveDir()
@@ -9554,7 +9588,7 @@ module.exports = function (RED) {
       const line = `${serializeCerebrumCompactHistoryRecord(telegram, 'knx')}\n`
       const pendingKey = buildCerebrumHistoryEventKey(telegram, 'knx')
       if (pendingKey) node._historyDiskPending.set(pendingKey, telegram)
-      fs.appendFile(filePath, line, 'utf8', (error) => {
+      appendBackupArchive(filePath, line, (error) => {
         if (pendingKey && node._historyDiskPending.get(pendingKey) === telegram) node._historyDiskPending.delete(pendingKey)
         if (error) node.sysLogger?.warn(`Cerebrum history append error: ${error.message || error}`)
       })
@@ -9804,7 +9838,7 @@ module.exports = function (RED) {
       const filePath = getAdapterHistoryArchiveFile(formatArchiveDayKey(normalized.ts))
       const pendingKey = buildCerebrumHistoryEventKey(normalized, 'adapter')
       if (pendingKey) node._adapterHistoryDiskPending.set(pendingKey, normalized)
-      fs.appendFile(filePath, `${serializeCerebrumCompactHistoryRecord(normalized, 'adapter')}\n`, 'utf8', error => {
+      appendBackupArchive(filePath, `${serializeCerebrumCompactHistoryRecord(normalized, 'adapter')}\n`, error => {
         if (pendingKey && node._adapterHistoryDiskPending.get(pendingKey) === normalized) node._adapterHistoryDiskPending.delete(pendingKey)
         if (error) node.sysLogger?.warn(`Cerebrum adapter history append error: ${error.message || error}`)
       })
@@ -10000,7 +10034,7 @@ module.exports = function (RED) {
       const filePath = getAiConfigStorageFile()
       const dirPath = path.dirname(filePath)
       if (!ensureDirectorySync(dirPath)) throw new Error('Unable to create Cerebrum storage directory')
-      fs.writeFileSync(filePath, JSON.stringify({
+      writeAtomicUtf8File({ filePath, content: JSON.stringify({
         version: 4,
         updatedAt: new Date().toISOString(),
         nodeId: node.id,
@@ -10014,7 +10048,7 @@ module.exports = function (RED) {
         actuatorTests: nextConfig.actuatorTests,
         testPlans: nextConfig.testPlans,
         testResults: nextConfig.testResults
-      }, null, 2), 'utf8')
+      }, null, 2) })
       node._persistedAiConfigCache = nextConfig
       return nextConfig
     }
@@ -10263,15 +10297,17 @@ module.exports = function (RED) {
 
     const buildCerebrumBackupFile = ({ id, filePath, mediaType, fallbackContent = '' } = {}) => {
       const content = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : String(fallbackContent || '')
-      return {
-        id,
-        name: path.basename(filePath),
-        mediaType,
-        encoding: 'utf8',
-        bytes: Buffer.byteLength(content, 'utf8'),
-        content
-      }
+      return backupFile(id, path.basename(filePath), content, mediaType)
     }
+
+    const getBackupSupplementalLocations = () => ({
+      history: getHistoryArchiveDir(),
+      adapterHistory: getAdapterHistoryArchiveDir(),
+      operations: getOperationsArchiveDir(),
+      habitLearning: getHabitLearningCheckpointFile(),
+      lastChatPrompt: getLastChatPromptDebugFile(),
+      legacyAreas: getLegacyAreaStorageFile()
+    })
 
     const buildAiConfigExport = () => {
       const configurationPath = getAiConfigStorageFile()
@@ -10281,7 +10317,9 @@ module.exports = function (RED) {
       const schedulesReadablePath = getScheduleMarkdownFile()
       return {
         format: 'cerebrum-ultimate-backup',
-        version: 1,
+        version: 2,
+        supplementalFiles: readSupplementalFiles(getBackupSupplementalLocations()),
+        migration: buildMigrationFlows(RED, node, config),
         exportedAt: new Date().toISOString(),
         node: {
           id: node.id,
@@ -11693,11 +11731,15 @@ module.exports = function (RED) {
     }
 
     node.exportAiConfig = async () => {
+      await flushBackupArchiveWrites()
       writePersistedAiConfig(loadPersistedAiConfig())
       if (!scheduleChatContextPersist({ immediate: true })) throw new Error('Unable to prepare Cerebrum Learning for export')
       if (!scheduleHomeMemoryPersist({ immediate: true })) throw new Error('Unable to prepare Cerebrum Memory for export')
       if (!scheduleScheduleStorePersist({ immediate: true })) throw new Error('Unable to prepare Cerebrum schedules for export')
-      return buildAiConfigExport()
+      const backup = buildAiConfigExport()
+      validateSupplementalFiles(backup.supplementalFiles)
+      if (Buffer.byteLength(JSON.stringify(backup, null, 2), 'utf8') > MAX_BACKUP_BYTES) throw Object.assign(new Error('Backup exceeds 256 MiB; copy the complete Cerebrum storage directory with Node-RED stopped.'), { status: 413 })
+      return backup
     }
 
     node.getChatLearningFile = async () => {
@@ -11747,8 +11789,14 @@ module.exports = function (RED) {
 
     node.importAiConfig = async (payload) => {
       const p = payload && typeof payload === 'object' ? payload : {}
-      if (p.format !== 'cerebrum-ultimate-backup' || p.version !== 1) {
-        throw Object.assign(new Error('Unsupported backup. Import a Cerebrum backup version 1.'), { status: 400 })
+      if (p.format !== 'cerebrum-ultimate-backup' || ![1, 2].includes(p.version)) {
+        throw Object.assign(new Error('Unsupported backup. Import a Cerebrum backup version 1 or 2.'), { status: 400 })
+      }
+      if (Buffer.byteLength(JSON.stringify(p), 'utf8') > MAX_BACKUP_BYTES) throw Object.assign(new Error('Backup exceeds 256 MiB'), { status: 413 })
+      if (p.version === 2) {
+        validateSupplementalFiles(p.supplementalFiles)
+        validateFile(p.migration && p.migration.flows, 'nodeRedFlows')
+        validateFile(p.migration && p.migration.etsCatalogs, 'etsCatalogs')
       }
       const files = p.files && typeof p.files === 'object' && !Array.isArray(p.files) ? p.files : null
       const readBackupContent = (id, maxBytes) => {
@@ -11756,6 +11804,7 @@ module.exports = function (RED) {
         if (!file || file.id !== id || file.encoding !== 'utf8' || typeof file.content !== 'string') {
           throw Object.assign(new Error(`Cerebrum backup is missing the required '${id}' file`), { status: 400 })
         }
+        if (p.version === 2) validateFile(file, id)
         const bytes = Buffer.byteLength(file.content, 'utf8')
         if (!file.content.trim()) throw Object.assign(new Error(`Cerebrum backup file '${id}' is empty`), { status: 400 })
         if (bytes > maxBytes) throw Object.assign(new Error(`Cerebrum backup file '${id}' exceeds the safe size limit`), { status: 413 })
@@ -11766,18 +11815,18 @@ module.exports = function (RED) {
       let nextHomeMemory
       let nextScheduleStore
       try {
-        configuration = JSON.parse(readBackupContent('aiConfiguration', 32 * 1024 * 1024))
+        configuration = JSON.parse(readBackupContent('aiConfiguration', MAX_BACKUP_BYTES))
         if (!configuration || typeof configuration !== 'object' || Array.isArray(configuration) || configuration.version !== 4) {
           throw new Error('The AI configuration file is not version 4')
         }
         nextChatContext = parseCerebrumChatContextFileStrict(readBackupContent('chatLearning', CHAT_CONTEXT_MAX_BYTES))
         nextHomeMemory = parseCerebrumHomeMemoryMarkdownStrict(readBackupContent('homeMemory', HOME_MEMORY_DEFAULT_KB * 1024))
-        const schedulePayload = JSON.parse(readBackupContent('schedules', 1024 * 1024))
+        const schedulePayload = JSON.parse(readBackupContent('schedules', MAX_BACKUP_BYTES))
         if (!schedulePayload || typeof schedulePayload !== 'object' || Array.isArray(schedulePayload) || schedulePayload.version !== 1 || !Array.isArray(schedulePayload.tasks)) {
           throw new Error('The Cerebrum schedules file is not version 1')
         }
         nextScheduleStore = normalizeCerebrumScheduleStore(schedulePayload)
-        readBackupContent('schedulesReadable', 2 * 1024 * 1024)
+        readBackupContent('schedulesReadable', MAX_BACKUP_BYTES)
       } catch (error) {
         if (error && error.status) throw error
         throw Object.assign(new Error(`Invalid Cerebrum backup: ${error.message || error}`), { status: 400 })
@@ -11799,6 +11848,8 @@ module.exports = function (RED) {
       const nextActuatorTests = Array.isArray(configuration.actuatorTests) ? configuration.actuatorTests.map((preset, index) => normalizeActuatorTestPresetPayload(preset, `import-actuator-${index + 1}`)) : []
       const nextTestPlans = Array.isArray(configuration.testPlans) ? configuration.testPlans.map((plan, index) => normalizeAiTestPlanPayload(plan, `import-plan-${index + 1}`)) : []
       const nextTestResults = Array.isArray(configuration.testResults) ? configuration.testResults.map((report, index) => normalizeAiTestResultPayload(report, `import-result-${index + 1}`)).filter(Boolean) : []
+      await flushBackupArchiveWrites()
+      const previousSupplemental = p.version === 2 ? readSupplementalFiles(getBackupSupplementalLocations()) : null
       const previousConfiguration = clonePersistedTestResult(loadPersistedAiConfig(), {})
       const previousEtsAccess = getEffectiveEtsAccessConfiguration()
       const previousChatContext = node._chatContext
@@ -11823,6 +11874,7 @@ module.exports = function (RED) {
         if (!scheduleChatContextPersist({ immediate: true })) throw new Error('Unable to restore Cerebrum Learning')
         if (!scheduleHomeMemoryPersist({ immediate: true })) throw new Error('Unable to restore Cerebrum Memory')
         if (!scheduleScheduleStorePersist({ immediate: true })) throw new Error('Unable to restore Cerebrum schedules')
+        if (p.version === 2) replaceSupplementalFiles(p.supplementalFiles, getBackupSupplementalLocations(), writeAtomicUtf8File)
         const sharedChatStore = sharedCerebrumChatContextStores.get(getChatContextFile())
         const chatNodes = sharedChatStore && sharedChatStore.nodes instanceof Set ? Array.from(sharedChatStore.nodes) : [node]
         chatNodes.forEach((boundNode) => {
@@ -11849,11 +11901,22 @@ module.exports = function (RED) {
         try { scheduleChatContextPersist({ immediate: true }) } catch (rollbackError) { /* preserve original import error */ }
         try { scheduleHomeMemoryPersist({ immediate: true }) } catch (rollbackError) { /* preserve original import error */ }
         try { scheduleScheduleStorePersist({ immediate: true }) } catch (rollbackError) { /* preserve original import error */ }
+        if (previousSupplemental) {
+          try { replaceSupplementalFiles(previousSupplemental, getBackupSupplementalLocations(), writeAtomicUtf8File) } catch (rollbackError) {
+            throw new Error(`Import failed: ${error.message}; archive rollback failed: ${rollbackError.message}`)
+          }
+        }
         throw error
       }
-      const summary = node._lastSummary || rebuildCachedSummaryNow()
+      if (p.version === 2) {
+        node._history = []
+        loadRecentHistoryFromDisk()
+      }
+      const summary = rebuildCachedSummaryNow()
       return {
         ok: true,
+        backupVersion: p.version,
+        migration: p.version === 2 ? { instructions: p.migration.instructions, warnings: p.migration.warnings } : null,
         areas: buildAreasSnapshot({ summary }),
         profiles: buildProfilesSnapshot(),
         actuatorTests: buildActuatorTestsSnapshot(),

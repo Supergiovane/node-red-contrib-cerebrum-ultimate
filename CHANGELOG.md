@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.10 — 2026-09-05
+
+- Added version 2 Cerebrum backups with all retained KNX/adapter/operation archives, learning checkpoints and diagnostics, plus portable Node-RED flows, integration credentials, ETS data and package requirements. Cerebrum AI provider keys remain excluded.
+- Added checked archive restoration across different node IDs, rollback on write failures, pending-write synchronization and chunked uploads for large backups. Version 1 imports remain supported.
+- Added a Web flow-extraction action and migration instructions explaining how to restore node settings and the surrounding integrations.
+
 ## 0.0.9 — 2026-09-03
 
 - Added an atomic checkpoint for home routines that are still being learned or awaiting confirmation, preserving every collected sample across Node-RED restarts.

@@ -855,6 +855,9 @@ const seenScheduledChatEntries = new Set();
 const flowCardRef = ref(null);
 const isFlowFullscreen = ref(false);
 const configImportRef = ref(null);
+const migrationImportRef = ref(null);
+const migrationBackup = ref(null);
+const backupBusy = ref(false);
 const chatLearningImportRef = ref(null);
 const cerebrumMemoryImportRef = ref(null);
 const testPlanReportRef = ref(null);
@@ -6439,31 +6442,56 @@ async function runActuatorTest() {
   }
 }
 
+function downloadBackupJson(value, name) {
+  const url = window.URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+}
+
+async function extractMigrationFlows(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > 256 * 1024 * 1024) throw new Error("Backup exceeds 256 MiB");
+    const backup = JSON.parse(await file.text());
+    if (backup.format !== "cerebrum-ultimate-backup" || backup.version !== 2 || !backup.migration?.flows?.content) throw new Error("This backup does not contain Node-RED migration flows");
+    const flows = JSON.parse(backup.migration.flows.content);
+    if (!Array.isArray(flows)) throw new Error("Invalid Node-RED migration flows");
+    migrationBackup.value = backup.migration;
+    downloadBackupJson(flows, "cerebrum-flows.json");
+    setStatus("Import the downloaded flows in Node-RED, deploy, then restore this backup.");
+  } catch (error) {
+    state.lastError = error.message;
+    setStatus(state.lastError);
+  } finally {
+    event.target.value = "";
+  }
+}
+
 async function exportFullConfig() {
-  if (!state.selectedNodeId) return;
-  setStatus("Exporting Cerebrum and Cerebrum backup...");
+  if (!state.selectedNodeId || backupBusy.value) return;
+  backupBusy.value = true;
+  setStatus("Exporting Cerebrum backup...");
   try {
     const data = await requestJson(apiUrl("config/export"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ nodeId: state.selectedNodeId }),
     });
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json",
-    });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `cerebrum-ultimate-backup-${state.selectedNodeId}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-    setStatus("Cerebrum and Cerebrum backup exported");
+    migrationBackup.value = data.migration || null;
+    downloadBackupJson(data, `cerebrum-ultimate-backup-${state.selectedNodeId}.json`);
+    setStatus("Cerebrum backup exported");
   } catch (error) {
     state.lastError =
-      error.message || "Failed to export Cerebrum and Cerebrum backup";
+      error.message || "Failed to export Cerebrum backup";
     setStatus(state.lastError);
+  } finally {
+    backupBusy.value = false;
   }
 }
 
@@ -6476,25 +6504,41 @@ async function importFullConfig(event) {
     event && event.target && event.target.files && event.target.files[0]
       ? event.target.files[0]
       : null;
-  if (!file || !state.selectedNodeId) return;
+  if (!file || !state.selectedNodeId || backupBusy.value) return;
+  const nodeId = state.selectedNodeId;
+  backupBusy.value = true;
   try {
+    if (file.size > 256 * 1024 * 1024) throw new Error("Backup exceeds 256 MiB");
     const text = await file.text();
     const parsed = JSON.parse(text);
+    if (parsed.format !== "cerebrum-ultimate-backup" || ![1, 2].includes(parsed.version)) throw new Error("Unsupported Cerebrum backup");
+    migrationBackup.value = parsed.migration || null;
     const confirmed = window.confirm(
       localizeUiText(
-        "Import this backup? It replaces this node's Cerebrum configuration and scheduled Cerebrum tasks, plus the shared Cerebrum Learning and Cerebrum Memory used by every Cerebrum node on this storage.",
+        "Restore this backup? It replaces this node's Cerebrum data and archives, plus the shared learning and home memory. For migration, import and deploy the included Node-RED flows first. AI provider API keys are not changed.",
       ),
     );
     if (!confirmed) return;
-    setStatus("Importing Cerebrum and Cerebrum backup...");
+    setStatus("Importing Cerebrum backup...");
+    const bytes = new TextEncoder().encode(text);
+    const chunkBytes = 48 * 1024;
+    const total = Math.ceil(bytes.length / chunkBytes);
+    let uploadId;
+    for (let index = 0; index < total; index++) {
+      const chunk = btoa(String.fromCharCode(...bytes.subarray(index * chunkBytes, (index + 1) * chunkBytes)));
+      const response = await requestJson(apiUrl("config/import-chunk"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nodeId, uploadId, index, total, chunk }),
+      });
+      uploadId = response.uploadId;
+    }
     const data = await requestJson(apiUrl("config/import"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        nodeId: state.selectedNodeId,
-        config: parsed,
-      }),
+      body: JSON.stringify({ nodeId, uploadId }),
     });
+    if (state.selectedNodeId !== nodeId) return;
     state.stateData = Object.assign({}, state.stateData || {}, {
       areas: data.areas || areasState.value,
       profiles: data.profiles || profiles.value,
@@ -6512,12 +6556,13 @@ async function importFullConfig(event) {
       await loadCerebrumMemoryFile();
     if (state.activeTab === "cerebrum" && state.cerebrumTab === "operations")
       await loadCerebrumOperations({ force: true });
-    setStatus("Cerebrum and Cerebrum backup imported");
+    setStatus("Cerebrum backup imported");
   } catch (error) {
     state.lastError =
-      error.message || "Failed to import Cerebrum and Cerebrum backup";
+      error.message || "Failed to import Cerebrum backup";
     setStatus(state.lastError);
   } finally {
+    backupBusy.value = false;
     if (event && event.target) event.target.value = "";
   }
 }
@@ -10153,7 +10198,7 @@ onBeforeUnmount(() => {
             <div>
               <h2>Settings</h2>
               <p class="area-detail-subhead">
-                Import or export a complete Cerebrum and Cerebrum backup.
+                Import or export a complete Cerebrum backup.
               </p>
             </div>
           </div>
@@ -10166,9 +10211,7 @@ onBeforeUnmount(() => {
               <span class="meta-chip">Complete backup</span>
             </div>
             <p class="area-detail-subhead">
-              The backup contains the Cerebrum configuration and every
-              authoritative Cerebrum file: Cerebrum Learning, home memory and
-              scheduled tasks.
+              The backup includes Cerebrum memory, learning, schedules, all event archives and Node-RED migration flows. AI provider API keys are excluded. Other integration credentials are included: keep the backup private.
             </p>
             <div
               class="card-head-actions action-cluster settings-config-actions"
@@ -10176,7 +10219,7 @@ onBeforeUnmount(() => {
               <button
                 class="secondary-button"
                 type="button"
-                :disabled="!state.selectedNodeId"
+                :disabled="!state.selectedNodeId || backupBusy"
                 @click="exportFullConfig"
               >
                 Export Backup
@@ -10184,11 +10227,22 @@ onBeforeUnmount(() => {
               <button
                 class="secondary-button"
                 type="button"
-                :disabled="!state.selectedNodeId"
+                :disabled="!state.selectedNodeId || backupBusy"
                 @click="triggerConfigImport"
               >
                 Import Backup
               </button>
+            </div>
+            <p class="area-detail-subhead">
+              To move Cerebrum: install the required packages, extract and import the Node-RED flows from the backup, deploy, then open the imported Cerebrum node and restore the same backup. Re-enter your AI provider API key.
+            </p>
+            <button class="secondary-button" type="button" :disabled="backupBusy" @click="migrationImportRef?.click()">
+              Extract Node-RED flows from backup
+            </button>
+            <div v-if="migrationBackup" class="area-detail-subhead">
+              <p>Packages required on the destination:</p>
+              <pre>{{ JSON.stringify(migrationBackup.dependencies, null, 2) }}</pre>
+              <p v-for="warning in migrationBackup.warnings || []" :key="warning">{{ warning }}</p>
             </div>
           </article>
           <article
@@ -10770,6 +10824,7 @@ onBeforeUnmount(() => {
               </span>
             </div>
           </article>
+          <input ref="migrationImportRef" type="file" accept="application/json,.json" class="hidden-file-input" @change="extractMigrationFlows" />
           <input
             ref="configImportRef"
             type="file"
