@@ -1,5 +1,6 @@
 <script type="text/javascript" src="resources/node-red-contrib-cerebrum-ultimate/htmlUtils.js"></script>
-<script type="text/javascript" src="resources/node-red-contrib-cerebrum-ultimate/CerebrumChatAdapterMappings.js"></script>
+<script type="text/javascript"
+    src="resources/node-red-contrib-cerebrum-ultimate/CerebrumChatAdapterMappings.js"></script>
 <style type="text/css">
     #cerebrum-ollama-install-row {
         align-items: flex-start;
@@ -546,7 +547,7 @@
 
             llmEnabled: { value: false },
             llmProvider: { value: "openai_compat" },
-            llmBaseUrl: { value: "https://api.openai.com/v1/chat/completions" },
+            llmBaseUrl: { value: "https://api.openai.com/v1/responses" },
             llmModel: { value: "gpt-5.4" },
             llmReasoningEffort: { value: "default" },
             llmContextLength: { value: 0 },
@@ -589,7 +590,7 @@
             const node = this;
             const savedKnxGatewayId = String(node.server || "").trim();
             const savedUnifiProtectConfigId = String(node.unifiProtectConfig || "").trim();
-            const OPENAI_COMPAT_DEFAULT_CHAT_URL = "https://api.openai.com/v1/chat/completions";
+            const OPENAI_DEFAULT_RESPONSES_URL = "https://api.openai.com/v1/responses";
             const OLLAMA_DEFAULT_CHAT_URL = "http://localhost:11434/api/chat";
             const ANTHROPIC_DEFAULT_CHAT_URL = "https://api.anthropic.com/v1/messages";
             const LMSTUDIO_DEFAULT_CHAT_URL = "http://localhost:1234/v1/chat/completions";
@@ -604,6 +605,7 @@
                 if ($mount.length && $section.length) $mount.append($section);
             };
             mountTabSection("#cerebrum-mount-assistant-setup", "#cerebrum-tab-llm-connection");
+            mountTabSection("#cerebrum-mount-web-intelligence", "#cerebrum-tab-web-intelligence");
             mountTabSection("#cerebrum-mount-assistant-advanced", "#cerebrum-tab-advanced");
             mountTabSection("#cerebrum-mount-chat-adapter", "#cerebrum-tab-chat-adapter");
             mountTabSection("#cerebrum-mount-home-intelligence", "#cerebrum-tab-home-intelligence");
@@ -689,6 +691,9 @@
                 } catch (error) { }
             };
             const destroyChatEditors = () => {
+                modelEditorClosed = true;
+                modelsRequestVersion++;
+                localContextRequestVersion++;
                 ["chatInputCodeEditor", "chatOutputCodeEditor"].forEach(function (key) {
                     try {
                         if (node[key] && typeof node[key].destroy === "function") node[key].destroy();
@@ -1209,6 +1214,9 @@
             let availableModelItems = [];
             let modelPickerMouseDown = false;
             let localContextRequestVersion = 0;
+            let modelsRequestVersion = 0;
+            let modelConnectionVersion = 0;
+            let modelEditorClosed = false;
 
             const formatContextTokens = (value) => {
                 const tokens = Math.max(0, Number(value) || 0);
@@ -1314,34 +1322,69 @@
             configureModelPicker();
 
             const normalizeUrl = (value) => String(value || "").trim().replace(/\/+$/, "").toLowerCase();
-            const isOpenAiDefaultUrl = (value) => normalizeUrl(value) === normalizeUrl(OPENAI_COMPAT_DEFAULT_CHAT_URL);
-            const isOllamaDefaultUrl = (value) => normalizeUrl(value) === normalizeUrl(OLLAMA_DEFAULT_CHAT_URL);
-            const isOpenAiDefaultModel = (value) => OPENAI_COMPAT_DEFAULT_MODELS.indexOf(String(value || "").trim().toLowerCase()) >= 0;
-            const DEFAULT_CHAT_URLS = [OPENAI_COMPAT_DEFAULT_CHAT_URL, OLLAMA_DEFAULT_CHAT_URL, ANTHROPIC_DEFAULT_CHAT_URL, LMSTUDIO_DEFAULT_CHAT_URL];
+            const DEFAULT_CHAT_URLS = [OPENAI_DEFAULT_RESPONSES_URL, "https://api.openai.com/v1/chat/completions", OLLAMA_DEFAULT_CHAT_URL, ANTHROPIC_DEFAULT_CHAT_URL, LMSTUDIO_DEFAULT_CHAT_URL];
             const DEFAULT_MODELS = OPENAI_COMPAT_DEFAULT_MODELS.concat([OLLAMA_DEFAULT_MODEL, ANTHROPIC_DEFAULT_MODEL]);
             const isAnyDefaultUrl = (value) => DEFAULT_CHAT_URLS.some((u) => normalizeUrl(u) === normalizeUrl(value));
             const isAnyDefaultModel = (value) => DEFAULT_MODELS.indexOf(String(value || "").trim().toLowerCase()) >= 0;
+            const urlByProvider = { ollama: OLLAMA_DEFAULT_CHAT_URL, anthropic: ANTHROPIC_DEFAULT_CHAT_URL, lmstudio: LMSTUDIO_DEFAULT_CHAT_URL, openai_compat: OPENAI_DEFAULT_RESPONSES_URL };
+            const modelByProvider = { ollama: OLLAMA_DEFAULT_MODEL, anthropic: ANTHROPIC_DEFAULT_MODEL, lmstudio: "", openai_compat: OPENAI_COMPAT_DEFAULT_MODELS[0] };
+            const providerSelections = new Map();
+            let selectedProvider = String($("#node-input-llmProvider").val() || "openai_compat");
+
+            const syncProviderEndpoint = (provider) => {
+                const $baseUrl = $("#node-input-llmBaseUrl");
+                let url = String($baseUrl.val() || "").trim();
+                if (!url || isAnyDefaultUrl(url)) url = urlByProvider[provider] || OPENAI_DEFAULT_RESPONSES_URL;
+                // Match the runtime's Responses routing on the official host.
+                // Other hosts may be custom gateways serving any model family.
+                if (provider === "openai_compat") {
+                    try {
+                        const parsed = new URL(url);
+                        if (parsed.protocol === "https:" && parsed.hostname.toLowerCase() === "api.openai.com") {
+                            parsed.pathname = "/v1/responses";
+                            parsed.search = "";
+                            parsed.hash = "";
+                            url = parsed.toString();
+                        }
+                    } catch (error) { }
+                }
+                $baseUrl.val(url);
+                return url;
+            };
 
             const applyProviderDefaults = (provider) => {
                 const $baseUrl = $("#node-input-llmBaseUrl");
                 const $model = $("#node-input-llmModel");
-                const currentBaseUrl = String($baseUrl.val() || "").trim();
                 const currentModel = String($model.val() || "").trim();
+                if (provider !== selectedProvider) {
+                    // Keep custom hosts with their provider while this dialog is open.
+                    providerSelections.set(selectedProvider, { baseUrl: String($baseUrl.val() || "").trim(), model: currentModel });
+                    const saved = providerSelections.get(provider);
+                    $baseUrl.val(saved ? saved.baseUrl : urlByProvider[provider]);
+                    $model.val(saved ? saved.model : modelByProvider[provider]);
+                    selectedProvider = provider;
+                } else if (!currentModel || isAnyDefaultModel(currentModel)) {
+                    $model.val(modelByProvider[provider]);
+                }
+                syncProviderEndpoint(provider);
+            };
 
-                const urlByProvider = { ollama: OLLAMA_DEFAULT_CHAT_URL, anthropic: ANTHROPIC_DEFAULT_CHAT_URL, lmstudio: LMSTUDIO_DEFAULT_CHAT_URL, openai_compat: OPENAI_COMPAT_DEFAULT_CHAT_URL };
-                const modelByProvider = { ollama: OLLAMA_DEFAULT_MODEL, anthropic: ANTHROPIC_DEFAULT_MODEL, lmstudio: "", openai_compat: OPENAI_COMPAT_DEFAULT_MODELS[0] };
-                const targetUrl = urlByProvider[provider] || OPENAI_COMPAT_DEFAULT_CHAT_URL;
-                const targetModel = Object.prototype.hasOwnProperty.call(modelByProvider, provider)
-                    ? modelByProvider[provider]
-                    : OPENAI_COMPAT_DEFAULT_MODELS[0];
-
-                // Only overwrite when the field is empty or still holds another provider's default,
-                // so a user's custom base URL / model is never clobbered when switching providers.
-                if (!currentBaseUrl || isAnyDefaultUrl(currentBaseUrl)) $baseUrl.val(targetUrl);
-                if (!currentModel || isAnyDefaultModel(currentModel)) $model.val(targetModel);
+            const invalidateModelRequests = () => {
+                modelsRequestVersion++;
+                localContextRequestVersion++;
+                modelConnectionVersion++;
+                populateModels([], []);
+                const $model = $("#node-input-llmModel");
+                $model.prop("disabled", false);
+                if (typeof $model.autocomplete === "function" && $model.data("ui-autocomplete")) $model.autocomplete("close");
+                $("#node-input-llmContextLength").val(0);
+                setRefreshModelsBusy(false);
+                setOllamaInstallUiState(false);
+                setLocalModelContextStatus(null);
             };
 
             const configureSelectedLocalModel = () => {
+                const requestVersion = ++localContextRequestVersion;
                 const provider = $("#node-input-llmProvider").val();
                 if (provider !== "lmstudio" && provider !== "ollama") return;
                 const model = String($("#node-input-llmModel").val() || "").trim();
@@ -1353,7 +1396,6 @@
                     return;
                 }
 
-                const requestVersion = ++localContextRequestVersion;
                 const activeContextLength = Number(detail.loadedContextLength) > 0
                     ? Number(detail.loadedContextLength)
                     : Number(detail.maxContextLength);
@@ -1409,8 +1451,11 @@
             };
 
             const refreshModels = () => {
+                if (modelEditorClosed) return;
+                const requestVersion = ++modelsRequestVersion;
                 const provider = $("#node-input-llmProvider").val();
-                const baseUrl = $("#node-input-llmBaseUrl").val() || "";
+                const baseUrl = syncProviderEndpoint(provider);
+                const requestIsCurrent = () => !modelEditorClosed && requestVersion === modelsRequestVersion;
                 const apiKey = $("#node-input-llmApiKey").val() || "";
                 const payload = { nodeId: nodeId, provider: provider, baseUrl: baseUrl };
                 if (provider === "ollama") payload.autoStart = true;
@@ -1426,6 +1471,7 @@
                     data: JSON.stringify(payload)
                 })
                     .done(function (data) {
+                        if (!requestIsCurrent()) return;
                         const models = (data && data.models) ? data.models : [];
                         populateModels(models, data && data.modelDetails);
                         let selectedAutomatically = false;
@@ -1454,6 +1500,7 @@
                         }
                     })
                     .fail(function (xhr) {
+                        if (!requestIsCurrent()) return;
                         let err = "Failed to load models";
                         try {
                             const resp = xhr && xhr.responseJSON;
@@ -1462,14 +1509,17 @@
                         try { RED.notify(err, "error"); } catch (e) { }
                     })
                     .always(function () {
+                        if (!requestIsCurrent()) return;
                         setRefreshModelsBusy(false);
                     });
             };
 
             const installOllamaModel = () => {
                 const provider = $("#node-input-llmProvider").val();
-                if (provider !== "ollama") return;
-                const baseUrl = $("#node-input-llmBaseUrl").val() || "";
+                if (modelEditorClosed || provider !== "ollama") return;
+                const connectionVersion = modelConnectionVersion;
+                const requestIsCurrent = () => !modelEditorClosed && connectionVersion === modelConnectionVersion;
+                const baseUrl = syncProviderEndpoint(provider);
                 const model = String($("#node-input-llmModel").val() || "").trim() || OLLAMA_DEFAULT_MODEL;
                 const payload = { nodeId: nodeId, baseUrl: baseUrl, model: model };
 
@@ -1483,6 +1533,7 @@
                     data: JSON.stringify(payload)
                 })
                     .done(function (data) {
+                        if (!requestIsCurrent()) return;
                         try {
                             const okMsg = t('cerebrumUltimate.messages.installedOllamaModel', "Ollama model installed") + ": " + model;
                             RED.notify(okMsg, "success");
@@ -1494,6 +1545,7 @@
                         refreshModels();
                     })
                     .fail(function (xhr) {
+                        if (!requestIsCurrent()) return;
                         let err = t('cerebrumUltimate.messages.installOllamaModelFailed', "Failed to install Ollama model");
                         try {
                             const resp = xhr && xhr.responseJSON;
@@ -1503,6 +1555,7 @@
                         $("#cerebrum-refreshModels").prop("disabled", false);
                     })
                     .always(function () {
+                        if (!requestIsCurrent()) return;
                         setOllamaInstallUiState(false);
                     });
             };
@@ -1541,6 +1594,7 @@
             $("#node-input-webAccessEnabled").on("change", toggleWebAccess);
             toggleWebAccess();
             $("#node-input-llmProvider").on("change", function () {
+                invalidateModelRequests();
                 toggleProvider({ applyDefaults: true, autoLoadModels: true });
             });
             toggleProvider({ applyDefaults: true });
@@ -1550,7 +1604,12 @@
                 refreshModels();
             });
             $("#node-input-llmModel").on("change", function () {
+                syncProviderEndpoint($("#node-input-llmProvider").val());
                 configureSelectedLocalModel();
+            });
+            $("#node-input-llmBaseUrl").on("change", function () {
+                syncProviderEndpoint($("#node-input-llmProvider").val());
+                invalidateModelRequests();
             });
             $("#node-input-llmLocalContextTokens").on("change", function () {
                 const detail = localModelDetailsById.get(String($("#node-input-llmModel").val() || "").trim());
@@ -1635,6 +1694,10 @@
             <div class="cerebrum-accordion-subsection">
                 <h4><i class="fa fa-cog"></i> <span data-i18n="cerebrumUltimate.sections.quickSetup"></span></h4>
                 <div class="cerebrum-accordion-mount" id="cerebrum-mount-assistant-setup"></div>
+            </div>
+            <div class="cerebrum-accordion-subsection">
+                <h4><i class="fa fa-globe"></i> <span data-i18n="cerebrumUltimate.sections.webIntelligence"></span></h4>
+                <div class="cerebrum-accordion-mount" id="cerebrum-mount-web-intelligence"></div>
             </div>
             <div class="cerebrum-accordion-subsection">
                 <h4><i class="fa fa-sliders"></i> <span data-i18n="cerebrumUltimate.sections.advanced"></span></h4>
@@ -1850,8 +1913,16 @@
 
         <div id="cerebrum-tab-home-intelligence">
             <div class="form-row">
-                <strong><i class="fa fa-globe"></i> <span data-i18n="cerebrumUltimate.sections.webIntelligence"></span></strong>
+                <p data-i18n="cerebrumUltimate.messages.homeIntelligenceIntro"></p>
             </div>
+            <div class="form-row">
+                <label style="width:100%" for="node-input-aiEducation"><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.properties.aiEducation"></span></label>
+                <textarea id="node-input-aiEducation" maxlength="16000" style="width:100%; min-height:180px; box-sizing:border-box;" data-i18n="[placeholder]cerebrumUltimate.placeholder.aiEducation"></textarea>
+            </div>
+
+        </div>
+
+        <div id="cerebrum-tab-web-intelligence">
             <div class="form-row">
                 <input type="checkbox" id="node-input-webAccessEnabled" style="display:inline-block; width:auto; vertical-align:top;">
                 <label style="width:auto" for="node-input-webAccessEnabled">&nbsp;&nbsp;<span data-i18n="cerebrumUltimate.properties.webAccessEnabled"></span></label>
@@ -1863,11 +1934,6 @@
                     <input type="number" id="node-input-webMaxCallsPerHour" min="1" max="60" step="1" style="width:100%;">
                     <!-- <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.webBudgetHint"></div> -->
                 </div>
-            </div>
-            <hr>
-            <div class="form-row">
-                <label style="width:100%" for="node-input-aiEducation"><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.properties.aiEducation"></span></label>
-                <textarea id="node-input-aiEducation" maxlength="16000" style="width:100%; min-height:180px; box-sizing:border-box;" data-i18n="[placeholder]cerebrumUltimate.placeholder.aiEducation"></textarea>
             </div>
         </div>
 

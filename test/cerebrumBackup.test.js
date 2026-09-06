@@ -5,7 +5,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { EventEmitter } = require('events')
-const { backupFile, createBackupUploads, validateSupplementalFiles, buildMigrationFlows } = require('../nodes/utils/cerebrumBackup')
+const { backupFile, createBackupUploads, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows } = require('../nodes/utils/cerebrumBackup')
 const register = require('../nodes/cerebrumUltimate')
 const { parseCerebrumChatContextFileStrict } = require('../nodes/utils/cerebrumChatContext')
 
@@ -62,11 +62,88 @@ describe('Cerebrum portable backup', () => {
     fs.rmSync(root, { recursive: true, force: true })
   })
 
+  const supplementalLocations = (id, includeWorldModel = true) => ({
+    history: path.join(root, id, 'history'),
+    adapterHistory: path.join(root, id, 'adapter-history'),
+    operations: path.join(root, id, 'operations'),
+    habitLearning: path.join(root, id, 'memory', 'habit-learning.json'),
+    lastChatPrompt: path.join(root, id, 'debug', 'last-prompt.txt'),
+    legacyAreas: path.join(root, id, 'areas.json'),
+    ...(includeWorldModel ? { worldModel: path.join(root, id, 'memory', `cerebrum-world-model-${id}.json`) } : {})
+  })
+  const writeSupplementalFile = ({ filePath, content }) => {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fs.writeFileSync(filePath, content)
+  }
+  const seedSupplemental = (locations, worldModel) => {
+    writeSupplementalFile({ filePath: locations.habitLearning, content: '{"version":1,"habits":[]}' })
+    if (worldModel !== undefined) writeSupplementalFile({ filePath: locations.worldModel, content: worldModel })
+    return readSupplementalFiles(locations)
+  }
+
+  it('round trips the world model to the locally selected destination node filename', () => {
+    const worldModel = JSON.stringify({ version: 1, entities: [{ id: 'kitchen', value: 'on' }], episodes: [{ id: 'morning', summary: 'Attività in cucina' }], situations: [{ id: 'quiet', nextCheckAt: '2026-09-06T10:00:00Z' }] })
+    const source = supplementalLocations('source')
+    const files = seedSupplemental(source, worldModel)
+    expect(files.worldModel).to.include({ id: 'worldModel', name: 'cerebrum-world-model-source.json', content: worldModel })
+    const target = supplementalLocations('target')
+    replaceSupplementalFiles(files, target, writeSupplementalFile)
+    expect(fs.readFileSync(target.worldModel, 'utf8')).to.equal(worldModel)
+    expect(fs.existsSync(path.join(path.dirname(target.worldModel), files.worldModel.name))).to.equal(false)
+    const restored = readSupplementalFiles(target)
+    expect(restored.worldModel).to.include({ content: worldModel, sha256: files.worldModel.sha256, bytes: files.worldModel.bytes })
+    expect(() => validateSupplementalFiles(restored)).not.to.throw()
+  })
+
+  it('skips optional world-model entries or locations without deleting existing destination state', () => {
+    const files = seedSupplemental(supplementalLocations('legacy', false))
+    expect(files).not.to.have.property('worldModel')
+    expect(() => validateSupplementalFiles(files)).not.to.throw()
+    const target = supplementalLocations('target')
+    seedSupplemental(target, '{"version":1,"marker":"keep"}')
+    replaceSupplementalFiles(files, target, writeSupplementalFile)
+    expect(fs.readFileSync(target.worldModel, 'utf8')).to.include('keep')
+    files.worldModel = backupFile('worldModel', 'ignored.json', '{"version":1}')
+    expect(() => replaceSupplementalFiles(files, supplementalLocations('without-world', false), writeSupplementalFile)).not.to.throw()
+  })
+
+  it('rejects damaged world-model content before changing destination files', () => {
+    const files = seedSupplemental(supplementalLocations('source'), '{"version":1,"marker":"source"}')
+    files.worldModel.content += 'damage'
+    const target = supplementalLocations('target')
+    const original = seedSupplemental(target, '{"version":1,"marker":"original"}')
+    expect(() => replaceSupplementalFiles(files, target, writeSupplementalFile)).to.throw('worldModel')
+    expect(readSupplementalFiles(target)).to.deep.equal(original)
+  })
+
+  it('restores the prior world model after a later supplemental write fails, including an originally absent model', () => {
+    const files = seedSupplemental(supplementalLocations('source'), '{"version":1,"marker":"new"}')
+    files.lastChatPrompt = backupFile('lastChatPrompt', 'last-prompt.txt', 'new prompt')
+    for (const existing of [true, false]) {
+      const target = supplementalLocations(existing ? 'existing-target' : 'empty-target')
+      const previous = seedSupplemental(target, existing ? '{"version":1,"marker":"original"}' : undefined)
+      expect(() => replaceSupplementalFiles(files, target, entry => {
+        if (entry.filePath === target.lastChatPrompt) throw new Error('simulated later write error')
+        writeSupplementalFile(entry)
+      })).to.throw('simulated later write error')
+      expect(fs.readFileSync(target.worldModel, 'utf8')).to.include('new')
+      replaceSupplementalFiles(previous, target, writeSupplementalFile)
+      expect(readSupplementalFiles(target)).to.deep.equal(previous)
+      expect(fs.existsSync(target.worldModel)).to.equal(existing)
+    }
+  })
+
   it('round trips every archive, checkpoint and learning data to a new node ID, including after restart', async () => {
     const source = create('source')
     source._chatContext.sessions = [{ id: 'chat-person', turns: [{ question: 'Accendi cucina', reply: 'Fatto' }], instructions: [{ text: 'Preferisco luce calda' }], cameraWatches: [{ id: 'watch', cameraId: 'camera-1', eventType: 'motion' }] }]
     source._scheduleStore.tasks = [{ id: 'reminder', kind: 'monitor', title: 'Controlla cucina', instruction: 'Controlla cucina', sessionId: 'chat-person', status: 'active', startAt: new Date(Date.now() + 86400000).toISOString(), nextRunAt: new Date(Date.now() + 86400000).toISOString(), intervalMinutes: 60 }]
     source._homeMemory.habits = [{ id: 'learning-progress', type: 'temporal_state_pattern', status: 'learning', source: 'adapter', objectId: 'light.kitchen', value: 'on', samples: 2, observationDays: 2 }]
+    const observedAt = Date.now()
+    source._webRequestTimestamps = [observedAt - 1000, observedAt]
+    source._webAccessLastSuccessAt = observedAt
+    source._cameraWatchLastTriggered.set('watch', observedAt)
+    source._proactiveStates.set('1/2/3', { ga: '1/2/3', open: true, openedAt: observedAt - 60000, lastSeenAt: observedAt, lastSentAt: observedAt, nextCheckAt: Infinity, value: true, confidence: 0.9 })
+    expect(source._autonomyRuntime.ingestState({ source: 'adapter', objectId: 'light.kitchen', label: 'Kitchen light', kind: 'light', area: 'Kitchen', value: 'on', observedAt: new Date(observedAt).toISOString() })).to.equal(true)
     await source.saveEtsAccessConfiguration({ configured: true, exposedGAs: [], readOnlyGAs: [] })
     const day = new Date().toISOString().slice(0, 10)
     seed(source, `history/source/${day}.knxctx`, 'knx-data\n')
@@ -76,6 +153,12 @@ describe('Cerebrum portable backup', () => {
     source.recordCerebrumOperation({ category: 'autonomous', operation: 'migration-marker', status: 'succeeded', title: 'Migration marker' })
     const backup = await source.exportAiConfig()
     expect(backup.version).to.equal(2)
+    const runtimeState = JSON.parse(backup.supplementalFiles.runtimeState.content)
+    expect(runtimeState.webRequestTimestamps).to.deep.equal([observedAt - 1000, observedAt])
+    expect(runtimeState.cameraWatchLastTriggered).to.deep.equal([['watch', observedAt]])
+    expect(runtimeState.proactiveStates[0].nextCheckAt).to.equal(Number.MAX_SAFE_INTEGER)
+    expect(backup.supplementalFiles.worldObservations.content).to.be.a('string')
+    expect(JSON.parse(backup.supplementalFiles.worldModel.content).entities.some(entity => entity.id === 'adapter:light.kitchen' && entity.value === 'on')).to.equal(true)
     expect(JSON.stringify(backup)).not.to.include('AI-SECRET-EXCLUDED')
     expect(JSON.stringify(backup)).to.include('INTEGRATION-SECRET-INCLUDED')
     const flows = JSON.parse(backup.migration.flows.content)
@@ -94,6 +177,9 @@ describe('Cerebrum portable backup', () => {
     expect(target._chatContext.sessions[0].cameraWatches[0].cameraId).to.equal('camera-1')
     expect(target._scheduleStore.tasks[0]).to.include({ id: 'reminder', title: 'Controlla cucina', sessionId: 'chat-person' })
     expect(target._homeMemory.habits[0]).to.include({ id: 'learning-progress', samples: 2 })
+    expect(target._webRequestTimestamps).to.deep.equal([observedAt - 1000, observedAt])
+    expect(target._cameraWatchLastTriggered.get('watch')).to.equal(observedAt)
+    expect(target._proactiveStates.get('1/2/3')).to.include({ open: true, openedAt: observedAt - 60000, nextCheckAt: Number.MAX_SAFE_INTEGER })
     for (const [group, dir] of [['history', 'history'], ['adapterHistory', 'adapter-history'], ['operations', 'operations']]) {
       for (const file of backup.supplementalFiles[group]) expect(fs.readFileSync(path.join(storage(target), dir, 'target', file.name), 'utf8')).to.equal(file.content)
     }
@@ -101,6 +187,11 @@ describe('Cerebrum portable backup', () => {
     await close(target)
     target = create('target', { ...migratedConfig, id: 'target' })
     expect(target._homeMemory.habits[0]).to.include({ id: 'learning-progress', samples: 2 })
+    expect(target._webRequestTimestamps).to.deep.equal([observedAt - 1000, observedAt])
+    expect(target._webAccessLastSuccessAt).to.equal(observedAt)
+    expect(target._cameraWatchLastTriggered.get('watch')).to.equal(observedAt)
+    expect(target._proactiveStates.get('1/2/3')).to.include({ open: true, openedAt: observedAt - 60000, nextCheckAt: Number.MAX_SAFE_INTEGER })
+    expect(target._autonomyRuntime.snapshot().entities.some(entity => entity.id === 'adapter:light.kitchen' && entity.value === 'on')).to.equal(true)
     expect(target.getCerebrumOperationsSnapshot({ limit: 20 }).items.some(item => item.operation === 'migration-marker')).to.equal(true)
     const restored = await target.exportAiConfig()
     expect(JSON.parse(restored.files.aiConfiguration.content).etsAccess).to.deep.equal(JSON.parse(backup.files.aiConfiguration.content).etsAccess)
@@ -223,7 +314,9 @@ describe('Cerebrum portable backup', () => {
     } finally { fs.appendFile = originalAppend }
     let error
     try { await node.exportAiConfig() } catch (caught) { error = caught }
-    expect(error.message).to.include('cannot guarantee completeness')
+    expect(error).to.be.instanceOf(Error)
+    expect(error.message).to.include('Archive write failed')
+    expect(error.message).to.include('simulated append error')
   })
 
   it('assembles uploads without corrupting Unicode and isolates users and nodes', () => {

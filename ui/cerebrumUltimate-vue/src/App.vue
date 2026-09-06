@@ -8,6 +8,9 @@ import {
   ref,
   watch,
 } from "vue";
+import CerebrumWorldInsights from "./components/CerebrumWorldInsights.vue";
+import CerebrumSharedInsights from "./components/CerebrumSharedInsights.vue";
+import CerebrumBrain from "./components/CerebrumBrain.vue";
 import { CEREBRUM_WEB_I18N } from "./cerebrumWebI18n";
 import {
   formatChatLearningSimpleText,
@@ -20,7 +23,6 @@ import {
 } from "./cerebrumMemoryView.mjs";
 
 const tabKey = "cerebrumUltimate:activeTab";
-const cerebrumTabKey = "cerebrumUltimate:cerebrumTab";
 const chatLearningViewKey = "cerebrumUltimate:chatLearningView";
 const cerebrumMemoryViewKey = "cerebrumUltimate:cerebrumMemoryView";
 const flowPrefsKey = "cerebrumUltimate:flowPreview";
@@ -77,6 +79,15 @@ const CEREBRUM_VUE_DOCS_URL =
 const CEREBRUM_PAYPAL_URL =
   "https://www.paypal.com/donate/?hosted_button_id=S8SKPUBSPK758";
 const CEREBRUM_YOUTUBE_URL = "https://www.youtube.com/@maxsupervibe";
+const CEREBRUM_SECTIONS = [
+  { id: "conversation", label: "Conversation", description: "Talk to your home and give shape to your ideas.", color: "#8fdcff" },
+  { id: "learning", label: "Cerebrum Learning", description: "Discover the patterns emerging from everyday life.", color: "#bdadff" },
+  { id: "memory", label: "Cerebrum Memory", description: "Explore what Cerebrum remembers about your home.", color: "#77e3cb" },
+  { id: "goals", label: "Goals", description: "Follow the improvements Cerebrum is working towards.", color: "#ffc782" },
+  { id: "research", label: "Web Research", description: "Explore discoveries and ideas from the Web.", color: "#edabdc" },
+  { id: "operations", label: "Cerebrum Operations", description: "See the actions taken and their outcomes.", color: "#a8cbff" },
+];
+const CEREBRUM_TAB_IDS = new Set(["brain", ...CEREBRUM_SECTIONS.map(section => section.id)]);
 
 const queryNodeId = (() => {
   try {
@@ -125,7 +136,7 @@ const queryCerebrumTab = (() => {
     const requested = String(
       new URLSearchParams(window.location.search).get("cerebrumTab") || "",
     );
-    return ["conversation", "learning", "memory", "operations"].includes(
+    return CEREBRUM_TAB_IDS.has(
       requested,
     )
       ? requested
@@ -591,7 +602,7 @@ function shouldSkipUiTranslationNode(node) {
     tagName === "PRE"
   )
     return true;
-  if (parent.closest(".chat-log")) return true;
+  if (parent.closest(".chat-log, [data-cerebrum-localized]")) return true;
   return false;
 }
 
@@ -614,6 +625,7 @@ function applyUiTranslationsToDom(rootElement) {
       "[placeholder], [title], [aria-label]",
     );
     for (const element of attrNodes) {
+      if (element.closest("[data-cerebrum-localized]")) continue;
       const placeholder = element.getAttribute("placeholder");
       if (placeholder) {
         const localized = localizeUiText(placeholder);
@@ -676,7 +688,7 @@ const state = reactive({
   nodes: [],
   selectedNodeId: "",
   activeTab: queryActiveTab,
-  cerebrumTab: queryCerebrumTab || loadString(cerebrumTabKey, "conversation"),
+  cerebrumTab: queryCerebrumTab || (queryPrompt ? "conversation" : "brain"),
   voiceEnabled: loadBoolean(voiceKey, true),
   flowMaxNodes: loadFlowPrefs().maxNodes,
   flowSelectedGa: loadFlowPrefs().selectedGa,
@@ -852,6 +864,11 @@ const state = reactive({
   pollNodesHandle: null,
 });
 const seenScheduledChatEntries = new Set();
+const cerebrumSections = computed(() => CEREBRUM_SECTIONS.map(section => ({
+  ...section,
+  label: localizeUiText(section.label),
+  description: localizeUiText(section.description),
+})));
 const flowCardRef = ref(null);
 const isFlowFullscreen = ref(false);
 const configImportRef = ref(null);
@@ -1071,9 +1088,15 @@ function syncFullscreenState() {
 }
 
 function apiUrl(tail) {
-  const url = new URL(tail, window.location.href);
-  if (queryAccessToken) url.searchParams.set("access_token", queryAccessToken);
-  return url.toString();
+  // Fetch requests authenticate through withAuthHeaders. Sending the same token
+  // in both the URL and the header makes Node-RED's bearer strategy reject them.
+  return new URL(tail, window.location.href).toString();
+}
+
+// The Web page lives under /sidebar; inspection shares the Node-RED admin
+// root and authentication, including installations behind an ingress proxy.
+function requestWorldInsight(tail) {
+  return requestJson(apiUrl(`../${tail}`), { cache: "no-store" });
 }
 
 function setStatus(text) {
@@ -2840,6 +2863,11 @@ watch(
     state.etsAccessLoadedNodeId = "";
     state.etsAccessData = null;
     state.etsAccessError = "";
+    if (value && state.activeTab === "cerebrum") {
+      if (state.cerebrumTab === "learning") loadChatLearningFile();
+      if (state.cerebrumTab === "memory") loadCerebrumMemoryFile();
+      if (state.cerebrumTab === "operations") loadCerebrumOperations();
+    }
   },
 );
 
@@ -2861,13 +2889,6 @@ watch(
     saveString(tabKey, value || "overview");
     if (["etsAccess", "areas", "tests", "results"].includes(value))
       state.knxMenuOpen = true;
-  },
-);
-
-watch(
-  () => state.cerebrumTab,
-  (value) => {
-    saveString(cerebrumTabKey, value || "conversation");
   },
 );
 
@@ -4460,17 +4481,15 @@ function closeTestPlanEditor() {
 
 function activateCerebrumTab(tabId) {
   const target = String(tabId || "").trim();
-  if (
-    target !== "conversation" &&
-    target !== "learning" &&
-    target !== "memory" &&
-    target !== "operations"
-  )
-    return;
+  if (!CEREBRUM_TAB_IDS.has(target)) return;
   state.cerebrumTab = target;
   if (target === "learning") loadChatLearningFile();
   if (target === "memory") loadCerebrumMemoryFile();
   if (target === "operations") loadCerebrumOperations();
+  nextTick(() => {
+    if (state.activeTab === "cerebrum" && state.cerebrumTab === target)
+      window.scrollTo(0, 0);
+  });
 }
 
 function activateSidebarTab(tabId) {
@@ -4489,12 +4508,12 @@ function activateSidebarTab(tabId) {
       resetTestsWorkspaceView();
   }
   if (target === "etsAccess") loadEtsAccessConfiguration();
-  if (target === "cerebrum" && state.cerebrumTab === "learning")
-    loadChatLearningFile();
-  if (target === "cerebrum" && state.cerebrumTab === "memory")
-    loadCerebrumMemoryFile();
-  if (target === "cerebrum" && state.cerebrumTab === "operations")
-    loadCerebrumOperations();
+  if (target === "cerebrum") {
+    state.activeTab = target;
+    activateCerebrumTab("brain");
+    closeSidebarOnMobile();
+    return;
+  }
   if (state.activeTab !== target) {
     state.activeTab = target;
   } else {
@@ -4682,8 +4701,8 @@ async function sendAsk(questionOverride = "") {
 async function startSetupDoctorDemo(prompt) {
   const question = String(prompt || "").trim();
   if (!question || !nodeInfo.value.llmEnabled || state.asking) return;
-  activateCerebrumTab("conversation");
   activateSidebarTab("cerebrum");
+  activateCerebrumTab("conversation");
   await nextTick();
   await sendAsk(question);
 }
@@ -9939,15 +9958,14 @@ onBeforeUnmount(() => {
         </section>
 
         <section
-          v-if="state.activeTab === 'cerebrum'"
+          v-if="state.activeTab === 'cerebrum' && state.cerebrumTab !== 'brain'"
           class="card card-cerebrum-nav"
         >
           <div class="card-head">
             <div>
               <h2>Cerebrum <span class="beta-badge">BETA</span></h2>
               <p class="area-detail-subhead">
-                Conversation, learning, home memory and the three-day operation
-                audit in one place.
+                Explore what Cerebrum knows, what it is trying to improve and what it has done.
               </p>
             </div>
             <span class="meta-chip">{{
@@ -9960,47 +9978,37 @@ onBeforeUnmount(() => {
             aria-label="Cerebrum sections"
           >
             <button
-              class="settings-tab-button"
-              :class="{ active: state.cerebrumTab === 'conversation' }"
+              class="settings-tab-button cerebrum-map-button"
               type="button"
               role="tab"
-              :aria-selected="state.cerebrumTab === 'conversation'"
-              @click="activateCerebrumTab('conversation')"
+              :aria-selected="false"
+              @click="activateCerebrumTab('brain')"
             >
-              Conversation
+              Neural map
             </button>
             <button
+              v-for="section in cerebrumSections"
+              :key="section.id"
               class="settings-tab-button"
-              :class="{ active: state.cerebrumTab === 'learning' }"
+              :class="{ active: state.cerebrumTab === section.id }"
               type="button"
               role="tab"
-              :aria-selected="state.cerebrumTab === 'learning'"
-              @click="activateCerebrumTab('learning')"
+              :aria-selected="state.cerebrumTab === section.id"
+              data-cerebrum-localized
+              @click="activateCerebrumTab(section.id)"
             >
-              Cerebrum Learning
-            </button>
-            <button
-              class="settings-tab-button"
-              :class="{ active: state.cerebrumTab === 'memory' }"
-              type="button"
-              role="tab"
-              :aria-selected="state.cerebrumTab === 'memory'"
-              @click="activateCerebrumTab('memory')"
-            >
-              Cerebrum Memory
-            </button>
-            <button
-              class="settings-tab-button"
-              :class="{ active: state.cerebrumTab === 'operations' }"
-              type="button"
-              role="tab"
-              :aria-selected="state.cerebrumTab === 'operations'"
-              @click="activateCerebrumTab('operations')"
-            >
-              Cerebrum Operations
+              {{ section.label }}
             </button>
           </div>
         </section>
+
+        <CerebrumBrain
+          v-if="state.activeTab === 'cerebrum' && state.cerebrumTab === 'brain'"
+          class="cerebrum-brain-home"
+          :sections="cerebrumSections"
+          :language="uiLanguage"
+          @navigate="activateCerebrumTab"
+        />
 
         <section
           v-if="
@@ -10190,7 +10198,7 @@ onBeforeUnmount(() => {
           v-if="
             state.activeTab === 'settings' ||
             (state.activeTab === 'cerebrum' &&
-              state.cerebrumTab !== 'conversation')
+              !['brain', 'conversation'].includes(state.cerebrumTab))
           "
           class="card card-settings"
         >
@@ -10253,8 +10261,7 @@ onBeforeUnmount(() => {
               <div>
                 <h3>Cerebrum Learning</h3>
                 <p class="area-detail-subhead">
-                  View, edit and back up the shared learning file used by every
-                  Cerebrum node on this storage.
+                  What Cerebrum has learned from conversations and recurring household behaviour.
                 </p>
               </div>
               <div class="chat-learning-meta">
@@ -10263,25 +10270,42 @@ onBeforeUnmount(() => {
                   <span>sessions</span></span
                 >
                 <span
-                  class="meta-chip"
-                  :class="{ 'chat-learning-size-over': chatLearningTooLarge }"
-                >
-                  {{ formatByteSize(chatLearningEditorBytes) }} /
-                  {{ formatByteSize(state.chatLearningMaxBytes) }}
-                </span>
-                <span
                   v-if="chatLearningDirty"
                   class="meta-chip chat-learning-dirty"
                   >Unsaved changes</span
                 >
               </div>
             </div>
-            <p class="area-detail-subhead">
-              The Native file view contains the authoritative, user-editable
-              learning data. Simplified text explains the same conversations,
-              learned instructions and camera watches in plain language and is
-              always read-only.
-            </p>
+            <CerebrumWorldInsights
+              :key="`${state.selectedNodeId}:learning`"
+              :node-id="state.selectedNodeId"
+              :language="uiLanguage"
+              mode="learning"
+              :request="requestWorldInsight"
+            />
+            <div class="memory-section-toolbar">
+              <h4>From your conversations</h4>
+              <button class="secondary-button" type="button"
+                :disabled="!state.selectedNodeId || chatLearningDirty || state.chatLearningLoading || state.chatLearningSaving || state.chatLearningResetting"
+                :title="chatLearningDirty ? localizeUiText('Unsaved changes') : ''"
+                @click="loadChatLearningFile()">
+                {{ state.chatLearningLoading ? 'Loading...' : 'Refresh' }}
+              </button>
+            </div>
+            <CerebrumSharedInsights
+              :key="`${state.selectedNodeId}:shared-learning`"
+              mode="learning"
+              :content="state.chatLearningBaseline"
+              :language="uiLanguage"
+              :loading="state.chatLearningLoading"
+              :error="state.chatLearningError"
+            />
+            <details class="memory-file-tools" :open="chatLearningDirty">
+              <summary>Advanced files and backups</summary>
+              <p class="area-detail-subhead" :class="{ 'chat-learning-size-over': chatLearningTooLarge }">
+                {{ formatByteSize(chatLearningEditorBytes) }} / {{ formatByteSize(state.chatLearningMaxBytes) }}
+              </p>
+              <p class="area-detail-subhead">Inspect or edit the saved conversation data. Changes take effect only when saved.</p>
             <div
               class="cerebrum-memory-view-switch"
               role="tablist"
@@ -10450,6 +10474,7 @@ onBeforeUnmount(() => {
             >
               Last saved: {{ formatDateTime(state.chatLearningModifiedAt) }}
             </p>
+            </details>
           </article>
           <article
             v-else-if="state.cerebrumTab === 'memory'"
@@ -10459,8 +10484,7 @@ onBeforeUnmount(() => {
               <div>
                 <h3>Cerebrum Memory <span class="beta-badge">BETA</span></h3>
                 <p class="area-detail-subhead">
-                  Inspect, edit and back up learned habits, occupant decisions
-                  and the autonomously reconciled home-state cache.
+                  Current observations, expectations and the evidence behind Cerebrum’s understanding of your home.
                 </p>
               </div>
               <div class="chat-learning-meta">
@@ -10480,25 +10504,42 @@ onBeforeUnmount(() => {
                   >{{ state.cerebrumMemoryStateCount }} states</span
                 >
                 <span
-                  class="meta-chip"
-                  :class="{ 'chat-learning-size-over': cerebrumMemoryTooLarge }"
-                >
-                  {{ formatByteSize(cerebrumMemoryEditorBytes) }} /
-                  {{ formatByteSize(state.cerebrumMemoryMaxBytes) }}
-                </span>
-                <span
                   v-if="cerebrumMemoryDirty"
                   class="meta-chip chat-learning-dirty"
                   >Unsaved changes</span
                 >
               </div>
             </div>
-            <p class="area-detail-subhead">
-              The JSON view contains the authoritative, user-editable memory.
-              Simplified text explains the same data without technical JSON
-              fields and is always read-only. Cerebrum never activates an
-              inferred habit until the occupant confirms or corrects it.
-            </p>
+            <CerebrumWorldInsights
+              :key="`${state.selectedNodeId}:memory`"
+              :node-id="state.selectedNodeId"
+              :language="uiLanguage"
+              mode="memory"
+              :request="requestWorldInsight"
+            />
+            <div class="memory-section-toolbar">
+              <h4>Shared household learning</h4>
+              <button class="secondary-button" type="button"
+                :disabled="!state.selectedNodeId || cerebrumMemoryDirty || state.cerebrumMemoryLoading || state.cerebrumMemorySaving || state.cerebrumMemoryResetting"
+                :title="cerebrumMemoryDirty ? localizeUiText('Unsaved changes') : ''"
+                @click="loadCerebrumMemoryFile()">
+                {{ state.cerebrumMemoryLoading ? 'Loading...' : 'Refresh' }}
+              </button>
+            </div>
+            <CerebrumSharedInsights
+              :key="`${state.selectedNodeId}:shared-memory`"
+              mode="memory"
+              :content="state.cerebrumMemoryBaseline"
+              :language="uiLanguage"
+              :loading="state.cerebrumMemoryLoading"
+              :error="state.cerebrumMemoryError"
+            />
+            <details class="memory-file-tools" :open="cerebrumMemoryDirty">
+              <summary>Advanced files and backups</summary>
+              <p class="area-detail-subhead" :class="{ 'chat-learning-size-over': cerebrumMemoryTooLarge }">
+                {{ formatByteSize(cerebrumMemoryEditorBytes) }} / {{ formatByteSize(state.cerebrumMemoryMaxBytes) }}
+              </p>
+              <p class="area-detail-subhead">Inspect or edit the saved home memory data. Changes take effect only when saved.</p>
             <div
               class="cerebrum-memory-view-switch"
               role="tablist"
@@ -10670,11 +10711,30 @@ onBeforeUnmount(() => {
             >
               Last saved: {{ formatDateTime(state.cerebrumMemoryModifiedAt) }}
             </p>
+            </details>
+          </article>
+          <article v-else-if="['goals', 'research'].includes(state.cerebrumTab)" class="area-detail settings-panel">
+            <CerebrumWorldInsights
+              :key="`${state.selectedNodeId}:${state.cerebrumTab}`"
+              :node-id="state.selectedNodeId"
+              :language="uiLanguage"
+              :mode="state.cerebrumTab"
+              :request="requestWorldInsight"
+            />
           </article>
           <article
             v-else-if="state.cerebrumTab === 'operations'"
             class="area-detail settings-panel cerebrum-operations-panel"
           >
+            <CerebrumWorldInsights
+              :key="`${state.selectedNodeId}:operations`"
+              :node-id="state.selectedNodeId"
+              :language="uiLanguage"
+              mode="operations"
+              :request="requestWorldInsight"
+            />
+            <details class="memory-file-tools">
+              <summary>Technical activity log · last three days</summary>
             <div class="card-head settings-panel-head operations-panel-head">
               <div>
                 <h3>
@@ -10823,6 +10883,7 @@ onBeforeUnmount(() => {
                 KNX traffic: <code>{{ state.cerebrumOperationsKnxArchivePath }}</code>
               </span>
             </div>
+            </details>
           </article>
           <input ref="migrationImportRef" type="file" accept="application/json,.json" class="hidden-file-input" @change="extractMigrationFlows" />
           <input
@@ -12204,6 +12265,16 @@ onBeforeUnmount(() => {
 .card-cerebrum-nav {
   min-height: 0;
   padding-bottom: 10px;
+}
+
+.cerebrum-brain-home {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.settings-tab-button.cerebrum-map-button {
+  color: #424c8b;
+  border-color: rgba(88, 101, 159, 0.3);
 }
 
 .card-cerebrum-nav .settings-tab-strip {
@@ -14588,4 +14659,30 @@ onBeforeUnmount(() => {
     width: calc(100% - 6px);
   }
 }
+
+.memory-section-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 28px 0 12px;
+}
+.memory-section-toolbar h4 { margin: 0; }
+.memory-file-tools {
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  min-width: 0;
+}
+.memory-file-tools > summary {
+  cursor: pointer;
+  font-weight: 650;
+  color: var(--muted);
+}
+.memory-file-tools[open] > summary { margin-bottom: 18px; }
+.memory-file-tools > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+
 </style>

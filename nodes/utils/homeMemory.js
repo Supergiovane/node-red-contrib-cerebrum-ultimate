@@ -873,6 +873,14 @@ const parseCerebrumHomeMemoryMarkdownStrict = markdown => {
   if (!match) throw new Error('The Cerebrum memory file has no CEREBRUM_HOME_MEMORY_V1 metadata block')
   let parsed
   try { parsed = JSON.parse(match[1]) } catch (error) { throw new Error(`Invalid Cerebrum memory JSON: ${error.message || error}`) }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== HOME_MEMORY_VERSION || !Array.isArray(parsed.habits)) {
+    throw new Error('Invalid Cerebrum memory structure or version')
+  }
+  for (const key of ['habits', 'habitDecisions', 'observations', 'notifications', 'semanticObjects', 'states']) {
+    if (parsed[key] !== undefined && (!Array.isArray(parsed[key]) || parsed[key].some(item => !item || typeof item !== 'object' || Array.isArray(item)))) {
+      throw new Error(`Invalid Cerebrum memory collection: ${key}`)
+    }
+  }
   return normalizeCerebrumHomeMemory(parsed)
 }
 

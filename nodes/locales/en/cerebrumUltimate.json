@@ -115,7 +115,7 @@
       "lmStudioContextConfigured": "Active model context",
       "lmStudioContextFailed": "Unable to configure the model context",
       "lmStudioContextCurrentlyLoaded": "currently loaded",
-      "etsAccessHint": "Select the group addresses available to Cerebrum. Every selected address is active and readable; every selected address not marked Read only is writable. Cloud providers receive the complete selected semantic ETS catalog; local models receive as much as fits their selected context window and can retrieve missing details locally.",
+      "etsAccessHint": "Select the group addresses available to Cerebrum. Every selected address is active and readable; every selected address not marked Read only is writable. Cloud providers receive the selected semantic ETS catalog within their context budget; local models receive as much as fits their selected context window and can retrieve missing details locally.",
       "etsFilterPlaceholder": "Filter by name, GA or DPT…",
       "etsSelected": "selected",
       "etsReadOnly": "Read only",
@@ -125,7 +125,7 @@
       "etsCsvError": "Unable to load the group address list from the gateway.",
       "reasoningEffortHint": "Optional preference for models that support reasoning effort. Automatic sends no preference; if a provider or model rejects the selected value, Cerebrum retries without it.",
       "localContextBudget": "Local context window",
-      "localContextHint": "Sets the maximum context sent to local models only. Maximum uses the selected model's known context window; unavailable sizes are hidden when the model limit is known. Cloud providers ignore this selector and receive the complete selected semantic ETS catalog.",
+      "localContextHint": "Sets the maximum context sent to local models only. Maximum uses the selected model's known context window; unavailable sizes are hidden when the model limit is known. Cloud providers ignore this selector but all requests are bounded by their model context budget.",
       "ollamaNotSupported": "Ollama local mode: API key not required. Default endpoint is http://localhost:11434/api/chat.",
       "ollamaNoModels": "No local Ollama model found. Install one or pick one from the library.",
       "installingOllamaModel": "Starting Ollama and installing model…",
@@ -184,11 +184,11 @@
       "chatContextTelegramPattern": "Daily files",
       "chatAdapterIntro": "Choose a mapping preset to insert its input and output code. The list is loaded from the packaged message-adapter mappings file; the generated code remains editable.",
       "chatAdapterCodeHelp": "Mappings run synchronously. Return msg to continue or return no value to discard it. Errors are caught and reported without stopping Node-RED.",
-      "homeIntelligenceIntro": "The node builds a multilingual semantic ETS model. Proactive notifications are considered only when AI Education explicitly requests them; it never sends a KNX command proactively.",
-      "aiEducationHelp": "Only the user can edit this node property. Use it for durable guidance and proactive notification policies, including conditions, duration, quiet hours and repetition. The model reads it as authoritative guidance but never writes it. Facts and preferences requested through Cerebrum are stored in learned conversation memory; one-time or recurring plans, reminders, monitoring and future commands are stored by the semantic scheduler. No trigger phrases or intent routing are required. Maximum 16,000 characters."
+      "homeIntelligenceIntro": "With the AI assistant enabled, Cerebrum observes your home, learns its habits and acts to improve comfort according to AI Education. It uses the Web only when enabled.",
+      "aiEducationHelp": "Describe your home, occupant preferences and what Cerebrum may do or notify you about. These instructions guide its autonomy and remain under your control."
     },
     "placeholder": {
-      "llmBaseUrl": "https://api.openai.com/v1/chat/completions (or your compatible endpoint)",
+      "llmBaseUrl": "https://api.openai.com/v1/responses (or your compatible endpoint)",
       "llmApiKey": "Paste API key (starts with sk-)",
       "llmModel": "e.g. gpt-4o-mini",
       "llmSystemPrompt": "Optional. Leave empty for default.",

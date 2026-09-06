@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.11 — 2026-09-06
+
+- Added autonomous observation, comfort goals and smart-home Web research guided by AI Education.
+- Improved persistent memory, backup recovery and model context limits.
+- Refreshed the Cerebrum Web pages with readable insights and animated brain navigation.
+- Fixed authenticated Web summaries and automatic model endpoint selection.
+
 ## 0.0.10 — 2026-09-05
 
 - Adapt OpenAI requests specifically for GPT-6 Astra: omit unsupported sampling/logprob parameters before the first request and map `none`/`minimal` reasoning to `low`, preserving other models and supported effort levels.

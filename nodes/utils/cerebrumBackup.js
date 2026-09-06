@@ -22,7 +22,8 @@ function validateFile (file, id) {
 
 // These logical names are resolved locally. A backup can never choose a disk path.
 const archiveNames = ['history', 'adapterHistory', 'operations']
-const singleNames = ['habitLearning', 'lastChatPrompt', 'legacyAreas']
+const singleNames = ['habitLearning', 'worldModel', 'worldObservations', 'runtimeState', 'lastChatPrompt', 'legacyAreas']
+const optionalSingleNames = new Set(['worldModel', 'worldObservations', 'runtimeState'])
 const archivePattern = /^\d{4}-\d{2}-\d{2}\.(?:knxctx|jsonl)$/
 
 function assertRegularPath (filePath, directory = false) {
@@ -53,6 +54,7 @@ function readSupplementalFiles (locations) {
   }
   for (const id of singleNames) {
     const filePath = locations[id]
+    if (optionalSingleNames.has(id) && !filePath) continue
     assertRegularPath(filePath)
     result[id] = fs.existsSync(filePath) ? backupFile(id, path.basename(filePath), fs.readFileSync(filePath, 'utf8')) : null
   }
@@ -71,6 +73,7 @@ function validateSupplementalFiles (files) {
     }
   }
   for (const id of singleNames) {
+    if (optionalSingleNames.has(id) && !Object.hasOwn(files, id)) continue
     if (!Object.hasOwn(files, id)) throw backupError(`Missing backup entry: ${id}`)
     if (files[id] !== null) validateFile(files[id], id)
   }
@@ -100,6 +103,7 @@ function replaceSupplementalFiles (files, locations, writeFile) {
   }
   for (const id of singleNames) {
     const filePath = locations[id]
+    if (optionalSingleNames.has(id) && (!filePath || !Object.hasOwn(files, id))) continue
     assertRegularPath(filePath)
     if (files[id]) writeFile({ filePath, content: files[id].content })
     else if (fs.existsSync(filePath)) fs.unlinkSync(filePath)

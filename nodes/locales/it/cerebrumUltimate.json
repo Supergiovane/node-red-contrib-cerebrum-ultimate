@@ -115,7 +115,7 @@
       "lmStudioContextConfigured": "Contesto attivo del modello",
       "lmStudioContextFailed": "Impossibile configurare il contesto del modello",
       "lmStudioContextCurrentlyLoaded": "attualmente caricato",
-      "etsAccessHint": "Seleziona gli indirizzi di gruppo disponibili a Cerebrum. Ogni indirizzo selezionato è attivo e leggibile; ogni indirizzo selezionato non marcato Sola lettura è scrivibile. I provider cloud ricevono l'intero catalogo ETS semantico selezionato; i modelli locali ricevono ciò che entra nella finestra di contesto scelta e possono recuperare localmente i dettagli mancanti.",
+      "etsAccessHint": "Seleziona gli indirizzi di gruppo disponibili a Cerebrum. Ogni indirizzo selezionato è attivo e leggibile; ogni indirizzo selezionato non marcato Sola lettura è scrivibile. I provider cloud ricevono il catalogo ETS semantico selezionato entro il budget di contesto; i modelli locali ricevono ciò che entra nella finestra di contesto scelta e possono recuperare localmente i dettagli mancanti.",
       "etsFilterPlaceholder": "Filtra per nome, GA o DPT…",
       "etsSelected": "selezionati",
       "etsReadOnly": "Sola lettura",
@@ -125,7 +125,7 @@
       "etsCsvError": "Impossibile caricare la lista degli indirizzi di gruppo dal gateway.",
       "reasoningEffortHint": "Preferenza facoltativa per i modelli che supportano l'impegno di ragionamento. Automatico non invia alcuna preferenza; se il provider o il modello rifiuta il valore scelto, Cerebrum riprova senza di esso.",
       "localContextBudget": "Finestra contesto locale",
-      "localContextHint": "Imposta il contesto massimo inviato soltanto ai modelli locali. Massimo usa la finestra nota del modello selezionato; le dimensioni non disponibili vengono nascoste quando il limite del modello è noto. I provider cloud ignorano questa selezione e ricevono l'intero catalogo ETS semantico selezionato.",
+      "localContextHint": "Imposta il contesto massimo inviato soltanto ai modelli locali. Massimo usa la finestra nota del modello selezionato; le dimensioni non disponibili vengono nascoste quando il limite del modello è noto. I provider cloud ignorano questa selezione, ma ogni richiesta rispetta il budget di contesto del modello.",
       "ollamaNotSupported": "Modalita locale Ollama: API key non richiesta. Endpoint predefinito: http://localhost:11434/api/chat.",
       "ollamaNoModels": "Nessun modello Ollama locale trovato. Installa un modello o scegli dalla libreria.",
       "installingOllamaModel": "Avvio Ollama e installo il modello…",
@@ -184,11 +184,11 @@
       "chatContextTelegramPattern": "File giornalieri",
       "chatAdapterIntro": "Scegli un preset per inserire il codice di mappatura in ingresso e in uscita. La lista viene caricata dal file degli adattatori dei messaggi incluso nel pacchetto; il codice generato resta modificabile.",
       "chatAdapterCodeHelp": "Le mappature sono sincrone. Restituisci msg per continuare oppure nessun valore per scartarlo. Gli errori vengono intercettati e segnalati senza arrestare Node-RED.",
-      "homeIntelligenceIntro": "Il nodo crea un modello ETS semantico multilingue. Le notifiche proattive vengono valutate solo quando l'Educazione AI le richiede esplicitamente; non invia mai autonomamente comandi KNX.",
-      "aiEducationHelp": "Solo l'utente può modificare questa proprietà del nodo. Usala per istruzioni durevoli e regole di notifica proattiva, comprese condizioni, durata, ore silenziose e ripetizione. Il modello la legge come istruzione autorevole, ma non la scrive mai. Fatti e preferenze richiesti tramite Cerebrum vengono conservati nella memoria appresa delle conversazioni; pianificazioni, promemoria, monitoraggi e comandi futuri, singoli o ricorrenti, vengono conservati dallo scheduler semantico. Non servono frasi di attivazione né routing per intent. Massimo 16.000 caratteri."
+      "homeIntelligenceIntro": "Con l’assistente AI attivo, Cerebrum osserva la casa, impara le abitudini e agisce per migliorare il comfort secondo Educazione AI. Usa il Web solo se abilitato.",
+      "aiEducationHelp": "Descrivi la tua casa, le preferenze degli occupanti e cosa Cerebrum può fare o notificare. Queste istruzioni guidano la sua autonomia e restano sotto il tuo controllo."
     },
     "placeholder": {
-      "llmBaseUrl": "https://api.openai.com/v1/chat/completions (o endpoint compatibile)",
+      "llmBaseUrl": "https://api.openai.com/v1/responses (o endpoint compatibile)",
       "llmApiKey": "Incolla la chiave (inizia con sk-)",
       "llmModel": "es. gpt-4o-mini",
       "llmSystemPrompt": "Opzionale. Lascia vuoto per default.",
