@@ -222,6 +222,7 @@ function buildMigrationFlows (RED, node, config) {
   const warnings = []
   const flows = [...selected].map(id => {
     const item = clone(all.get(id))
+    if (item.type === 'cerebrumUltimate') delete item.aiEducation
     const live = RED.nodes.getNode(id)
     const credentials = typeof RED.nodes.getCredentials === 'function' ? RED.nodes.getCredentials(id) : live && live.credentials
     if (credentials) item.credentials = clone(credentials)
@@ -316,4 +317,4 @@ function createBackupUploads () {
   }
 }
 
-module.exports = { MAX_BACKUP_BYTES, mapBackupArchives, assertBackupSize, createBackupDirectory, registerBackupCleanup, disposeBackup, registerBackupArchive, backupArchiveSource, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads }
+module.exports = { MAX_BACKUP_BYTES, mapBackupArchives, assertBackupSize, assertRegularPath, createBackupDirectory, registerBackupCleanup, disposeBackup, registerBackupArchive, backupArchiveSource, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads }

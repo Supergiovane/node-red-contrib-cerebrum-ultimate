@@ -13,6 +13,7 @@ const crypto = require('crypto')
 const unreadableCerebrumFiles = new Set()
 const { MAX_BACKUP_BYTES, assertBackupSize, createBackupDirectory, registerBackupCleanup, disposeBackup, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads } = require('./utils/cerebrumBackup')
 const { createBackupZipFile, decodeBackupFile, createBackupDownloads } = require('./utils/cerebrumBackupZip')
+const { getAiEducationFilePath, createAiEducationStore, readBackupAiEducation } = require('./utils/cerebrumAiEducation')
 const { pipeline } = require('stream/promises')
 const { spawn } = require('child_process')
 const simpleGet = require('simple-get')
@@ -606,6 +607,7 @@ const summarizeCerebrumChatContext = ({ node, nodeId, redUserDir } = {}) => {
     }
   ]
   if (safeNodeId) {
+    files.push({ id: 'aiEducation', name: `cerebrum-ai-education-${safeNodeId}.md`, path: getAiEducationFilePath(baseDir, safeNodeId) })
     files.push({
       id: 'schedules',
       name: `cerebrum-schedules-${safeNodeId}.json`,
@@ -6136,6 +6138,26 @@ module.exports = function (RED) {
       }
     })
 
+    RED.httpAdmin.get('/cerebrumUltimate/sidebar/ai-education', RED.auth.needsPermission('flows.read'), async (req, res) => {
+      try {
+        const nodeId = String(req.query?.nodeId || '')
+        const n = aiRuntimeNodes.get(nodeId) || RED.nodes.getNode(nodeId)
+        if (!n || n.type !== 'cerebrumUltimate' || typeof n.getAiEducationFile !== 'function') throw Object.assign(new Error('Deploy the Cerebrum node before editing AI Education.'), { status: 404 })
+        res.set('Cache-Control', 'no-store')
+        res.json(await n.getAiEducationFile())
+      } catch (error) { res.status(error.status || 500).json({ error: error.message || String(error) }) }
+    })
+
+    RED.httpAdmin.post('/cerebrumUltimate/sidebar/ai-education/save', RED.auth.needsPermission('flows.write'), async (req, res) => {
+      try {
+        const nodeId = String(req.body?.nodeId || '')
+        const n = aiRuntimeNodes.get(nodeId) || RED.nodes.getNode(nodeId)
+        if (!n || n.type !== 'cerebrumUltimate' || typeof n.updateAiEducationFile !== 'function') throw Object.assign(new Error('Deploy the Cerebrum node before editing AI Education.'), { status: 404 })
+        res.set('Cache-Control', 'no-store')
+        res.json(await n.updateAiEducationFile({ content: req.body?.content, revision: req.body?.revision }))
+      } catch (error) { res.status(error.status || 500).json({ error: error.message || String(error) }) }
+    })
+
     RED.httpAdmin.get('/cerebrumUltimate/sidebar/chat-learning', RED.auth.needsPermission('cerebrumUltimate.read'), async (req, res) => {
       try {
         const nodeId = req.query?.nodeId ? String(req.query.nodeId) : ''
@@ -7198,7 +7220,24 @@ module.exports = function (RED) {
     const configuredChatPreset = CEREBRUM_CHAT_ADAPTER_MAPPINGS.find(item => item.id === node.chatAdapterPreset)
     node.chatInputCode = String(config.chatInputCode || (configuredChatPreset && configuredChatPreset.inputCode) || '')
     node.chatOutputCode = String(config.chatOutputCode || (configuredChatPreset && configuredChatPreset.outputCode) || '')
-    node.aiEducation = String(config.aiEducation || '')
+    const aiEducationPath = getAiEducationFilePath(node.cerebrumStorageDir, node.id)
+    const aiEducationStore = createAiEducationStore({ filePath: aiEducationPath, legacyContent: String(config.aiEducation || '') })
+    let aiEducationReadError = ''
+    Object.defineProperty(node, 'aiEducation', {
+      get: () => {
+        try {
+          const content = aiEducationStore.read()
+          aiEducationReadError = ''
+          return content
+        } catch (error) {
+          if (aiEducationReadError !== error.message) node.warn(`Unable to read AI Education: ${error.message}`)
+          aiEducationReadError = error.message
+          return ''
+        }
+      }
+    })
+    node.getAiEducationFile = async () => aiEducationStore.snapshot()
+    node.updateAiEducationFile = async payload => aiEducationStore.save(payload)
 
     const pushStatus = (status) => {
       if (!status) return
@@ -10183,6 +10222,7 @@ module.exports = function (RED) {
           unifiProtectConfigName: (node.unifiProtectConfig && (node.unifiProtectConfig.name || node.unifiProtectConfig.host)) || ''
         },
         files: {
+          aiEducation: backupFile('aiEducation', path.basename(aiEducationPath), aiEducationStore.read(), 'text/markdown'),
           aiConfiguration: buildCerebrumBackupFile({
             id: 'aiConfiguration',
             filePath: configurationPath,
@@ -11679,7 +11719,9 @@ module.exports = function (RED) {
       let nextChatContext
       let nextHomeMemory
       let nextScheduleStore
+      let nextAiEducation
       try {
+        nextAiEducation = readBackupAiEducation(p)
         configuration = JSON.parse(readBackupContent('aiConfiguration', MAX_BACKUP_BYTES))
         if (!configuration || typeof configuration !== 'object' || Array.isArray(configuration) || configuration.version !== 4) {
           throw new Error('The AI configuration file is not version 4')
@@ -11728,12 +11770,14 @@ module.exports = function (RED) {
       const previousChatContext = node._chatContext
       const previousHomeMemory = node._homeMemory
       const previousScheduleStore = node._scheduleStore
+      let previousAiEducation
       const rollback = p.version === 2 ? createBackupDirectory() : null
       try {
         await node._autonomyRuntime?.close()
         node._autonomyRuntime = null
         const previousRuntimeState = buildRuntimeStateSnapshot()
         try {
+          if (nextAiEducation !== undefined) previousAiEducation = aiEducationStore.read()
           scheduleRuntimeStatePersist({ immediate: true })
           // Capture rollback state after any in-flight autonomous claim/research
           // has finished persisting, so rollback cannot erase its reservation.
@@ -11756,6 +11800,7 @@ module.exports = function (RED) {
           if (!scheduleChatContextPersist({ immediate: true })) throw new Error('Unable to restore Cerebrum Learning')
           if (!scheduleHomeMemoryPersist({ immediate: true })) throw new Error('Unable to restore Cerebrum Memory')
           if (!scheduleScheduleStorePersist({ immediate: true })) throw new Error('Unable to restore Cerebrum schedules')
+          if (nextAiEducation !== undefined) aiEducationStore.write(nextAiEducation)
           if (nextSupplemental) replaceSupplementalFiles(nextSupplemental, getBackupSupplementalLocations(), writeAtomicUtf8File)
           const sharedChatStore = sharedCerebrumChatContextStores.get(getChatContextFile())
           const chatNodes = sharedChatStore && sharedChatStore.nodes instanceof Set ? Array.from(sharedChatStore.nodes) : [node]
@@ -11776,6 +11821,10 @@ module.exports = function (RED) {
           if (nextSupplemental) loadRuntimeStateFromDisk()
           restoreLearnedStateBaselines()
         } catch (error) {
+          let educationRollbackError
+          if (previousAiEducation !== undefined) {
+            try { aiEducationStore.write(previousAiEducation) } catch (rollbackError) { educationRollbackError = rollbackError }
+          }
           node._chatContext = previousChatContext
           node._conversationSessions = conversationMapFromCerebrumChatContext(node._chatContext)
           node._homeMemory = previousHomeMemory
@@ -11792,6 +11841,7 @@ module.exports = function (RED) {
           }
           applyRuntimeState(previousRuntimeState)
           restoreLearnedStateBaselines()
+          if (educationRollbackError) throw new Error(`Import failed: ${error.message}; AI Education rollback failed: ${educationRollbackError.message}`)
           throw error
         }
       } finally {

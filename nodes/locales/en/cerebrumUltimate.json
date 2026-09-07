@@ -158,7 +158,7 @@
       "chatContextSourceCameras": "Detected cameras and their available capabilities.",
       "chatContextSourceBadge": "Source",
       "chatContextFileChatContext": "Persistent conversation turns, instructions and camera notification rules.",
-      "chatContextFileHomeMemory": "Bounded learned home memory only; AI Education remains in the node property.",
+      "chatContextFileHomeMemory": "Bounded learned home memory, separate from user-managed AI Education.",
       "chatContextFileSchedules": "Authoritative persistent runtime state for this node's plans and reminders.",
       "chatContextFileSchedulesReadable": "Generated human-readable view of this node's plans and reminders.",
       "chatContextFileAssistantConfig": "Persistent Cerebrum configuration and semantic areas for this node.",
@@ -174,7 +174,15 @@
       "chatAdapterIntro": "Choose a mapping preset to insert its input and output code. The list is loaded from the packaged message-adapter mappings file; the generated code remains editable.",
       "chatAdapterCodeHelp": "Mappings run synchronously. Return msg to continue or return no value to discard it. Errors are caught and reported without stopping Node-RED.",
       "homeIntelligenceIntro": "With the AI assistant enabled, Cerebrum observes your home, learns its habits and acts to improve comfort according to AI Education. It uses the Web only when enabled.",
-      "aiEducationHelp": "Describe your home, occupant preferences and what Cerebrum may do or notify you about. These instructions guide its autonomy and remain under your control."
+      "aiEducationHelp": "Describe your home, occupant preferences and what Cerebrum may do or notify you about. These instructions guide its autonomy and remain under your control.",
+      "aiEducationFileHelp": "Press Done to save and apply these instructions. Cancel discards changes. Included in backups.",
+      "aiEducationLoading": "Loading AI Education...",
+      "aiEducationSaving": "Saving AI Education...",
+      "aiEducationDeployFirst": "Deploy this node before editing AI Education.",
+      "aiEducationConflict": "The file has changed. Copy your changes, cancel and reopen the editor to load the latest version.",
+      "aiEducationError": "Unable to read or save AI Education.",
+      "aiEducationUnsaved": "Press Done to save your changes.",
+      "chatContextFileAiEducation": "User-managed AI Education, loaded from its own file and included in backups."
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/responses (or your compatible endpoint)",

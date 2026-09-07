@@ -12,6 +12,7 @@ const { EventEmitter } = require('events')
 const { Writable } = require('stream')
 const { backupFile, createBackupUploads, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows } = require('../nodes/utils/cerebrumBackup')
 const { createBackupZip, decodeBackupUpload } = require('../nodes/utils/cerebrumBackupZip')
+const { getAiEducationFilePath } = require('../nodes/utils/cerebrumAiEducation')
 const Module = require('module')
 // Keep the admin-route singleton isolated from other suites' mocked RED hosts.
 const runtimePath = require.resolve('../nodes/cerebrumUltimate')
@@ -69,7 +70,8 @@ describe('Cerebrum portable backup', () => {
     res.set = (key, value) => { response.headers[key.toLowerCase()] = value; return res }
     res.json = value => { response.body = value }
     res.send = value => { response.body = value }
-    await routes.get(`/cerebrumUltimate/sidebar/config/${action}`)({ body: { nodeId: node.id, ...body }, query: { nodeId: node.id, ...body }, user: { username: 'backup-user' } }, res)
+    const endpoint = action.startsWith('ai-education') ? action : `config/${action}`
+    await routes.get(`/cerebrumUltimate/sidebar/${endpoint}`)({ body: { nodeId: node.id, ...body }, query: { nodeId: node.id, ...body }, user: { username: 'backup-user' } }, res)
     return response
   }
   async function zipEntries (entries) {
@@ -114,6 +116,107 @@ describe('Cerebrum portable backup', () => {
     if (worldModel !== undefined) writeSupplementalFile({ filePath: locations.worldModel, content: worldModel })
     return readSupplementalFiles(locations)
   }
+
+  it('migrates AI Education to a file, edits it independently of flows and keeps the saved file across restarts', async () => {
+    const legacy = 'Rispetta il silenzio notturno.\nAvvisa solo quando serve 🏠.\n'
+    let node = create('education', { aiEducation: legacy })
+    const first = await request(node, 'ai-education')
+    expect(first.statusCode).to.equal(200)
+    expect(first.body.content).to.equal(legacy)
+    expect(first.body.path).to.equal(getAiEducationFilePath(node.cerebrumStorageDir, node.id))
+    expect(fs.readFileSync(first.body.path, 'utf8')).to.equal(legacy)
+    const updated = await request(node, 'ai-education/save', { content: 'Nuove istruzioni\n', revision: first.body.revision })
+    expect(updated.statusCode).to.equal(200)
+    expect(node.aiEducation).to.equal('Nuove istruzioni\n')
+    const stale = await request(node, 'ai-education/save', { content: 'stale overwrite', revision: first.body.revision })
+    expect(stale.statusCode).to.equal(409)
+    expect(node.aiEducation).to.equal('Nuove istruzioni\n')
+    const oversized = await request(node, 'ai-education/save', { content: 'x'.repeat(16001), revision: updated.body.revision })
+    expect(oversized.statusCode).to.equal(413)
+    fs.writeFileSync(first.body.path, 'Modificata direttamente nel file')
+    expect(node.aiEducation).to.equal('Modificata direttamente nel file')
+    await close(node)
+    node = create('education', { aiEducation: legacy })
+    expect(node.aiEducation).to.equal('Modificata direttamente nel file')
+    const current = await node.getAiEducationFile()
+    await node.updateAiEducationFile({ content: '', revision: current.revision })
+    await close(node)
+    node = create('education', { aiEducation: legacy })
+    expect(node.aiEducation).to.equal('')
+  })
+
+  it('backs up and restores AI Education as an authoritative file across node IDs and restarts', async () => {
+    const source = create('education-source', { aiEducation: 'Regole originali obsolete' })
+    const original = await source.getAiEducationFile()
+    await source.updateAiEducationFile({ content: 'Educazione attuale: non accendere le luci di notte.\n', revision: original.revision })
+    const exported = await request(source, 'export', { format: 'zip' })
+    const backup = await decodeBackupUpload(exported.body)
+    expect(backup.files.aiEducation.content).to.equal(source.aiEducation)
+    expect(JSON.parse(backup.migration.flows.content).find(item => item.id === source.id)).not.to.have.property('aiEducation')
+    let target = create('education-target', { aiEducation: 'Regole destinazione' })
+    await target.importAiConfig(backup)
+    expect(target.aiEducation).to.equal(source.aiEducation)
+    const targetFile = (await target.getAiEducationFile()).path
+    expect(targetFile).to.include('education-target.md')
+    expect(fs.existsSync(path.join(path.dirname(targetFile), backup.files.aiEducation.name))).to.equal(false)
+    await close(target)
+    target = create('education-target', { aiEducation: 'Regole destinazione ancora nei vecchi flow' })
+    expect(target.aiEducation).to.equal(source.aiEducation)
+    backup.files.aiEducation = backupFile('aiEducation', 'ignored.md', '')
+    await target.importAiConfig(backup)
+    expect(target.aiEducation).to.equal('')
+  })
+
+  it('recovers AI Education from the source node in old backups and preserves it when absent', async () => {
+    const source = create('legacy-education')
+    const backup = await source.exportAiConfig()
+    delete backup.files.aiEducation
+    const flows = JSON.parse(backup.migration.flows.content)
+    flows.find(item => item.id === source.id).aiEducation = 'Educazione dal vecchio flow'
+    flows.push({ id: 'another-cerebrum', type: 'cerebrumUltimate', aiEducation: 'Do not import this other node' })
+    backup.migration.flows = backupFile('nodeRedFlows', 'cerebrum-flows.json', JSON.stringify(flows))
+    const target = create('legacy-education-target', { aiEducation: 'Educazione locale' })
+    await target.importAiConfig(backup)
+    expect(target.aiEducation).to.equal('Educazione dal vecchio flow')
+    delete flows.find(item => item.id === source.id).aiEducation
+    backup.migration.flows = backupFile('nodeRedFlows', 'cerebrum-flows.json', JSON.stringify(flows))
+    await target.importAiConfig(backup)
+    expect(target.aiEducation).to.equal('Educazione dal vecchio flow')
+    backup.version = 1
+    await target.importAiConfig(backup)
+    expect(target.aiEducation).to.equal('Educazione dal vecchio flow')
+  })
+
+  it('rejects damaged AI Education and restores its previous file after a later import failure', async () => {
+    const source = create('education-rollback-source', { aiEducation: 'Nuova educazione' })
+    seed(source, 'history/education-rollback-source/2026-09-07.knxctx', 'archive')
+    const backup = await source.exportAiConfig()
+    const target = create('education-rollback-target', { aiEducation: 'Educazione da conservare' })
+    const damaged = copy(backup)
+    damaged.files.aiEducation.content += 'tamper'
+    await rejects(target.importAiConfig(damaged), /aiEducation/)
+    expect(target.aiEducation).to.equal('Educazione da conservare')
+    const rename = fs.renameSync
+    let failed = false
+    fs.renameSync = function (from, to) {
+      if (!failed && to.includes('history/education-rollback-target/')) { failed = true; throw new Error('simulated later archive failure') }
+      return rename.apply(this, arguments)
+    }
+    try { await rejects(target.importAiConfig(backup), /later archive failure/) } finally { fs.renameSync = rename }
+    expect(target.aiEducation).to.equal('Educazione da conservare')
+    await close(target)
+    expect(create('education-rollback-target').aiEducation).to.equal('Educazione da conservare')
+  })
+
+  it('fails visibly on unreadable education without replacing the file or using stale flow instructions', async () => {
+    const node = create('education-invalid', { aiEducation: 'Legacy authority' })
+    const educationPath = (await node.getAiEducationFile()).path
+    const invalid = Buffer.from([0xff, 0xfe])
+    fs.writeFileSync(educationPath, invalid)
+    expect(node.aiEducation).to.equal('')
+    await rejects(node.exportAiConfig(), /UTF-8/)
+    expect(fs.readFileSync(educationPath).equals(invalid)).to.equal(true)
+  })
 
   it('round trips the world model to the locally selected destination node filename', () => {
     const worldModel = JSON.stringify({ version: 1, entities: [{ id: 'kitchen', value: 'on' }], episodes: [{ id: 'morning', summary: 'Attività in cucina' }], situations: [{ id: 'quiet', nextCheckAt: '2026-09-06T10:00:00Z' }] })

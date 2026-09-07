@@ -143,7 +143,7 @@
       "chatContextSourceCameras": "Cámaras detectadas y sus capacidades disponibles.",
       "chatContextSourceBadge": "Fuente",
       "chatContextFileChatContext": "Turnos persistentes, instrucciones y reglas de notificación de cámaras.",
-      "chatContextFileHomeMemory": "Solo memoria doméstica aprendida y limitada; la Educación IA permanece en la propiedad del nodo.",
+      "chatContextFileHomeMemory": "Memoria aprendida del hogar, limitada y separada de la Educación IA gestionada por el usuario.",
       "chatContextFileSchedules": "Estado de ejecución persistente y autoritativo de las planificaciones y recordatorios de este nodo.",
       "chatContextFileSchedulesReadable": "Vista legible generada de las planificaciones y recordatorios de este nodo.",
       "chatContextFileAssistantConfig": "Configuración persistente de Cerebrum y áreas semánticas de este nodo.",
@@ -159,7 +159,15 @@
       "chatAdapterIntro": "Elige un preajuste para insertar su código de mapeo de entrada y salida. La lista se carga desde el archivo de adaptadores de mensajes incluido; el código generado sigue siendo editable.",
       "chatAdapterCodeHelp": "Los mapeos se ejecutan de forma síncrona. Devuelve msg para continuar o ningún valor para descartarlo. Los errores se capturan y notifican sin detener Node-RED.",
       "homeIntelligenceIntro": "El nodo crea un modelo ETS semántico multilingüe. Las notificaciones proactivas solo se consideran cuando la Educación IA las solicita explícitamente; nunca envía por sí solo un comando KNX.",
-      "aiEducationHelp": "Solo el usuario puede editar esta propiedad del nodo. Úsala para instrucciones duraderas y reglas de notificación proactiva, incluidas las condiciones, la duración, las horas silenciosas y la repetición. El modelo la lee como una instrucción autoritativa, pero nunca la escribe. Los hechos y preferencias solicitados mediante Cerebrum se guardan en la memoria aprendida de las conversaciones; las planificaciones, recordatorios, monitorizaciones y comandos futuros, únicos o recurrentes, se guardan mediante el planificador semántico. No se requieren frases activadoras ni routing por intents. Máximo 16.000 caracteres."
+      "aiEducationHelp": "Solo el usuario puede editar esta propiedad del nodo. Úsala para instrucciones duraderas y reglas de notificación proactiva, incluidas las condiciones, la duración, las horas silenciosas y la repetición. El modelo la lee como una instrucción autoritativa, pero nunca la escribe. Los hechos y preferencias solicitados mediante Cerebrum se guardan en la memoria aprendida de las conversaciones; las planificaciones, recordatorios, monitorizaciones y comandos futuros, únicos o recurrentes, se guardan mediante el planificador semántico. No se requieren frases activadoras ni routing por intents. Máximo 16.000 caracteres.",
+      "aiEducationFileHelp": "Pulsa Hecho para guardar y aplicar las instrucciones. Cancelar descarta los cambios. Incluida en las copias de seguridad.",
+      "aiEducationLoading": "Cargando Educación IA...",
+      "aiEducationSaving": "Guardando Educación IA...",
+      "aiEducationDeployFirst": "Despliega el nodo antes de editar Educación IA.",
+      "aiEducationConflict": "El archivo ha cambiado. Copia tus cambios, cancela y vuelve a abrir el editor para cargar la versión actualizada.",
+      "aiEducationError": "No se puede leer o guardar Educación IA.",
+      "aiEducationUnsaved": "Pulsa Hecho para guardar los cambios.",
+      "chatContextFileAiEducation": "Educación IA gestionada por el usuario, leída de su propio archivo e incluida en las copias de seguridad."
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/chat/completions (or your compatible endpoint)",

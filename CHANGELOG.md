@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2 — 2026-09-07
+
+- Moved user-managed AI Education from the flow property to a per-node Markdown file, with automatic migration and file saving when pressing Done in the node editor. Cancel discards unsaved edits; save errors keep the editor open.
+- Included AI Education in backup validation, restore and rollback, with recovery from older migration flows and preservation of destination instructions when an older backup contains none.
+
 ## 0.1.1 — 2026-09-07
 
 - Fixed ZIP backups failing when retained histories exceed 256 MiB. Version 3 stores daily archives as separate ZIP entries, prepares downloads on disk and uses native browser downloads.

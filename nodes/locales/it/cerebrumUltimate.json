@@ -158,7 +158,7 @@
       "chatContextSourceCameras": "Telecamere rilevate e relative funzionalità disponibili.",
       "chatContextSourceBadge": "Fonte",
       "chatContextFileChatContext": "Turni persistenti, istruzioni e regole di notifica delle telecamere.",
-      "chatContextFileHomeMemory": "Solo memoria domestica appresa e limitata; l'Educazione AI resta nella proprietà del nodo.",
+      "chatContextFileHomeMemory": "Memoria domestica appresa e limitata, separata dall’Educazione AI gestita dall’utente.",
       "chatContextFileSchedules": "Stato di runtime persistente e autorevole delle pianificazioni e dei promemoria di questo nodo.",
       "chatContextFileSchedulesReadable": "Vista leggibile generata delle pianificazioni e dei promemoria di questo nodo.",
       "chatContextFileAssistantConfig": "Configurazione persistente di Cerebrum e aree semantiche di questo nodo.",
@@ -174,7 +174,15 @@
       "chatAdapterIntro": "Scegli un preset per inserire il codice di mappatura in ingresso e in uscita. La lista viene caricata dal file degli adattatori dei messaggi incluso nel pacchetto; il codice generato resta modificabile.",
       "chatAdapterCodeHelp": "Le mappature sono sincrone. Restituisci msg per continuare oppure nessun valore per scartarlo. Gli errori vengono intercettati e segnalati senza arrestare Node-RED.",
       "homeIntelligenceIntro": "Con l’assistente AI attivo, Cerebrum osserva la casa, impara le abitudini e agisce per migliorare il comfort secondo Educazione AI. Usa il Web solo se abilitato.",
-      "aiEducationHelp": "Descrivi la tua casa, le preferenze degli occupanti e cosa Cerebrum può fare o notificare. Queste istruzioni guidano la sua autonomia e restano sotto il tuo controllo."
+      "aiEducationHelp": "Descrivi la tua casa, le preferenze degli occupanti e cosa Cerebrum può fare o notificare. Queste istruzioni guidano la sua autonomia e restano sotto il tuo controllo.",
+      "aiEducationFileHelp": "Premi Done (Fatto) per salvare e applicare le istruzioni. Annulla scarta le modifiche. Inclusa nei backup.",
+      "aiEducationLoading": "Caricamento Educazione AI...",
+      "aiEducationSaving": "Salvataggio Educazione AI...",
+      "aiEducationDeployFirst": "Esegui il Deploy del nodo prima di modificare Educazione AI.",
+      "aiEducationConflict": "Il file è cambiato. Copia le tue modifiche, annulla e riapri l’editor per caricare la versione aggiornata.",
+      "aiEducationError": "Impossibile leggere o salvare Educazione AI.",
+      "aiEducationUnsaved": "Premi Done (Fatto) per salvare le modifiche.",
+      "chatContextFileAiEducation": "Educazione AI gestita dall’utente, letta dal proprio file e inclusa nei backup."
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/responses (o endpoint compatibile)",

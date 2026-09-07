@@ -143,7 +143,7 @@
       "chatContextSourceCameras": "检测到的摄像机及其可用功能。",
       "chatContextSourceBadge": "来源",
       "chatContextFileChatContext": "持久化对话轮次、指令和摄像机通知规则。",
-      "chatContextFileHomeMemory": "仅包含有界的家庭学习记忆；AI 教育保留在节点属性中。",
+      "chatContextFileHomeMemory": "有界的家庭学习记忆，与用户管理的 AI 教育分开。",
       "chatContextFileSchedules": "此节点计划和提醒的权威持久运行时状态。",
       "chatContextFileSchedulesReadable": "此节点计划和提醒自动生成的易读视图。",
       "chatContextFileAssistantConfig": "此节点的持久化 Cerebrum 配置和语义区域。",
@@ -159,7 +159,15 @@
       "chatAdapterIntro": "选择预设即可插入输入和输出映射代码。列表从随包提供的消息适配器文件加载；生成的代码仍可编辑。",
       "chatAdapterCodeHelp": "映射同步运行。返回 msg 以继续，或不返回值以丢弃消息。错误会被捕获并报告，不会停止 Node-RED。",
       "homeIntelligenceIntro": "节点会创建多语言 ETS 语义模型。只有 AI 教育明确要求时，才会考虑主动通知；节点绝不会自行发送 KNX 命令。",
-      "aiEducationHelp": "只有用户可以编辑此节点属性。请用它设置长期指导和主动通知规则，包括条件、持续时间、静默时段及重复频率。模型会将其作为权威指导读取，但绝不会写入。通过 Cerebrum 要求记住的事实和偏好保存在学习到的对话记忆中；一次性或周期性的计划、提醒、监测和未来命令由语义调度器保存。无需触发短语或 intent 路由。最多 16,000 个字符。"
+      "aiEducationHelp": "只有用户可以编辑此节点属性。请用它设置长期指导和主动通知规则，包括条件、持续时间、静默时段及重复频率。模型会将其作为权威指导读取，但绝不会写入。通过 Cerebrum 要求记住的事实和偏好保存在学习到的对话记忆中；一次性或周期性的计划、提醒、监测和未来命令由语义调度器保存。无需触发短语或 intent 路由。最多 16,000 个字符。",
+      "aiEducationFileHelp": "点击“完成”保存并应用指令。“取消”会放弃修改。此文件包含在备份中。",
+      "aiEducationLoading": "正在加载 AI 教育…",
+      "aiEducationSaving": "正在保存 AI 教育...",
+      "aiEducationDeployFirst": "请先部署节点，再编辑 AI 教育。",
+      "aiEducationConflict": "文件已更改。请复制你的修改，取消并重新打开编辑器以加载最新版本。",
+      "aiEducationError": "无法读取或保存 AI 教育。",
+      "aiEducationUnsaved": "点击“完成”保存修改。",
+      "chatContextFileAiEducation": "用户管理的 AI 教育，从独立文件读取并包含在备份中。"
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/chat/completions (or your compatible endpoint)",

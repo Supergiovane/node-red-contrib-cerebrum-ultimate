@@ -364,8 +364,7 @@
             webMaxCallsPerHour: { value: 40 },
             chatAdapterPreset: { value: "none" },
             chatInputCode: { value: "" },
-            chatOutputCode: { value: "" },
-            aiEducation: { value: "" }
+            chatOutputCode: { value: "" }
         },
         credentials: {
             llmApiKey: { type: "password" }
@@ -460,6 +459,115 @@
                 if (!value || value === key) return fallback || "";
                 return value;
             };
+
+            let educationEditorOpen = true;
+            let educationLoadRequest;
+            let educationRevision;
+            let educationSaving = false;
+            let savedEducation = "";
+            const $education = $("#cerebrum-ai-education-content");
+            const $educationStatus = $("#cerebrum-ai-education-status");
+            // Node-RED does not await oneditsave. Keep its original Done handler
+            // and invoke it only after the file save succeeds. Replacing the
+            // button also covers the editor's keyboard-triggered jQuery click.
+            const $originalDone = $("#node-dialog-ok");
+            const $educationDone = $originalDone.clone(false).button();
+            const $educationTray = $originalDone.closest(".red-ui-tray");
+            const $educationCancel = $educationTray.find("#node-dialog-cancel, #node-dialog-delete");
+            const educationShade = document.getElementById("red-ui-editor-shade");
+            $originalDone.before($educationDone).detach();
+            const educationHeaders = () => {
+                const token = resolveAccessToken();
+                return token ? { Authorization: "Bearer " + token } : {};
+            };
+            const showEducationError = (xhr, notify) => {
+                const message = xhr.status === 404
+                    ? t("cerebrumUltimate.messages.aiEducationDeployFirst", "Deploy this node before editing AI Education.")
+                    : xhr.status === 409
+                        ? t("cerebrumUltimate.messages.aiEducationConflict", "The file has changed. Copy your changes, cancel and reopen the editor to load the latest version.")
+                        : (xhr.responseJSON && xhr.responseJSON.error) || t("cerebrumUltimate.messages.aiEducationError", "Unable to read or save AI Education.");
+                $educationStatus.text(message);
+                if (notify) RED.notify(message, "error");
+            };
+            const applyEducationSnapshot = data => {
+                educationRevision = data.revision;
+                savedEducation = data.content;
+                $education.val(savedEducation).prop("disabled", false);
+            };
+            const loadEducation = () => {
+                educationRevision = undefined;
+                $education.prop("disabled", true);
+                $educationStatus.text(t("cerebrumUltimate.messages.aiEducationLoading", "Loading AI Education..."));
+                educationLoadRequest = $.ajax({
+                    url: resolveAdminRoot() + "/cerebrumUltimate/sidebar/ai-education",
+                    data: { nodeId: nodeId }, dataType: "json", cache: false, headers: educationHeaders()
+                }).done(data => {
+                    if (!educationEditorOpen) return;
+                    applyEducationSnapshot(data);
+                    $educationStatus.text("");
+                }).fail(xhr => {
+                    if (educationEditorOpen) showEducationError(xhr);
+                });
+            };
+            $education.on("input", () => {
+                const changed = $education.val() !== savedEducation;
+                $educationStatus.text(changed ? t("cerebrumUltimate.messages.aiEducationUnsaved", "Press Done to save your changes.") : "");
+            });
+            $educationDone.on("click", event => {
+                event.preventDefault();
+                if (!educationEditorOpen || educationSaving || $educationDone.hasClass("disabled")) return;
+                const content = String($education.val() || "");
+                if (!educationRevision || content === savedEducation) {
+                    $originalDone.trigger("click");
+                    return;
+                }
+                educationSaving = true;
+                const cancelState = $educationCancel.toArray().map(button => ({
+                    button: $(button), disabled: button.disabled, disabledClass: $(button).hasClass("disabled")
+                }));
+                const finishEducationSave = () => {
+                    educationSaving = false;
+                    $education.add($educationDone).prop("disabled", false);
+                    cancelState.forEach(state => state.button.prop("disabled", state.disabled).toggleClass("disabled", state.disabledClass));
+                };
+                $education.add($educationDone).prop("disabled", true);
+                $educationCancel.prop("disabled", true).addClass("disabled");
+                $educationStatus.text(t("cerebrumUltimate.messages.aiEducationSaving", "Saving AI Education..."));
+                $.ajax({
+                    url: resolveAdminRoot() + "/cerebrumUltimate/sidebar/ai-education/save",
+                    method: "POST", contentType: "application/json", dataType: "json", headers: educationHeaders(),
+                    data: JSON.stringify({ nodeId: nodeId, content: content, revision: educationRevision })
+                }).done(data => {
+                    if (!educationEditorOpen) return;
+                    applyEducationSnapshot(data);
+                    finishEducationSave();
+                    $originalDone.trigger("click");
+                }).fail(xhr => {
+                    if (!educationEditorOpen) return;
+                    finishEducationSave();
+                    showEducationError(xhr, true);
+                });
+            });
+            // Clicking outside the tray also means Done in Node-RED, but bypasses
+            // the button event. Apply the same save guard only for our top tray.
+            const confirmEducationFromShade = event => {
+                if (!educationEditorOpen || $(".red-ui-tray").last()[0] !== $educationTray[0]) return;
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                $educationDone.trigger("click");
+            };
+            if (educationShade) educationShade.addEventListener("click", confirmEducationFromShade, true);
+            const destroyAiEducationEditor = () => {
+                if (!educationEditorOpen) return;
+                educationEditorOpen = false;
+                if (educationLoadRequest) educationLoadRequest.abort();
+                if (educationShade) educationShade.removeEventListener("click", confirmEducationFromShade, true);
+                RED.events.off("editor:close", destroyAiEducationEditor);
+                $educationDone.replaceWith($originalDone);
+            };
+            node._destroyAiEducationEditor = destroyAiEducationEditor;
+            RED.events.on("editor:close", destroyAiEducationEditor);
+            loadEducation();
 
             const applyChatEditorOptions = (editor) => {
                 try {
@@ -827,7 +935,8 @@
 
                 const fileDescriptions = {
                     chatContext: t("cerebrumUltimate.messages.chatContextFileChatContext", "Persistent conversation turns, instructions and camera notification rules."),
-                    homeMemory: t("cerebrumUltimate.messages.chatContextFileHomeMemory", "Bounded learned home memory only; AI Education remains in the node property."),
+                    homeMemory: t("cerebrumUltimate.messages.chatContextFileHomeMemory", "Bounded learned home memory, separate from user-managed AI Education."),
+                    aiEducation: t("cerebrumUltimate.messages.chatContextFileAiEducation", "User-managed AI Education, loaded from its own file and included in backups."),
                     schedules: t("cerebrumUltimate.messages.chatContextFileSchedules", "Authoritative structured plans and reminders for this node."),
                     schedulesReadable: t("cerebrumUltimate.messages.chatContextFileSchedulesReadable", "Human-readable plans and reminders generated from the scheduler state."),
                     assistantConfig: t("cerebrumUltimate.messages.chatContextFileAssistantConfig", "Persistent Cerebrum configuration and semantic areas for this node."),
@@ -1342,6 +1451,9 @@
         },
         oneditsave: function () {
             try { RED.sidebar.show("info"); } catch (error) { }
+            if (this._destroyAiEducationEditor) this._destroyAiEducationEditor();
+            delete this._destroyAiEducationEditor;
+            delete this.aiEducation;
             try {
                 if (this.chatInputCodeEditor && typeof this.chatInputCodeEditor.getValue === "function") {
                     this.chatInputCode = this.chatInputCodeEditor.getValue();
@@ -1361,6 +1473,8 @@
         },
         oneditcancel: function () {
             try { RED.sidebar.show("info"); } catch (error) { }
+            if (this._destroyAiEducationEditor) this._destroyAiEducationEditor();
+            delete this._destroyAiEducationEditor;
             try {
                 if (typeof this._destroyCerebrumChatEditors === "function") this._destroyCerebrumChatEditors();
             } catch (error) { }
@@ -1587,8 +1701,10 @@
                 <p data-i18n="cerebrumUltimate.messages.homeIntelligenceIntro"></p>
             </div>
             <div class="form-row">
-                <label style="width:100%" for="node-input-aiEducation"><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.properties.aiEducation"></span></label>
-                <textarea id="node-input-aiEducation" maxlength="16000" style="width:100%; min-height:180px; box-sizing:border-box;" data-i18n="[placeholder]cerebrumUltimate.placeholder.aiEducation"></textarea>
+                <label style="width:100%" for="cerebrum-ai-education-content"><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.properties.aiEducation"></span></label>
+                <textarea id="cerebrum-ai-education-content" maxlength="16000" disabled style="width:100%; min-height:180px; box-sizing:border-box;" data-i18n="[placeholder]cerebrumUltimate.placeholder.aiEducation"></textarea>
+                <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.aiEducationFileHelp"></div>
+                <div id="cerebrum-ai-education-status" role="status" aria-live="polite" class="cerebrum-prompt-context-hint"></div>
             </div>
 
         </div>
