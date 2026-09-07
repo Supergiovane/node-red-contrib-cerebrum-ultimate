@@ -4,7 +4,6 @@
     "sections": {
       "groupAssistant": "KI-Assistent",
       "groupChatHome": "Cerebrum (BETA)",
-      "setupDoctor": "Setup Doctor",
       "webIntelligence": "Web-Intelligenz",
       "detectedAdapters": "Erkannte kompatible Nodes",
       "chatContextOverview": "Übersicht des Cerebrum-Kontexts",
@@ -88,15 +87,6 @@
       "aiEducation": "Beispiel: Antworte knapp. Benachrichtige meine letzte Cerebrum-Sitzung, wenn ein Fenster 30 Minuten offen bleibt; zwischen 23:00 und 07:00 keine Meldungen."
     },
     "messages": {
-      "setupDoctorLoading": "Diese Installation wird analysiert…",
-      "setupDoctorUnavailable": "Setup Doctor ist vorübergehend nicht verfügbar.",
-      "setupDoctorPromptsTitle": "Installation ausprobieren",
-      "setupDoctorPromptsHint": "Jeder Vorschlag öffnet den Web-Assistenten mit einer personalisierten, sicheren Anfrage. Nichts wird automatisch ausgeführt.",
-      "setupDoctorDeployHint": "Setup Doctor liest den zuletzt bereitgestellten Flow. Änderungen bereitstellen und danach erneut prüfen.",
-      "setupDoctorPass": "OK",
-      "setupDoctorWarn": "Prüfen",
-      "setupDoctorFail": "Beheben",
-      "setupDoctorInfo": "Optional",
       "webAccessHint": "Das Modell wählt dieses allgemeine Web-Tool semantisch für jede klare Cerebrum- oder geplante Anfrage. Fehlt ein wesentlicher Umfang, fragt es vor der Suche beim Benutzer nach; Hintergrund-Polling, Schlüsselwörter oder Intent-Klassifikatoren werden nicht verwendet. Externe Websites und der Suchdienst erhalten die Anfrage und die öffentliche IP dieses Servers. Private KNX-, Kamera-, Gesprächs-, Speicher- und Zugangsdaten werden nie automatisch hinzugefügt.",
       "webBudgetHint": "Das gleitende Budget zählt echte externe Aufrufe aus Unterhaltungen und vom Benutzer erstellten geplanten Aufgaben.",
       "runtimeCodeHint": "Erweitert und potenziell gefährlich. Dies ist keine Sicherheits-Sandbox: Generiertes synchrones JavaScript greift direkt auf node und RED zu, und die Ergebnisse werden an den ausgewählten Modellanbieter gesendet. Nur mit einem vertrauenswürdigen Modell und vertrauenswürdigen Anweisungen aktivieren.",
@@ -226,7 +216,6 @@
       }
     },
     "buttons": {
-      "refreshSetupDoctor": "Erneut prüfen",
       "installOllamaModel": "2) Install it",
       "ollamaLibrary": "Model library",
       "downloadOllamaModel": "1) Download model",

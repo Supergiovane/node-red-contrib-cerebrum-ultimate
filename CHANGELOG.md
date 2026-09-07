@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0 — 2026-09-07
+
+- Unified the Web dashboard with the neural-map palette, reorganized navigation and responsive layouts, and made the Neural Map the default opening page while preserving direct links to other sections.
+- Simplified the Node-RED editor by removing the redundant Cerebrum Learning panel and using the default Node-RED button colors.
+- Removed Setup Doctor from the editor, Web dashboard and backend, including automatic provider probes, while preserving chat onboarding and integration discovery.
+- Added direct ZIP backup downloads and ZIP restore, with the complete backup, ready-to-import Node-RED flows, package requirements and migration instructions in one archive. Previous version 1 and 2 JSON backups remain supported.
+- Removed the separate flow-extraction button; migration flows are available directly as `cerebrum-flows.json` inside the ZIP. Restoring Cerebrum data remains separate from importing and deploying Node-RED flows.
+- Added ZIP integrity and decompression-limit checks, plus regression coverage for damaged archives and complete restoration across node IDs and restarts. Updated translations, documentation and packaged Web assets.
+
 ## 0.0.11 — 2026-09-06
 
 - Added autonomous observation, comfort goals and smart-home Web research guided by AI Education.
@@ -53,7 +62,7 @@
 - Extracted Cerebrum into the standalone `node-red-contrib-cerebrum-ultimate` package and introduced the new `cerebrumUltimate` node type.
 - Made KNX Ultimate optional; Cerebrum starts and learns from other integrations without a KNX gateway, while reusing ETS/DPT metadata when a gateway is selected.
 - Added an independent bounded storage root under `cerebrumultimatestorage`, with no migration from legacy assistant files.
-- Added direct Home Assistant communication through Cerebrum output 6 and `ha-api`, Home Assistant add-on and round-trip Setup Doctor checks, HUE/Matter/flow discovery, and a public adapter registry for third-party packages.
+- Added direct Home Assistant communication through Cerebrum output 6 and `ha-api`, Home Assistant add-on and round-trip detection, HUE/Matter/flow discovery, and a public adapter registry for third-party packages.
 - Preserved supervised habit learning, read-only KNX enforcement, model-tested startup notification with `msg.boot = true`, autonomous tiered state refresh, complete Cerebrum import/export and dual readable/editor memory views.
 - Hardened adapter, provider, timer, storage and output boundaries so integration failures cannot propagate as uncaught Node-RED exceptions.
 - Unified optional integrations under **Compatible nodes detected**: KNX Ultimate and UniFi Protect now use native config-node selection/creation, while HUE, Matter, Home Assistant, TTS Ultimate and registered adapters report whether they are detected and active in chat. Each Cerebrum instance exposes only its selected UniFi Protect controller.

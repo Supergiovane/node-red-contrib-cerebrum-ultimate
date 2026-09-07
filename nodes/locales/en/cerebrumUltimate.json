@@ -4,7 +4,6 @@
     "sections": {
       "groupAssistant": "AI assistant",
       "groupChatHome": "Cerebrum (BETA)",
-      "setupDoctor": "Setup Doctor",
       "webIntelligence": "Web intelligence",
       "detectedAdapters": "Compatible nodes detected",
       "chatContextOverview": "Cerebrum context overview",
@@ -81,7 +80,6 @@
       }
     },
     "buttons": {
-      "refreshSetupDoctor": "Check again",
       "refreshModels": "Refresh",
       "installOllamaModel": "2) Install it",
       "ollamaLibrary": "Model library",
@@ -95,15 +93,6 @@
       "etsReadOnlyNone": "Clear read only"
     },
     "messages": {
-      "setupDoctorLoading": "Analyzing this installation…",
-      "setupDoctorUnavailable": "Setup Doctor is temporarily unavailable.",
-      "setupDoctorPromptsTitle": "Try your installation",
-      "setupDoctorPromptsHint": "Each suggestion opens the Web Assistant with a personalized, safe prompt. Nothing is executed automatically.",
-      "setupDoctorDeployHint": "Setup Doctor reads the last deployed flow. Deploy editor changes, then check again.",
-      "setupDoctorPass": "OK",
-      "setupDoctorWarn": "Check",
-      "setupDoctorFail": "Fix",
-      "setupDoctorInfo": "Optional",
       "webAccessHint": "The model chooses this general Web tool semantically for each clear Cerebrum or scheduled request. If essential scope is ambiguous, it asks the user before searching; no background polling, keywords or intent classifiers are used. External sites and the search service receive the query and this server’s public IP. Private KNX, camera, conversation, memory and credential data are never added automatically.",
       "webBudgetHint": "The rolling budget counts real outbound calls from conversations and user-created scheduled tasks.",
       "runtimeCodeHint": "Advanced and potentially dangerous. This is not a security sandbox: generated synchronous JavaScript has direct access to node and RED, and its results are sent to the selected model provider. Enable only with a trusted model and instructions.",

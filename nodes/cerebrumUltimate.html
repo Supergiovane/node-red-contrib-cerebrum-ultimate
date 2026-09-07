@@ -169,10 +169,8 @@
         display: block;
     }
 
-    #cerebrum-setup-doctor-panel,
     #cerebrum-detected-adapters-panel,
-    #cerebrum-chat-context-panel,
-    #cerebrum-chat-learning-link-panel {
+    #cerebrum-chat-context-panel {
         margin: 0 0 18px;
         padding: 12px 14px;
         border: 1px solid var(--red-ui-form-input-border-color, #ccc);
@@ -189,195 +187,10 @@
     }
 
     #cerebrum-detected-adapters-panel>h4,
-    #cerebrum-chat-context-panel>h4,
-    #cerebrum-chat-learning-link-panel>h4 {
+    #cerebrum-chat-context-panel>h4 {
         margin: 0 0 9px;
         font-size: 14px;
         font-weight: 600;
-    }
-
-    #cerebrum-setup-doctor-panel {
-        margin: 24px 0 0;
-        border-color: rgba(255, 152, 0, 0.55);
-        background: linear-gradient(135deg, rgba(255, 152, 0, 0.10), var(--red-ui-secondary-background, #f7f7f7));
-    }
-
-    .cerebrum-setup-doctor-toggle {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin: 0;
-        color: var(--red-ui-primary-text-color, #555);
-        font-size: 14px;
-        font-weight: 600;
-        cursor: pointer;
-        list-style: none;
-        user-select: none;
-    }
-
-    .cerebrum-setup-doctor-toggle::-webkit-details-marker {
-        display: none;
-    }
-
-    .cerebrum-setup-doctor-toggle>span>i {
-        width: 18px;
-        text-align: center;
-    }
-
-    .cerebrum-setup-doctor-toggle:focus-visible {
-        outline: 2px solid var(--red-ui-primary-color, #377e00);
-        outline-offset: 3px;
-        border-radius: 2px;
-    }
-
-    .cerebrum-setup-doctor-chevron {
-        flex: 0 0 auto;
-        transition: transform 0.16s ease;
-    }
-
-    #cerebrum-setup-doctor-panel[open] .cerebrum-setup-doctor-chevron {
-        transform: rotate(90deg);
-    }
-
-    .cerebrum-setup-doctor-body {
-        margin-top: 11px;
-    }
-
-    #cerebrum-setup-doctor-panel.status-ready {
-        border-color: rgba(46, 125, 50, 0.55);
-        background: linear-gradient(135deg, rgba(46, 125, 50, 0.10), var(--red-ui-secondary-background, #f7f7f7));
-    }
-
-    #cerebrum-setup-doctor-panel.status-blocked {
-        border-color: rgba(198, 40, 40, 0.52);
-        background: linear-gradient(135deg, rgba(198, 40, 40, 0.09), var(--red-ui-secondary-background, #f7f7f7));
-    }
-
-    .cerebrum-setup-doctor-hero {
-        display: flex;
-        align-items: flex-start;
-        gap: 10px;
-    }
-
-    .cerebrum-setup-doctor-summary {
-        flex: 1 1 auto;
-        min-width: 0;
-        line-height: 1.45;
-    }
-
-    .cerebrum-setup-doctor-score {
-        flex: 0 0 auto;
-        min-width: 48px;
-        padding: 6px 8px;
-        border-radius: 16px;
-        color: #7a4200;
-        background: rgba(255, 152, 0, 0.18);
-        text-align: center;
-        font-size: 12px;
-        font-weight: 700;
-    }
-
-    #cerebrum-setup-doctor-panel.status-ready .cerebrum-setup-doctor-score {
-        color: #256029;
-        background: rgba(46, 125, 50, 0.16);
-    }
-
-    #cerebrum-setup-doctor-panel.status-blocked .cerebrum-setup-doctor-score {
-        color: #842029;
-        background: rgba(198, 40, 40, 0.14);
-    }
-
-    .cerebrum-setup-doctor-check {
-        display: flex;
-        align-items: flex-start;
-        gap: 8px;
-        padding: 7px 0;
-    }
-
-    .cerebrum-setup-doctor-check+.cerebrum-setup-doctor-check {
-        border-top: 1px solid var(--red-ui-form-input-border-color, #ddd);
-    }
-
-    .cerebrum-setup-doctor-check-copy {
-        flex: 1 1 auto;
-        min-width: 0;
-    }
-
-    .cerebrum-setup-doctor-check-detail,
-    #cerebrum-setup-doctor-status,
-    .cerebrum-setup-doctor-prompts-hint {
-        color: var(--red-ui-secondary-text-color, #777);
-        font-size: 12px;
-        line-height: 1.4;
-    }
-
-    .cerebrum-setup-doctor-badge {
-        flex: 0 0 auto;
-        min-width: 48px;
-        padding: 2px 7px;
-        border-radius: 10px;
-        text-align: center;
-        font-size: 11px;
-        font-weight: 700;
-    }
-
-    .cerebrum-setup-doctor-badge.pass {
-        color: #256029;
-        background: #dff0d8;
-    }
-
-    .cerebrum-setup-doctor-badge.warn {
-        color: #7a5200;
-        background: #fff3cd;
-    }
-
-    .cerebrum-setup-doctor-badge.fail {
-        color: #842029;
-        background: #f8d7da;
-    }
-
-    .cerebrum-setup-doctor-badge.info {
-        color: #245269;
-        background: #d9edf7;
-    }
-
-    .cerebrum-setup-doctor-prompts {
-        margin-top: 12px;
-        padding-top: 10px;
-        border-top: 1px dashed var(--red-ui-form-input-border-color, #ccc);
-    }
-
-    .cerebrum-setup-doctor-prompt-list {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        margin-top: 8px;
-    }
-
-    .cerebrum-setup-doctor-prompt {
-        width: 100%;
-        margin: 0 !important;
-        text-align: left;
-        white-space: normal;
-    }
-
-    .cerebrum-setup-doctor-footer {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        margin-top: 10px;
-    }
-
-    .cerebrum-setup-doctor-deploy-hint {
-        color: var(--red-ui-secondary-text-color, #777);
-        font-size: 11px;
-        line-height: 1.35;
-    }
-
-    #cerebrum-setup-doctor-refresh {
-        flex: 0 0 auto;
     }
 
     .cerebrum-detected-adapter {
@@ -411,10 +224,6 @@
     summary .cerebrum-detected-adapter-package,
     summary .cerebrum-detected-adapter-counts {
         display: block;
-    }
-
-    #cerebrum-chat-learning-link-panel {
-        margin: 18px 0 0;
     }
 
     .cerebrum-compatible-intro {
@@ -474,13 +283,6 @@
     .cerebrum-compatible-config-field>.red-ui-button,
     .cerebrum-compatible-config-field>div {
         min-width: 0;
-    }
-
-    .cerebrum-chat-learning-link-copy {
-        margin: 0 0 10px;
-        color: var(--red-ui-secondary-text-color, #777);
-        font-size: 12px;
-        line-height: 1.45;
     }
 
     .cerebrum-chat-context-metric {
@@ -906,60 +708,6 @@
                 renderDetectedAdapters(lastCompatibleNodes);
             });
 
-            const renderSetupDoctor = (snapshot) => {
-                const $panel = $("#cerebrum-setup-doctor-panel");
-                const $status = $("#cerebrum-setup-doctor-status");
-                const $content = $("#cerebrum-setup-doctor-content");
-                const $checks = $("#cerebrum-setup-doctor-checks").empty();
-                const $prompts = $("#cerebrum-setup-doctor-prompt-list").empty();
-                if (!snapshot || typeof snapshot !== "object") {
-                    $panel.removeClass("status-ready status-attention status-blocked");
-                    $content.hide();
-                    $status.text(t("cerebrumUltimate.messages.setupDoctorUnavailable", "Setup Doctor is temporarily unavailable.")).show();
-                    return;
-                }
-                const badgeLabels = {
-                    pass: t("cerebrumUltimate.messages.setupDoctorPass", "OK"),
-                    warn: t("cerebrumUltimate.messages.setupDoctorWarn", "Check"),
-                    fail: t("cerebrumUltimate.messages.setupDoctorFail", "Fix"),
-                    info: t("cerebrumUltimate.messages.setupDoctorInfo", "Optional")
-                };
-                const snapshotStatus = ["ready", "attention", "blocked"].includes(String(snapshot.status)) ? String(snapshot.status) : "attention";
-                $panel.removeClass("status-ready status-attention status-blocked").addClass("status-" + snapshotStatus);
-                $("#cerebrum-setup-doctor-state").text(String(snapshot.statusLabel || snapshot.status || ""));
-                $("#cerebrum-setup-doctor-summary").text(String(snapshot.summary || ""));
-                $("#cerebrum-setup-doctor-score").text(String(Math.max(0, Number(snapshot.score) || 0)) + "%");
-                (Array.isArray(snapshot.checks) ? snapshot.checks : []).forEach(function (check) {
-                    if (!check || !check.id) return;
-                    const statusName = ["pass", "warn", "fail", "info"].includes(String(check.status)) ? String(check.status) : "info";
-                    const $row = $("<div></div>").addClass("cerebrum-setup-doctor-check");
-                    const $copy = $("<div></div>").addClass("cerebrum-setup-doctor-check-copy");
-                    $("<strong></strong>").text(String(check.title || check.id)).appendTo($copy);
-                    $("<div></div>").addClass("cerebrum-setup-doctor-check-detail").text(String(check.detail || "")).appendTo($copy);
-                    $copy.appendTo($row);
-                    $("<span></span>")
-                        .addClass("cerebrum-setup-doctor-badge " + statusName)
-                        .text(badgeLabels[statusName])
-                        .appendTo($row);
-                    $row.appendTo($checks);
-                });
-                const promptItems = snapshot.firstRun && Array.isArray(snapshot.firstRun.prompts) ? snapshot.firstRun.prompts : [];
-                promptItems.forEach(function (prompt) {
-                    if (!prompt || !prompt.text) return;
-                    $("<button type=\"button\"></button>")
-                        .addClass("red-ui-button cerebrum-setup-doctor-prompt")
-                        .text(String(prompt.text))
-                        .on("click", function (evt) {
-                            evt.preventDefault();
-                            openCerebrumWebPage("cerebrum", String(prompt.text));
-                        })
-                        .appendTo($prompts);
-                });
-                $(".cerebrum-setup-doctor-prompts").toggle(promptItems.length > 0);
-                $status.hide();
-                $content.show();
-            };
-
             let lastChatContextOverview = null;
             const selectedLocalContextTokens = () => Math.max(0, Number($("#node-input-llmLocalContextTokens").val()) || 0);
             const formatCompactContextTokens = (value) => {
@@ -1120,56 +868,33 @@
                 $status.hide();
                 $content.show();
             };
-            const editorLanguage = String((RED.settings && RED.settings.lang) || (window.navigator && window.navigator.language) || "en");
-            const loadCerebrumOverview = function (refreshSetup) {
-                const $refresh = $("#cerebrum-setup-doctor-refresh");
-                $refresh.prop("disabled", true).find("i.fa-refresh").addClass("fa-spin");
-                const requestData = { language: editorLanguage };
+            const loadCerebrumOverview = function () {
+                const requestData = {};
                 if (nodeId) requestData.nodeId = nodeId;
-                if (refreshSetup) requestData.refreshSetup = "1";
                 $.ajax({
                     url: "cerebrumUltimate/adapters",
                     type: "GET",
                     data: requestData
                 })
                     .done(function (data) {
-                        renderSetupDoctor(data && data.setupDoctor);
                         renderDetectedAdapters(data && data.compatibleNodes);
                         renderChatContextOverview(data && data.chatContext);
                     })
                     .fail(function () {
-                        renderSetupDoctor(null);
                         $("#cerebrum-detected-adapters-status")
                             .text(t("cerebrumUltimate.messages.detectedAdaptersUnavailable", "Compatible-node detection is temporarily unavailable."))
                             .show();
                         renderChatContextOverview(null);
-                    })
-                    .always(function () {
-                        $refresh.prop("disabled", false).find("i.fa-refresh").removeClass("fa-spin");
                     });
             };
-            loadCerebrumOverview(false);
-            $("#cerebrum-setup-doctor-refresh").on("click", function (evt) {
-                evt.preventDefault();
-                loadCerebrumOverview(true);
-            });
+            loadCerebrumOverview();
 
-            const openCerebrumWebPage = function (view, prompt) {
+            const openCerebrumWebPage = function (view) {
                 const adminRoot = resolveAdminRoot();
                 const targetBase = adminRoot + "/cerebrumUltimate/sidebar/page";
                 const params = new URLSearchParams();
                 if (nodeId) params.set("nodeId", nodeId);
-                if (view === "chat-learning") {
-                    params.set("tab", "cerebrum");
-                    params.set("cerebrumTab", "learning");
-                } else if (view === "cerebrum-memory") {
-                    params.set("tab", "cerebrum");
-                    params.set("cerebrumTab", "memory");
-                } else if (view === "cerebrum") {
-                    params.set("tab", "cerebrum");
-                    params.set("cerebrumTab", "conversation");
-                    if (prompt) params.set("prompt", String(prompt));
-                } else if (view === "ets-access") {
+                if (view === "ets-access") {
                     params.set("tab", "etsAccess");
                 }
                 const accessToken = resolveAccessToken();
@@ -1182,16 +907,6 @@
             $("#cerebrum-open-web-page-vue").on("click", function (evt) {
                 evt.preventDefault();
                 openCerebrumWebPage();
-            });
-
-            $("#cerebrum-open-chat-learning").on("click", function (evt) {
-                evt.preventDefault();
-                openCerebrumWebPage("chat-learning");
-            });
-
-            $("#cerebrum-open-cerebrum-memory").on("click", function (evt) {
-                evt.preventDefault();
-                openCerebrumWebPage("cerebrum-memory");
             });
 
             $("#cerebrum-open-ets-access").on("click", function (evt) {
@@ -1679,8 +1394,8 @@
     <div class="form-row">
         <label><i class="fa fa-external-link"></i> Web UI</label>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button type="button" class="red-ui-button" id="cerebrum-open-web-page-vue" style="background-color:#ff9800; border-color:#ff9800; color:#ffffff !important; -webkit-text-fill-color:#ffffff;">
-                <i class="fa fa-external-link" style="color:#ffffff !important;"></i> <span style="color:#ffffff !important;">Open Cerebrum Web Page</span>
+            <button type="button" class="red-ui-button" id="cerebrum-open-web-page-vue">
+                <i class="fa fa-external-link"></i> <span>Open Cerebrum Web Page</span>
             </button>
         </div>
     </div>
@@ -1713,18 +1428,6 @@
             <div class="cerebrum-accordion-subsection">
                 <h4><i class="fa fa-home"></i> <span data-i18n="cerebrumUltimate.sections.homeIntelligence"></span></h4>
                 <div class="cerebrum-accordion-mount" id="cerebrum-mount-home-intelligence"></div>
-            </div>
-            <div id="cerebrum-chat-learning-link-panel">
-                <h4><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.sections.chatLearning"></span></h4>
-                <p class="cerebrum-chat-learning-link-copy" data-i18n="cerebrumUltimate.messages.chatLearningOpenHint"></p>
-                <button type="button" class="red-ui-button" id="cerebrum-open-chat-learning">
-                    <i class="fa fa-external-link"></i> <span data-i18n="cerebrumUltimate.buttons.openChatLearning"></span>
-                </button>
-                <h4 style="margin-top:14px;"><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.sections.cerebrumMemory"></span></h4>
-                <p class="cerebrum-chat-learning-link-copy" data-i18n="cerebrumUltimate.messages.cerebrumMemoryOpenHint"></p>
-                <button type="button" class="red-ui-button" id="cerebrum-open-cerebrum-memory">
-                    <i class="fa fa-external-link"></i> <span data-i18n="cerebrumUltimate.buttons.openCerebrumMemory"></span>
-                </button>
             </div>
             <div id="cerebrum-detected-adapters-panel">
                 <h4><i class="fa fa-puzzle-piece"></i> <span data-i18n="cerebrumUltimate.sections.detectedAdapters"></span></h4>
@@ -1783,38 +1486,6 @@
                     <div id="cerebrum-chat-context-pattern" class="cerebrum-chat-context-pattern"></div>
                 </div>
             </div>
-            <details id="cerebrum-setup-doctor-panel">
-                <summary class="cerebrum-setup-doctor-toggle">
-                    <span><i class="fa fa-magic"></i> <span data-i18n="cerebrumUltimate.sections.setupDoctor"></span></span>
-                    <i class="fa fa-chevron-right cerebrum-setup-doctor-chevron" aria-hidden="true"></i>
-                </summary>
-                <div class="cerebrum-setup-doctor-body">
-                    <div id="cerebrum-setup-doctor-status" data-i18n="cerebrumUltimate.messages.setupDoctorLoading"></div>
-                    <div id="cerebrum-setup-doctor-content" style="display:none;">
-                        <div class="cerebrum-setup-doctor-hero">
-                            <div class="cerebrum-setup-doctor-summary">
-                                <strong id="cerebrum-setup-doctor-state"></strong>
-                                <div id="cerebrum-setup-doctor-summary"></div>
-                            </div>
-                            <div id="cerebrum-setup-doctor-score" class="cerebrum-setup-doctor-score"></div>
-                        </div>
-                        <div id="cerebrum-setup-doctor-checks"></div>
-                        <div class="cerebrum-setup-doctor-prompts">
-                            <strong data-i18n="cerebrumUltimate.messages.setupDoctorPromptsTitle"></strong>
-                            <div class="cerebrum-setup-doctor-prompts-hint" data-i18n="cerebrumUltimate.messages.setupDoctorPromptsHint"></div>
-                            <div id="cerebrum-setup-doctor-prompt-list" class="cerebrum-setup-doctor-prompt-list"></div>
-                        </div>
-                        <div class="cerebrum-setup-doctor-footer">
-                            <div class="cerebrum-setup-doctor-deploy-hint">
-                                <i class="fa fa-info-circle"></i> <span data-i18n="cerebrumUltimate.messages.setupDoctorDeployHint"></span>
-                            </div>
-                            <button type="button" class="red-ui-button" id="cerebrum-setup-doctor-refresh">
-                                <i class="fa fa-refresh"></i> <span data-i18n="cerebrumUltimate.buttons.refreshSetupDoctor"></span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </details>
         </div>
 
     </div>

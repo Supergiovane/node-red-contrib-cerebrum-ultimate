@@ -4,7 +4,6 @@
     "sections": {
       "groupAssistant": "Assistente AI",
       "groupChatHome": "Cerebrum (BETA)",
-      "setupDoctor": "Setup Doctor",
       "webIntelligence": "Intelligenza Web",
       "detectedAdapters": "Nodi compatibili rilevati",
       "chatContextOverview": "Contesto disponibile a Cerebrum",
@@ -81,7 +80,6 @@
       }
     },
     "buttons": {
-      "refreshSetupDoctor": "Ricontrolla",
       "refreshModels": "Aggiorna",
       "installOllamaModel": "2) Installalo",
       "ollamaLibrary": "Libreria modelli",
@@ -95,15 +93,6 @@
       "etsReadOnlyNone": "Togli sola lettura"
     },
     "messages": {
-      "setupDoctorLoading": "Sto analizzando questo impianto…",
-      "setupDoctorUnavailable": "Setup Doctor non è temporaneamente disponibile.",
-      "setupDoctorPromptsTitle": "Prova il tuo impianto",
-      "setupDoctorPromptsHint": "Ogni suggerimento apre l’Assistant Web con una richiesta personalizzata e sicura. Nulla viene eseguito automaticamente.",
-      "setupDoctorDeployHint": "Setup Doctor legge l’ultimo flow distribuito. Fai Deploy delle modifiche e poi ricontrolla.",
-      "setupDoctorPass": "OK",
-      "setupDoctorWarn": "Controlla",
-      "setupDoctorFail": "Correggi",
-      "setupDoctorInfo": "Opzionale",
       "webAccessHint": "Il modello sceglie semanticamente questo tool Web generale per ogni richiesta chiara a Cerebrum o pianificata. Se manca un dettaglio essenziale, chiede chiarimenti all’utente prima della ricerca; non vengono usati polling in background, parole chiave o classificatori d’intento. I siti esterni e il servizio di ricerca ricevono la query e l’IP pubblico del server. Dati privati KNX, telecamere, conversazioni, memoria e credenziali non vengono mai aggiunti automaticamente.",
       "webBudgetHint": "Il budget scorrevole conteggia le chiamate esterne reali delle conversazioni e delle pianificazioni create dall’utente.",
       "runtimeCodeHint": "Funzione avanzata e potenzialmente pericolosa. Non è una sandbox di sicurezza: il JavaScript sincrono generato accede direttamente a node e RED e i risultati vengono inviati al provider del modello selezionato. Attivala solo con un modello e istruzioni attendibili.",

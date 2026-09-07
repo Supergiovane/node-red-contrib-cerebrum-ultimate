@@ -1,12 +1,23 @@
 'use strict'
 /* eslint-env mocha */
 const { expect } = require('chai')
+const { rejects } = require('assert').strict
+const yazl = require('yazl')
+const yauzl = require('yauzl')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { EventEmitter } = require('events')
 const { backupFile, createBackupUploads, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows } = require('../nodes/utils/cerebrumBackup')
-const register = require('../nodes/cerebrumUltimate')
+const { createBackupZip, decodeBackupUpload } = require('../nodes/utils/cerebrumBackupZip')
+const Module = require('module')
+// Keep the admin-route singleton isolated from other suites' mocked RED hosts.
+const runtimePath = require.resolve('../nodes/cerebrumUltimate')
+const runtimeModule = new Module(runtimePath, module)
+runtimeModule.filename = runtimePath
+runtimeModule.paths = module.paths
+runtimeModule._compile(fs.readFileSync(runtimePath, 'utf8'), runtimePath)
+const register = runtimeModule.exports
 const { parseCerebrumChatContextFileStrict } = require('../nodes/utils/cerebrumChatContext')
 
 const noop = () => {}
@@ -15,6 +26,7 @@ const copy = value => JSON.parse(JSON.stringify(value))
 describe('Cerebrum portable backup', () => {
   let root
   let instances
+  const routes = new Map()
   function create (id, config = {}, credentials = { llmApiKey: 'AI-SECRET-EXCLUDED' }) {
     let Constructor
     const flow = [
@@ -27,7 +39,7 @@ describe('Cerebrum portable backup', () => {
     ]
     const RED = {
       auth: { needsPermission: () => noop },
-      httpAdmin: { get: noop, post: noop, use: noop },
+      httpAdmin: { get: noop, post: (url, permission, handler) => routes.set(url, handler), use: noop },
       settings: { userDir: path.join(root, id), httpAdminRoot: '/' },
       nodes: {
         getNode: () => undefined,
@@ -45,6 +57,25 @@ describe('Cerebrum portable backup', () => {
     const node = new Constructor(flow[1])
     instances.add(node)
     return node
+  }
+  async function request (node, action, body = {}) {
+    const response = { statusCode: 200, headers: {} }
+    const res = {
+      status: code => { response.statusCode = code; return res },
+      set: (key, value) => { response.headers[key.toLowerCase()] = value; return res },
+      json: value => { response.body = value },
+      send: value => { response.body = value }
+    }
+    await routes.get(`/cerebrumUltimate/sidebar/config/${action}`)({ body: { nodeId: node.id, ...body }, user: { username: 'backup-user' } }, res)
+    return response
+  }
+  async function zipEntries (entries) {
+    const zip = new yazl.ZipFile()
+    for (const [name, content, options] of entries) zip.addBuffer(Buffer.from(content), name, options)
+    zip.end()
+    const chunks = []
+    for await (const chunk of zip.outputStream) chunks.push(chunk)
+    return Buffer.concat(chunks)
   }
   async function close (node) {
     await new Promise(resolve => node.emit('close', resolve))
@@ -151,7 +182,11 @@ describe('Cerebrum portable backup', () => {
     seed(source, `history/source/${day}.jsonl`, '{"legacy":true}\n')
     seed(source, 'debug/cerebrum-last-chat-prompt-source.txt', 'last prompt\n')
     source.recordCerebrumOperation({ category: 'autonomous', operation: 'migration-marker', status: 'succeeded', title: 'Migration marker' })
-    const backup = await source.exportAiConfig()
+    const download = await request(source, 'export', { format: 'zip' })
+    expect(download.statusCode).to.equal(200)
+    expect(download.headers).to.include({ 'content-type': 'application/zip', 'cache-control': 'no-store' })
+    expect(download.headers['content-disposition']).to.match(/^attachment; filename=".*\.zip"$/)
+    const backup = await decodeBackupUpload(download.body)
     expect(backup.version).to.equal(2)
     const runtimeState = JSON.parse(backup.supplementalFiles.runtimeState.content)
     expect(runtimeState.webRequestTimestamps).to.deep.equal([observedAt - 1000, observedAt])
@@ -169,7 +204,17 @@ describe('Cerebrum portable backup', () => {
     const migratedConfig = flows.find(item => item.id === 'source')
     let target = create('target', { ...migratedConfig, id: 'target' }, { llmApiKey: 'DESTINATION-KEY' })
     seed(target, 'history/target/2000-01-01.knxctx', 'stale')
-    expect((await target.importAiConfig(backup)).ok).to.equal(true)
+    let uploadId
+    const chunkSize = 137
+    const total = Math.ceil(download.body.length / chunkSize)
+    for (let index = 0; index < total; index++) {
+      const response = await request(target, 'import-chunk', { uploadId, index, total, chunk: download.body.subarray(index * chunkSize, (index + 1) * chunkSize).toString('base64') })
+      expect(response.statusCode).to.equal(200)
+      uploadId = response.body.uploadId
+    }
+    const imported = await request(target, 'import', { uploadId })
+    expect(imported.statusCode).to.equal(200)
+    expect(imported.body.ok).to.equal(true)
     expect(fs.existsSync(path.join(storage(target), 'history/target/2000-01-01.knxctx'))).to.equal(false)
     expect(target.llmApiKey).to.equal('DESTINATION-KEY')
     expect(target.llmModel).to.equal('saved-model')
@@ -317,6 +362,75 @@ describe('Cerebrum portable backup', () => {
     expect(error).to.be.instanceOf(Error)
     expect(error.message).to.include('Archive write failed')
     expect(error.message).to.include('simulated append error')
+  })
+
+  it('includes directly usable migration files in a compressed ZIP', async () => {
+    const node = create('zip-source')
+    const backup = await node.exportAiConfig()
+    backup.node.name = 'Casa è memoria 🏠'
+    const bytes = await createBackupZip(backup)
+    expect(bytes.length).to.be.lessThan(Buffer.byteLength(JSON.stringify(backup)))
+    const zip = await yauzl.fromBufferPromise(bytes, { lazyEntries: true })
+    const files = {}
+    for await (const entry of zip.eachEntry()) {
+      const chunks = []
+      for await (const chunk of await zip.openReadStreamPromise(entry)) chunks.push(chunk)
+      files[entry.fileName] = Buffer.concat(chunks).toString('utf8')
+    }
+    expect(Object.keys(files)).to.have.members(['cerebrum-backup.json', 'cerebrum-flows.json', 'required-packages.json', 'README.txt'])
+    expect(JSON.parse(files['cerebrum-flows.json'])).to.deep.equal(JSON.parse(backup.migration.flows.content))
+    expect(JSON.parse(files['required-packages.json'])).to.deep.equal(backup.migration.dependencies)
+    expect(files['README.txt']).to.include('Ripristina ZIP')
+    expect(await decodeBackupUpload(bytes)).to.deep.equal(backup)
+    expect(await decodeBackupUpload(Buffer.from(JSON.stringify(backup)))).to.deep.equal(backup)
+    expect((await request(node, 'export')).body.format).to.equal('cerebrum-ultimate-backup')
+  })
+
+  it('accepts old JSON and rejects unrelated, truncated or damaged ZIP backups', async () => {
+    const backup = { format: 'cerebrum-ultimate-backup', version: 1, node: { name: 'Casa 🏠' } }
+    expect(await decodeBackupUpload(Buffer.from(JSON.stringify(backup)))).to.deep.equal(backup)
+    const bytes = await createBackupZip(backup)
+    await rejects(decodeBackupUpload(bytes.subarray(0, -15)), /Invalid.*ZIP/)
+    await rejects(decodeBackupUpload(await zipEntries([['README.txt', 'No backup']])), /Missing cerebrum-backup.json/)
+    await rejects(decodeBackupUpload(await zipEntries([['cerebrum-backup.json', '{}']])), /Unsupported/)
+    const damaged = Buffer.from(bytes)
+    const centralHeader = damaged.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]))
+    damaged.writeUInt32LE((damaged.readUInt32LE(centralHeader + 16) ^ 1) >>> 0, centralHeader + 16)
+    await rejects(decodeBackupUpload(damaged), /Damaged.*ZIP/)
+  })
+
+  it('bounds ZIP expansion and rejects duplicate names, paths, symlinks and encryption', async () => {
+    const content = JSON.stringify({ format: 'cerebrum-ultimate-backup', version: 1, repeated: 'x'.repeat(10000) })
+    await rejects(decodeBackupUpload(await zipEntries([['cerebrum-backup.json', content], ['cerebrum-backup.json', content]])), /duplicate/)
+    await rejects(decodeBackupUpload(await zipEntries([['cerebrum-backup.json', content, { mode: 0o120777 }]])), /Unsupported/)
+    const zip = await zipEntries([['cerebrum-backup.json', content]])
+    const centralHeader = zip.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]))
+    const unsafe = Buffer.from(zip)
+    unsafe.write('../', centralHeader + 46)
+    await rejects(decodeBackupUpload(unsafe), /Invalid.*ZIP/)
+    const encrypted = Buffer.from(zip)
+    encrypted.writeUInt16LE(encrypted.readUInt16LE(centralHeader + 8) | 1, centralHeader + 8)
+    await rejects(decodeBackupUpload(encrypted), /Unsupported/)
+    const oversized = Buffer.from(zip)
+    oversized.writeUInt32LE(256 * 1024 * 1024 + 1, centralHeader + 24)
+    await rejects(decodeBackupUpload(oversized), /exceeds 256 MiB/)
+    const dishonestSize = Buffer.from(zip)
+    dishonestSize.writeUInt32LE(10, centralHeader + 24)
+    await rejects(decodeBackupUpload(dishonestSize), /ZIP|exceeds/)
+  })
+
+  it('validates ZIP file checksums before replacing any destination data', async () => {
+    const node = create('zip-damage')
+    const backup = await node.exportAiConfig()
+    const memoryPath = path.join(storage(node), 'memory', backup.files.homeMemory.name)
+    const originalMemory = fs.readFileSync(memoryPath, 'utf8')
+    backup.files.homeMemory.content += 'damage'
+    const zip = await createBackupZip(backup)
+    const chunk = await request(node, 'import-chunk', { index: 0, total: 1, chunk: zip.toString('base64') })
+    const response = await request(node, 'import', chunk.body)
+    expect(response.statusCode).to.equal(400)
+    expect(response.body.error).to.include('homeMemory')
+    expect(fs.readFileSync(memoryPath, 'utf8')).to.equal(originalMemory)
   })
 
   it('assembles uploads without corrupting Unicode and isolates users and nodes', () => {

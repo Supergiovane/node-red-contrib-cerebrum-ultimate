@@ -219,12 +219,15 @@ function createBackupUploads () {
       upload.chunks.push(data)
       return { uploadId }
     },
-    take ({ owner, nodeId, uploadId }) {
+    takeBuffer ({ owner, nodeId, uploadId }) {
       prune()
       const upload = uploads.get(uploadId)
       if (!upload || upload.owner !== owner || upload.nodeId !== nodeId || upload.chunks.length !== upload.total) throw backupError('Incomplete or expired backup upload')
       remove(uploadId)
-      return JSON.parse(Buffer.concat(upload.chunks).toString('utf8'))
+      return Buffer.concat(upload.chunks)
+    },
+    take (request) {
+      return JSON.parse(this.takeBuffer(request).toString('utf8'))
     }
   }
 }

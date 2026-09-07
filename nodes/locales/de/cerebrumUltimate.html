@@ -12,10 +12,7 @@ Der Editor verwendet zwei horizontale Registerkarten: **KI-Assistent** enthält 
 
 Jede an den Ausgängen 3 und 4 ausgegebene Nachricht enthält außerdem eine Kopie der ursprünglichen Eingangsnachricht in `msg.inputMessage`. Dadurch bleiben der ursprüngliche Payload, das Topic, die Chat-Metadaten und alle weiteren Eingangseigenschaften für nachfolgende Nodes verfügbar. Fehler beim Klonen oder Ausgeben werden abgefangen und gemeldet, statt in die Node-RED-Laufzeit zu gelangen.
 
-### Setup Doctor und sicherer erster Start
-Der automatische **Setup Doctor** prüft das ausgewählte Gateway und den ETS-Import, die KI-Aktivierung, Anbieter, Modell und API-Schlüssel, die Erreichbarkeit des Anbieters, die Flow-Verdrahtung, erkannte Kameras und die optionale TTS-Ultimate-Verbindung. Sein kostenloser Anbieter-Preflight ruft ausschließlich den Endpunkt für die Modellliste auf: Er sendet keine Chat-Anfrage und verbraucht keine Inferenz-Tokens. Kameras und TTS sind optional; ihre Nichtverwendung verringert daher nicht die Kernbereitschaft.
-
-Das Inventar meldet die exakte Anzahl eindeutiger KNX-Gruppenadress-Signale, die ETS-Bereiche/-Gruppen und eine geschätzte Anzahl logischer Funktionen. Eine Anzahl physischer Geräte wird bewusst nicht angegeben, da sie aus dem ETS-CSV nicht zuverlässig abgeleitet werden kann. Der Setup Doctor liest den zuletzt deployten Flow; Änderungen an Anbieter, Modell, Preset, Gateway oder Verdrahtung daher zuerst deployen und erst anschließend mit **Aktualisieren** erneut prüfen.
+### Sicherer erster Start
 
 Sende `/start` oder `/help` in einem Chat, um am Chat-Ausgang (Ausgang 3) eine deterministische, lokalisierte Begrüßung mit personalisierten Anlagenstatistiken und bis zu drei sicheren Vorschlägen zu erhalten. Dieses Onboarding ruft weder das LLM auf noch liest oder schreibt es KNX oder erzeugt TTS. Mit dem Telegram-Preset erscheinen die Vorschläge als Antworttastatur und werden erst ausgeführt, nachdem der Benutzer einen davon ausdrücklich auswählt oder sendet. Nach dieser ausdrücklichen Auswahl darf ein Startvorschlag bei Bedarf exakte KNX-Leseoperationen ausführen; KNX-Schreiboperationen und -Routinen, Kameraaktionen, TTS, Änderungen am dauerhaften Gedächtnis und das Lernen von GA-Rollen bleiben unterdrückt.
 

@@ -1,25 +1,33 @@
 :root {
-  color-scheme: light;
-  --bg: #f4f4f4;
-  --panel: #ffffff;
-  --panel-soft: #efefef;
-  --text: #333333;
-  --muted: #666666;
-  --line: rgba(0, 0, 0, 0.125);
-  --accent: #ff9800;
-  --accent-soft: #fff3e0;
-  --ok-bg: #edf9ef;
-  --ok-border: #5bbf73;
-  --err-bg: #ffe9ea;
-  --err-border: #d95b63;
-  --warn-bg: #fff5e3;
-  --warn-border: #d99a34;
-  --card-radius: 4px;
-  --shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  color-scheme: dark;
+  --bg: #080f1d;
+  --panel: #101c2e;
+  --panel-soft: #152238;
+  --panel-hover: #1b2d44;
+  --panel-gradient: linear-gradient(145deg, #15243b, #101c2e 75%);
+  --text: #edf4ff;
+  --muted: #b0c0d8;
+  --muted-text: var(--muted);
+  --line: #2b3c54;
+  --accent: #8fdcff;
+  --accent-soft: #192f46;
+  --violet: #bdadff;
+  --ok: #77e3cb;
+  --ok-bg: #142f31;
+  --ok-border: #3f8f80;
+  --err: #ffabb7;
+  --err-bg: #352333;
+  --err-border: #a95b70;
+  --warn: #ffc782;
+  --warn-bg: #312b29;
+  --warn-border: #937451;
+  --soft-radius: 10px;
+  --card-radius: 18px;
+  --shadow: 0 12px 36px #02071333;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
-* {
+*, *::before, *::after {
   box-sizing: border-box;
 }
 
@@ -31,8 +39,9 @@ body,
 }
 
 body {
-  background: #f4f4f4;
+  background: radial-gradient(ellipse at 75% 0%, #17294366, transparent 55%), var(--bg);
   color: var(--text);
+  line-height: 1.5;
 }
 
 button,
@@ -44,4 +53,16 @@ textarea {
 
 a {
   color: inherit;
+}
+
+button:not(:disabled), summary, select:not(:disabled) { cursor: pointer; }
+button, input, select, textarea, summary, a { -webkit-tap-highlight-color: transparent; }
+input, select, textarea { color-scheme: dark; accent-color: var(--accent); }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: .8; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+::selection { background: #8fdcff40; color: #fff; }
+* { scrollbar-width: thin; scrollbar-color: #3b506b transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }

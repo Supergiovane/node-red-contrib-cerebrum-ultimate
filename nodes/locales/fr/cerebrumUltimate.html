@@ -12,10 +12,7 @@ L'éditeur utilise deux onglets horizontaux : **Assistant IA** contient la confi
 
 Chaque message émis par les sorties 3 et 4 contient également une copie du message d'entrée original dans `msg.inputMessage`. Le payload, le topic, les métadonnées du chat et toutes les autres propriétés d'entrée restent ainsi disponibles pour les nœuds suivants. Les erreurs de clonage ou d'envoi sont interceptées et signalées sans se propager au runtime Node-RED.
 
-### Setup Doctor et premier démarrage sûr
-Le **Setup Doctor** automatique vérifie le gateway sélectionné et l'import ETS, l'activation de l'IA, le fournisseur, le modèle et la clé API, l'accessibilité du fournisseur, le câblage du flow, les caméras détectées et la connexion TTS Ultimate optionnelle. Son précontrôle gratuit du fournisseur appelle uniquement l'endpoint qui répertorie les modèles : il n'envoie jamais de requête de chat et ne consomme aucun token d'inférence. Les caméras et TTS sont optionnels ; ne pas les utiliser ne réduit donc pas l'état de préparation principal.
-
-L'inventaire indique le nombre exact de signaux KNX à adresse de groupe unique, les zones/groupes ETS et une estimation des fonctions logiques. Il n'annonce volontairement aucun nombre d'appareils physiques, car celui-ci ne peut pas être déduit de façon fiable du CSV ETS. Le Setup Doctor lit le dernier flow déployé : déployez donc toute modification du fournisseur, du modèle, du préréglage, du gateway ou du câblage avant de cliquer sur **Actualiser** pour relancer les contrôles.
+### Premier démarrage sûr
 
 Envoyez `/start` ou `/help` depuis un chat pour recevoir sur la sortie chat (sortie 3) un accueil déterministe et localisé, avec des statistiques personnalisées de l'installation et jusqu'à trois suggestions sûres. Cet onboarding n'appelle pas le LLM, ne lit ni n'écrit KNX et ne génère aucun TTS. Avec le préréglage Telegram, les suggestions apparaissent sous forme de boutons du clavier de réponse et ne sont exécutées qu'après la sélection ou l'envoi explicite de l'une d'elles par l'utilisateur. Après cette sélection explicite, une suggestion de démarrage peut effectuer des lectures KNX exactes si nécessaire ; les écritures et routines KNX, les actions de caméra, le TTS, les modifications de la mémoire persistante et l'apprentissage des rôles GA restent bloqués.
 

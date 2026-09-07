@@ -4,7 +4,6 @@
     "sections": {
       "groupAssistant": "AI 助手",
       "groupChatHome": "Cerebrum (BETA)",
-      "setupDoctor": "Setup Doctor",
       "webIntelligence": "Web 智能",
       "detectedAdapters": "已检测到的兼容节点",
       "chatContextOverview": "Cerebrum 上下文概览",
@@ -81,15 +80,6 @@
       }
     },
     "messages": {
-      "setupDoctorLoading": "正在分析此安装…",
-      "setupDoctorUnavailable": "Setup Doctor 暂时不可用。",
-      "setupDoctorPromptsTitle": "试用你的安装",
-      "setupDoctorPromptsHint": "每条建议都会使用个性化且安全的问题打开 Web 助手。不会自动执行任何操作。",
-      "setupDoctorDeployHint": "Setup Doctor 读取最近一次部署的流程。请先部署编辑器更改，再重新检查。",
-      "setupDoctorPass": "正常",
-      "setupDoctorWarn": "检查",
-      "setupDoctorFail": "修复",
-      "setupDoctorInfo": "可选",
       "webAccessHint": "模型会根据每个明确的 Cerebrum 请求或计划请求，以语义方式选择这个通用 Web 工具。如果关键范围不明确，它会先向用户询问再搜索；不使用后台轮询、关键词或意图分类器。外部网站和搜索服务会收到查询及本服务器的公网 IP；私有 KNX、摄像头、对话、记忆和凭据数据绝不会被自动加入。",
       "webBudgetHint": "滚动预算统计对话和用户创建的计划任务产生的真实外部调用。",
       "runtimeCodeHint": "高级且存在潜在危险。这不是安全沙箱：生成的同步 JavaScript 可直接访问 node 和 RED，其结果会发送给所选模型提供商。仅在信任该模型及其指令时启用。",
@@ -226,7 +216,6 @@
       }
     },
     "buttons": {
-      "refreshSetupDoctor": "重新检查",
       "installOllamaModel": "2) Install it",
       "ollamaLibrary": "Model library",
       "downloadOllamaModel": "1) Download model",

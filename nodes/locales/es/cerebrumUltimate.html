@@ -12,10 +12,7 @@ El editor utiliza dos pestañas horizontales: **Asistente IA** contiene configur
 
 Cada mensaje emitido por las salidas 3 y 4 también contiene una copia del mensaje de entrada original en `msg.inputMessage`. Así, el payload, el topic, los metadatos del chat y cualquier otra propiedad de entrada permanecen disponibles para los nodos posteriores. Los errores de clonación o envío se interceptan y notifican sin propagarse al runtime de Node-RED.
 
-### Setup Doctor y primer inicio seguro
-El **Setup Doctor** automático comprueba el gateway seleccionado y la importación ETS, la activación de IA, el proveedor, el modelo y la clave API, la conectividad con el proveedor, el cableado del flow, las cámaras detectadas y la conexión TTS Ultimate opcional. Su comprobación previa gratuita del proveedor solo llama al endpoint que enumera los modelos: nunca envía una solicitud de chat ni consume tokens de inferencia. Las cámaras y TTS son opcionales, por lo que no utilizarlos no reduce la preparación básica.
-
-El inventario muestra el número exacto de señales KNX con dirección de grupo única, las áreas/grupos ETS y una estimación de las funciones lógicas. Deliberadamente no indica un número de dispositivos físicos, porque no puede obtenerse de forma fiable del CSV ETS. Setup Doctor lee el último flow desplegado: despliega cualquier cambio de proveedor, modelo, preajuste, gateway o cableado antes de pulsar **Actualizar** para repetir las comprobaciones.
+### Primer inicio seguro
 
 Envía `/start` o `/help` desde un chat para recibir en la salida de chat (salida 3) una bienvenida determinista y localizada, con estadísticas personalizadas de la instalación y hasta tres sugerencias seguras. Este onboarding no llama al LLM, no lee ni escribe KNX y no genera TTS. Con el preajuste de Telegram, las sugerencias aparecen como botones del teclado de respuesta y solo se ejecutan cuando el usuario selecciona o envía una de ellas de forma explícita. Tras esa selección explícita, una sugerencia inicial puede realizar lecturas KNX exactas cuando sean necesarias; las escrituras y rutinas KNX, las acciones de cámara, TTS, los cambios de memoria persistente y el aprendizaje de roles GA permanecen bloqueados.
 

@@ -21,7 +21,8 @@ const { parseCerebrumHomeMemoryMarkdownStrict } = require('../nodes/utils/homeMe
 const {
   buildCerebrumCompatibleNodeSummary,
   buildCerebrumPackageNodeCatalog,
-  buildCerebrumSetupDoctorSnapshot,
+  buildCerebrumFirstRunExperience,
+  isCerebrumSafeFirstRunPrompt,
   buildCerebrumStateRefreshMessage,
   buildCerebrumUniversalMessage,
   isCerebrumCameraProviderSelected,
@@ -38,22 +39,28 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(manifest.dependencies).not.to.have.property('node-red-contrib-knx-ultimate')
   })
 
-  it('keeps KNX and ETS optional in Setup Doctor', () => {
-    const doctor = buildCerebrumSetupDoctorSnapshot({
-      gateway: { configured: false },
-      llm: {
-        enabled: true,
-        provider: 'ollama',
-        baseUrl: 'http://localhost:11434/api/chat',
-        model: 'local'
-      },
-      providerProbe: { state: 'reachable', modelCount: 1 }
-    })
-    const gateway = doctor.checks.find(check => check.id === 'gateway')
-    const ets = doctor.checks.find(check => check.id === 'ets')
-    expect(gateway).to.include({ status: 'info', blocking: false, weight: 0 })
-    expect(ets).to.include({ status: 'info', blocking: false, weight: 0 })
-    expect(doctor.status).not.to.equal('blocked')
+  it('keeps localized chat onboarding and read-only suggestions available', () => {
+    for (const language of ['en', 'it', 'de', 'fr', 'es', 'zh']) {
+      const experience = buildCerebrumFirstRunExperience({
+        language,
+        assistantEnabled: false,
+        catalog: [
+          { ga: '1/1/1', dpt: '1.001', label: 'Kitchen light', semantic: { kind: 'light' } },
+          { ga: '1/1/1', dpt: '1.001', label: 'Kitchen light', semantic: { kind: 'light' } }
+        ]
+      })
+      expect(experience.totals.groupAddresses).to.equal(1)
+      expect(experience.totals.physicalDevices).to.equal(null)
+      expect(experience.welcome).to.be.a('string').and.not.equal('')
+      expect(experience.prompts).to.have.length(3)
+      for (const prompt of experience.prompts) {
+        expect(prompt).to.include({ autoExecute: false, safe: true })
+        expect(isCerebrumSafeFirstRunPrompt(prompt.text)).to.equal(true)
+      }
+    }
+    const withoutKnx = buildCerebrumFirstRunExperience({ language: 'it' })
+    expect(withoutKnx.totals.groupAddresses).to.equal(0)
+    expect(withoutKnx.welcome).to.include('altre integrazioni Node-RED')
   })
 
   it('normalizes persisted ETS access as a selected/read-only ACL', () => {
@@ -172,6 +179,7 @@ describe('Cerebrum Ultimate standalone package', () => {
 
   it('provides an independent operation-status filter and color for every audit outcome', () => {
     const dashboard = fs.readFileSync(path.join(packageRoot, 'ui', 'cerebrumUltimate-vue', 'src', 'App.vue'), 'utf8')
+    const styles = fs.readFileSync(path.join(packageRoot, 'ui', 'cerebrumUltimate-vue', 'src', 'styles', 'workspace.css'), 'utf8')
     expect(dashboard).to.include('v-model="state.cerebrumOperationsStatusFilter"')
     expect(dashboard).to.include('<option value="all">All statuses</option>')
     ;[
@@ -187,7 +195,7 @@ describe('Cerebrum Ultimate standalone package', () => {
       'rejected',
       'cancelled',
       'expired'
-    ].forEach(status => expect(dashboard).to.include(`.operation-status-${status} {`))
+    ].forEach(status => expect(styles).to.include(`.operation-status-${status} {`))
   })
 
   it('opens the web dashboard through the Home Assistant ingress prefix', () => {

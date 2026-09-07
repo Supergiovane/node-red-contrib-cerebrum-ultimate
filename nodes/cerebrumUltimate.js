@@ -12,6 +12,7 @@ const path = require('path')
 const crypto = require('crypto')
 const unreadableCerebrumFiles = new Set()
 const { MAX_BACKUP_BYTES, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads } = require('./utils/cerebrumBackup')
+const { createBackupZip, decodeBackupUpload } = require('./utils/cerebrumBackupZip')
 const { spawn } = require('child_process')
 const simpleGet = require('simple-get')
 const CEREBRUM_CHAT_ADAPTER_MAPPINGS = require('../resources/CerebrumChatAdapterMappings')
@@ -651,8 +652,6 @@ const summarizeCerebrumChatContext = ({ node, nodeId, redUserDir } = {}) => {
   }
 }
 
-const CEREBRUM_SETUP_DOCTOR_VERSION = 2
-
 const summarizeCerebrumFlowWiring = ({ nodeId, wires, flowNodes } = {}) => {
   const targetMap = new Map()
   ;(Array.isArray(flowNodes) ? flowNodes : []).forEach(item => {
@@ -711,30 +710,9 @@ const estimateCerebrumLogicalFunctions = (catalog) => {
   return keys.size
 }
 
-const getCerebrumSetupDoctorCopy = (language) => {
+const getCerebrumFirstRunCopy = (language) => {
   const copies = {
     en: {
-      status: { ready: 'Ready', attention: 'Almost ready', blocked: 'Action needed' },
-      checks: {
-        gateway: ['KNX integration', details => !details.configured ? 'Optional: install KNX Ultimate and select a gateway only when Cerebrum must use KNX.' : details.connected ? `Connected to ${details.name || 'the configured gateway'}.` : `${details.name || 'The configured gateway'} is not connected yet.`],
-        ets: ['KNX / ETS catalog', details => details.objectCount > 0 ? `${details.objectCount} unique group addresses and ${details.areaCount} ETS areas/groups recognized.` : 'No ETS group address is available. This is expected when the optional KNX integration is not configured.'],
-        assistant: ['AI assistant', details => details.enabled ? 'The assistant is enabled.' : 'Enable the LLM assistant to start conversations.'],
-        provider: ['Provider and model', details => details.ready ? `${details.providerLabel} · ${details.model}` : `Complete the missing provider settings: ${details.missing.join(', ')}.`],
-        providerConnection: ['Provider connection', details => details.state === 'reachable' ? details.selectedModelAvailable === false ? `Provider reached, but the selected model “${details.model}” is not in its reported catalog.` : `Provider reached successfully${details.modelCount > 0 ? `; ${details.modelCount} model(s) reported` : ''}.` : details.state === 'checking' ? 'Checking the provider without sending a chat request…' : details.state === 'unreachable' ? 'The configuration is saved, but the provider model endpoint did not answer. Use Refresh models to retry.' : 'The connectivity check will run after the provider is configured.'],
-        chat: ['Chat channel', details => details.preset === 'none' ? 'No external chat preset selected; the Web Assistant remains available.' : details.ready ? `${details.presetLabel} receiver and sender are connected in both directions.` : details.wired ? 'Connections exist, but the expected receiver and sender types could not be verified. Check any intermediate routing.' : 'The chat preset is selected, but it needs an incoming connection and output 3 connected to its sender.'],
-        commands: ['KNX command output', details => !details.enabled ? 'Actuator control is disabled: the assistant remains read-only.' : details.verified ? 'Output 4 is connected to a KNX Ultimate node; local validation and confirmation remain active.' : details.connected ? 'Output 4 is wired, but its target is not directly recognized as KNX Ultimate. Check any intermediate routing.' : 'Actuator control is enabled, but output 4 is not connected.'],
-        tts: ['TTS Ultimate output', details => details.connected ? `Output 5 has ${details.connectionCount} connection(s).` : 'Optional: connect output 5 to TTS Ultimate when spoken home announcements are wanted.'],
-        voice: ['Telegram voice', details => !details.applicable ? 'Voice is evaluated automatically when the Telegram preset is used.' : details.ready ? 'Configured through the selected OpenAI-compatible provider; audio support is verified on the first voice request.' : 'Telegram voice requires the OpenAI-compatible provider; text chat remains available.'],
-        cameras: ['Camera adapters', details => details.cameraCount > 0 ? `${details.cameraCount} camera(s) available through ${details.adapterCount} detected adapter(s).` : details.adapterCount > 0 ? `${details.adapterCount} camera adapter(s) detected, but no ready camera is registered.` : 'No camera adapter detected; this integration is optional.'],
-        webAccess: ['Web access', details => details.enabled ? `The general Web tool is enabled with a budget of ${details.budget} outbound calls per hour.` : 'Web access is off; no external request can be made.'],
-        cerebrumDiscovery: ['Cerebrum discovery', details => `${details.flowNodeCount} flow nodes inspected; ${details.logicNodeCount} logic nodes and ${details.toolCount} useful capabilities discovered across KNX, HUE, Matter and Node-RED.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Ready: Cerebrum output 6 and ha-api are wired in a complete request/response round trip.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED is running as a Home Assistant add-on, but no API node (ha-api) is deployed. Add it to the flow.' : details.recommendationCode === 'wire_round_trip' ? 'Wire Cerebrum output 6 → ha-api → Cerebrum input.' : 'Home Assistant was not detected; this integration is optional.']
-      },
-      summary: (status, totals, issueCount) => status === 'ready'
-        ? `Ready: ${totals.groupAddresses} KNX signals, ${totals.etsAreas} ETS areas/groups and about ${totals.logicalFunctionsEstimate} recognizable logical functions.`
-        : status === 'attention'
-          ? `Almost ready: I recognized ${totals.groupAddresses} KNX signals; ${issueCount} item(s) deserve attention.`
-          : `I recognized ${totals.groupAddresses} KNX signals, but ${issueCount} required item(s) must be completed.`,
       prompts: {
         area: name => `Read-only: what do you know about “${name}”?`,
         inventory: 'What did you recognize in my KNX system? Read-only.',
@@ -745,31 +723,10 @@ const getCerebrumSetupDoctorCopy = (language) => {
         setup: 'What is missing from my Cerebrum setup?'
       },
       welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0
-        ? `Hello${name ? ` ${name}` : ''}! I have already oriented myself in your ETS project without sending anything to the bus. I found ${totals.groupAddresses} unique group addresses, ${totals.etsAreas} ETS areas/groups and about ${totals.logicalFunctionsEstimate} recognizable logical functions. These are ETS signals, not a count of physical devices.${assistantEnabled ? '' : '\n\nThe AI assistant is not enabled yet; Setup Doctor shows what remains to configure.'}\n\nYou can start safely with:\n${prompts.map(item => `• ${item.text}`).join('\n')}`
+        ? `Hello${name ? ` ${name}` : ''}! I have already oriented myself in your ETS project without sending anything to the bus. I found ${totals.groupAddresses} unique group addresses, ${totals.etsAreas} ETS areas/groups and about ${totals.logicalFunctionsEstimate} recognizable logical functions. These are ETS signals, not a count of physical devices.${assistantEnabled ? '' : '\n\nEnable the AI assistant in the node configuration to start chatting.'}\n\nYou can start safely with:\n${prompts.map(item => `• ${item.text}`).join('\n')}`
         : `Hello${name ? ` ${name}` : ''}! Cerebrum is ready. No KNX/ETS catalog is connected, so I will learn from the other available Node-RED integrations.${assistantEnabled ? '' : ' Enable the AI assistant when you want to start chatting.'}`
     },
     it: {
-      status: { ready: 'Pronto', attention: 'Quasi pronto', blocked: 'Serve un intervento' },
-      checks: {
-        gateway: ['Integrazione KNX', details => !details.configured ? 'Opzionale: installa KNX Ultimate e seleziona un gateway solo se Cerebrum deve usare KNX.' : details.connected ? `Connesso a ${details.name || 'gateway configurato'}.` : `${details.name || 'Il gateway configurato'} non è ancora connesso.`],
-        ets: ['Catalogo KNX / ETS', details => details.objectCount > 0 ? `Riconosciuti ${details.objectCount} indirizzi di gruppo univoci e ${details.areaCount} aree/gruppi ETS.` : 'Nessun indirizzo ETS disponibile. È normale quando l’integrazione KNX opzionale non è configurata.'],
-        assistant: ['Assistente AI', details => details.enabled ? 'L’assistente è abilitato.' : 'Abilita l’assistente LLM per iniziare le conversazioni.'],
-        provider: ['Provider e modello', details => details.ready ? `${details.providerLabel} · ${details.model}` : `Completa le impostazioni mancanti: ${details.missing.join(', ')}.`],
-        providerConnection: ['Connessione provider', details => details.state === 'reachable' ? details.selectedModelAvailable === false ? `Provider raggiunto, ma il modello selezionato “${details.model}” non compare nel catalogo disponibile.` : `Provider raggiunto correttamente${details.modelCount > 0 ? `; disponibili ${details.modelCount} modelli` : ''}.` : details.state === 'checking' ? 'Controllo il provider senza inviare richieste chat…' : details.state === 'unreachable' ? 'La configurazione è salvata, ma l’endpoint dei modelli non ha risposto. Usa Aggiorna modelli per riprovare.' : 'Il controllo di connettività partirà dopo aver configurato il provider.'],
-        chat: ['Canale chat', details => details.preset === 'none' ? 'Nessun preset chat esterno selezionato; l’Assistant Web resta disponibile.' : details.ready ? `Receiver e sender ${details.presetLabel} sono collegati in entrambe le direzioni.` : details.wired ? 'I collegamenti esistono, ma non riconosco direttamente i tipi receiver e sender attesi. Controlla l’eventuale instradamento intermedio.' : 'Il preset chat è selezionato, ma servono un collegamento in ingresso e l’uscita 3 collegata al sender.'],
-        commands: ['Uscita comandi KNX', details => !details.enabled ? 'Il controllo attuatori è disabilitato: l’assistente resta in sola lettura.' : details.verified ? 'L’uscita 4 è collegata a un nodo KNX Ultimate; validazione locale e conferma restano attive.' : details.connected ? 'L’uscita 4 è collegata, ma il target non è riconosciuto direttamente come KNX Ultimate. Controlla l’eventuale instradamento intermedio.' : 'Il controllo attuatori è abilitato, ma l’uscita 4 non è collegata.'],
-        tts: ['Uscita TTS Ultimate', details => details.connected ? `L’uscita 5 ha ${details.connectionCount} collegamenti.` : 'Opzionale: collega l’uscita 5 a TTS Ultimate per gli annunci vocali in casa.'],
-        voice: ['Voce Telegram', details => !details.applicable ? 'La voce viene valutata automaticamente quando si usa il preset Telegram.' : details.ready ? 'Configurata tramite il provider OpenAI-compatible selezionato; il supporto audio viene verificato al primo vocale.' : 'I vocali Telegram richiedono il provider OpenAI-compatible; la chat testuale resta disponibile.'],
-        cameras: ['Adattatori telecamera', details => details.cameraCount > 0 ? `${details.cameraCount} telecamere disponibili tramite ${details.adapterCount} adattatori rilevati.` : details.adapterCount > 0 ? `Rilevati ${details.adapterCount} adattatori telecamera, ma nessuna telecamera pronta.` : 'Nessun adattatore telecamera rilevato; l’integrazione è opzionale.'],
-        webAccess: ['Accesso Web', details => details.enabled ? `Il tool Web generale è abilitato con un budget di ${details.budget} chiamate esterne all’ora.` : 'Accesso Web disattivato: non verrà eseguita alcuna richiesta esterna.'],
-        cerebrumDiscovery: ['Discovery Cerebrum', details => `Analizzati ${details.flowNodeCount} nodi del flow; riconosciuti ${details.logicNodeCount} nodi logici e ${details.toolCount} strumenti utili fra KNX, HUE, Matter e Node-RED.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Pronto: l’uscita 6 di Cerebrum e ha-api sono collegati con un percorso completo richiesta/risposta.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED gira come add-on Home Assistant, ma nel flow non c’è un nodo API (ha-api). Aggiungilo.' : details.recommendationCode === 'wire_round_trip' ? 'Collega uscita 6 Cerebrum → ha-api → ingresso Cerebrum.' : 'Home Assistant non è stato rilevato; l’integrazione è opzionale.']
-      },
-      summary: (status, totals, issueCount) => status === 'ready'
-        ? `Pronto: ${totals.groupAddresses} segnali KNX, ${totals.etsAreas} aree/gruppi ETS e circa ${totals.logicalFunctionsEstimate} funzioni logiche riconoscibili.`
-        : status === 'attention'
-          ? `Quasi pronto: ho riconosciuto ${totals.groupAddresses} segnali KNX; ${issueCount} elementi richiedono attenzione.`
-          : `Ho riconosciuto ${totals.groupAddresses} segnali KNX, ma occorre completare ${issueCount} elementi necessari.`,
       prompts: {
         area: name => `Solo lettura: cosa conosci di “${name}”?`,
         inventory: 'Cosa hai riconosciuto nel mio impianto KNX? Solo lettura.',
@@ -780,92 +737,24 @@ const getCerebrumSetupDoctorCopy = (language) => {
         setup: 'Cosa manca nella configurazione Cerebrum?'
       },
       welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0
-        ? `Ciao${name ? ` ${name}` : ''}! Mi sono già orientato nel progetto ETS senza inviare nulla sul bus. Ho trovato ${totals.groupAddresses} indirizzi di gruppo univoci, ${totals.etsAreas} aree/gruppi ETS e circa ${totals.logicalFunctionsEstimate} funzioni logiche riconoscibili. Sono segnali ETS, non un conteggio dei dispositivi fisici.${assistantEnabled ? '' : '\n\nL’assistente AI non è ancora abilitato; Setup Doctor mostra cosa resta da configurare.'}\n\nPuoi iniziare in sicurezza con:\n${prompts.map(item => `• ${item.text}`).join('\n')}`
+        ? `Ciao${name ? ` ${name}` : ''}! Mi sono già orientato nel progetto ETS senza inviare nulla sul bus. Ho trovato ${totals.groupAddresses} indirizzi di gruppo univoci, ${totals.etsAreas} aree/gruppi ETS e circa ${totals.logicalFunctionsEstimate} funzioni logiche riconoscibili. Sono segnali ETS, non un conteggio dei dispositivi fisici.${assistantEnabled ? '' : '\n\nAbilita l’assistente AI nella configurazione del nodo per iniziare a chattare.'}\n\nPuoi iniziare in sicurezza con:\n${prompts.map(item => `• ${item.text}`).join('\n')}`
         : `Ciao${name ? ` ${name}` : ''}! Cerebrum è pronto. Non è collegato alcun catalogo KNX/ETS, quindi imparerò dalle altre integrazioni Node-RED disponibili.${assistantEnabled ? '' : ' Abilita l’assistente AI quando vorrai iniziare a chattare.'}`
     },
     de: {
-      status: { ready: 'Bereit', attention: 'Fast bereit', blocked: 'Aktion erforderlich' },
-      checks: {
-        gateway: ['KNX-Gateway', details => !details.configured ? 'Wählen Sie ein KNX-Ultimate-Gateway und führen Sie Deploy aus.' : details.connected ? `Mit ${details.name || 'dem konfigurierten Gateway'} verbunden.` : `${details.name || 'Das konfigurierte Gateway'} ist noch nicht verbunden.`],
-        ets: ['ETS-Projekt', details => details.objectCount > 0 ? `${details.objectCount} eindeutige Gruppenadressen und ${details.areaCount} ETS-Bereiche/-Gruppen erkannt.` : 'Für Cerebrum ist keine ETS-Gruppenadresse verfügbar. Konfigurieren Sie den Zugriff auf ETS-Objekte und prüfen Sie den ETS-CSV-Import.'],
-        assistant: ['KI-Assistent', details => details.enabled ? 'Der Assistent ist aktiviert.' : 'Aktivieren Sie den LLM-Assistenten, um Unterhaltungen zu starten.'],
-        provider: ['Provider und Modell', details => details.ready ? `${details.providerLabel} · ${details.model}` : `Vervollständigen Sie: ${details.missing.join(', ')}.`],
-        providerConnection: ['Provider-Verbindung', details => details.state === 'reachable' ? details.selectedModelAvailable === false ? `Provider erreichbar, aber das ausgewählte Modell „${details.model}“ fehlt im gemeldeten Katalog.` : `Provider erfolgreich erreicht${details.modelCount > 0 ? `; ${details.modelCount} Modell(e) gemeldet` : ''}.` : details.state === 'checking' ? 'Provider-Prüfung ohne Chat-Anfrage…' : details.state === 'unreachable' ? 'Die Konfiguration ist gespeichert, aber der Modell-Endpunkt antwortete nicht. Aktualisieren Sie die Modellliste erneut.' : 'Die Verbindungsprüfung startet nach der Provider-Konfiguration.'],
-        chat: ['Chat-Kanal', details => details.preset === 'none' ? 'Kein externer Chat-Preset gewählt; der Web-Assistent bleibt verfügbar.' : details.ready ? `Receiver und Sender von ${details.presetLabel} sind in beide Richtungen verbunden.` : details.wired ? 'Verbindungen sind vorhanden, aber die erwarteten Receiver-/Sender-Typen wurden nicht direkt erkannt. Prüfen Sie die Zwischenweiterleitung.' : 'Der Chat-Preset benötigt eine Eingangsverbindung und Ausgang 3 zum Sender.'],
-        commands: ['KNX-Befehlsausgang', details => !details.enabled ? 'Aktorsteuerung ist deaktiviert; der Assistent bleibt schreibgeschützt.' : details.verified ? 'Ausgang 4 ist mit einem KNX-Ultimate-Knoten verbunden; lokale Validierung und Bestätigung bleiben aktiv.' : details.connected ? 'Ausgang 4 ist verbunden, das Ziel wurde aber nicht direkt als KNX Ultimate erkannt. Prüfen Sie die Zwischenweiterleitung.' : 'Aktorsteuerung ist aktiviert, aber Ausgang 4 ist nicht verbunden.'],
-        tts: ['TTS-Ultimate-Ausgang', details => details.connected ? `Ausgang 5 hat ${details.connectionCount} Verbindung(en).` : 'Optional: Verbinden Sie Ausgang 5 für Hausdurchsagen mit TTS Ultimate.'],
-        voice: ['Telegram-Sprache', details => !details.applicable ? 'Sprache wird automatisch geprüft, wenn der Telegram-Preset verwendet wird.' : details.ready ? 'Über den gewählten OpenAI-kompatiblen Provider konfiguriert; Audio wird bei der ersten Sprachnachricht geprüft.' : 'Telegram-Sprache benötigt den OpenAI-kompatiblen Provider; Textchat bleibt verfügbar.'],
-        cameras: ['Kameraadapter', details => details.cameraCount > 0 ? `${details.cameraCount} Kamera(s) über ${details.adapterCount} erkannte Adapter verfügbar.` : details.adapterCount > 0 ? `${details.adapterCount} Kameraadapter erkannt, aber keine Kamera bereit.` : 'Kein Kameraadapter erkannt; diese Integration ist optional.'],
-        webAccess: ['Webzugriff', details => details.enabled ? `Das allgemeine Web-Tool ist mit einem Budget von ${details.budget} externen Aufrufen pro Stunde aktiviert.` : 'Webzugriff ist deaktiviert; es kann keine externe Anfrage erfolgen.'],
-        cerebrumDiscovery: ['Cerebrum-Erkennung', details => `${details.flowNodeCount} Flow-Nodes geprüft; ${details.logicNodeCount} Logik-Nodes und ${details.toolCount} nützliche Fähigkeiten erkannt.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Bereit: Cerebrum-Ausgang 6 und ha-api sind als vollständiger Hin- und Rückweg verbunden.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED läuft als Home-Assistant-Add-on, aber ein API-Node (ha-api) fehlt im Flow.' : details.recommendationCode === 'wire_round_trip' ? 'Verbinden Sie Cerebrum-Ausgang 6 → ha-api → Cerebrum-Eingang.' : 'Home Assistant wurde nicht erkannt; die Integration ist optional.']
-      },
-      summary: (status, totals, issueCount) => status === 'ready' ? `Bereit: ${totals.groupAddresses} KNX-Signale, ${totals.etsAreas} ETS-Bereiche/-Gruppen und etwa ${totals.logicalFunctionsEstimate} erkennbare logische Funktionen.` : status === 'attention' ? `Fast bereit: ${totals.groupAddresses} KNX-Signale erkannt; ${issueCount} Punkt(e) brauchen Aufmerksamkeit.` : `${totals.groupAddresses} KNX-Signale erkannt, aber ${issueCount} erforderliche Punkt(e) fehlen.`,
       prompts: { area: name => `Nur lesen: Was wissen Sie über „${name}“?`, inventory: 'Was erkennen Sie in meiner KNX-Anlage? Nur lesen.', lights: 'Welche Leuchten können Sie jetzt lesen? Nichts ändern.', openings: 'Welche Türen oder Fenster sind offen? Nur lesen.', climate: 'Welche Temperaturen und Klimazustände lesen Sie jetzt?', anomalies: 'Gibt es KNX-Anomalien? Keine Befehle ausführen.', setup: 'Was fehlt in meiner Cerebrum-Konfiguration?' },
-      welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0 ? `Hallo${name ? ` ${name}` : ''}! Ich habe mich bereits im ETS-Projekt orientiert, ohne etwas auf den Bus zu senden. Gefunden: ${totals.groupAddresses} eindeutige Gruppenadressen, ${totals.etsAreas} ETS-Bereiche/-Gruppen und etwa ${totals.logicalFunctionsEstimate} erkennbare logische Funktionen. Das sind ETS-Signale, keine Anzahl physischer Geräte.${assistantEnabled ? '' : '\n\nDer KI-Assistent ist noch nicht aktiviert; Setup Doctor zeigt die fehlenden Schritte.'}\n\nSicher starten mit:\n${prompts.map(item => `• ${item.text}`).join('\n')}` : `Hallo${name ? ` ${name}` : ''}! Für Cerebrum ist noch keine ETS-Gruppenadresse ausgewählt. Konfigurieren Sie den Zugriff auf ETS-Objekte, prüfen Sie den CSV-Import und öffnen Sie Setup Doctor erneut.`
+      welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0 ? `Hallo${name ? ` ${name}` : ''}! Ich habe mich bereits im ETS-Projekt orientiert, ohne etwas auf den Bus zu senden. Gefunden: ${totals.groupAddresses} eindeutige Gruppenadressen, ${totals.etsAreas} ETS-Bereiche/-Gruppen und etwa ${totals.logicalFunctionsEstimate} erkennbare logische Funktionen. Das sind ETS-Signale, keine Anzahl physischer Geräte.${assistantEnabled ? '' : '\n\nAktivieren Sie den KI-Assistenten in der Knotenkonfiguration, um zu chatten.'}\n\nSicher starten mit:\n${prompts.map(item => `• ${item.text}`).join('\n')}` : `Hallo${name ? ` ${name}` : ''}! Für Cerebrum ist noch keine ETS-Gruppenadresse ausgewählt. Konfigurieren Sie den Zugriff auf ETS-Objekte und prüfen Sie den CSV-Import.`
     },
     fr: {
-      status: { ready: 'Prêt', attention: 'Presque prêt', blocked: 'Action requise' },
-      checks: {
-        gateway: ['Passerelle KNX', details => !details.configured ? 'Sélectionnez une passerelle KNX Ultimate puis déployez.' : details.connected ? `Connecté à ${details.name || 'la passerelle configurée'}.` : `${details.name || 'La passerelle configurée'} n’est pas encore connectée.`],
-        ets: ['Projet ETS', details => details.objectCount > 0 ? `${details.objectCount} adresses de groupe uniques et ${details.areaCount} zones/groupes ETS reconnus.` : 'Aucune adresse ETS n’est disponible pour Cerebrum. Configurez l’accès aux objets ETS et vérifiez l’import CSV dans la passerelle.'],
-        assistant: ['Assistant IA', details => details.enabled ? 'L’assistant est activé.' : 'Activez l’assistant LLM pour commencer les conversations.'],
-        provider: ['Fournisseur et modèle', details => details.ready ? `${details.providerLabel} · ${details.model}` : `Complétez les réglages manquants : ${details.missing.join(', ')}.`],
-        providerConnection: ['Connexion au fournisseur', details => details.state === 'reachable' ? details.selectedModelAvailable === false ? `Fournisseur joignable, mais le modèle sélectionné « ${details.model} » n’apparaît pas dans son catalogue.` : `Fournisseur joint avec succès${details.modelCount > 0 ? ` ; ${details.modelCount} modèle(s) signalé(s)` : ''}.` : details.state === 'checking' ? 'Vérification du fournisseur sans requête de chat…' : details.state === 'unreachable' ? 'La configuration est enregistrée, mais le point de terminaison des modèles ne répond pas. Actualisez les modèles pour réessayer.' : 'La vérification démarrera après la configuration du fournisseur.'],
-        chat: ['Canal de chat', details => details.preset === 'none' ? 'Aucun préréglage externe ; l’Assistant Web reste disponible.' : details.ready ? `Le receiver et le sender ${details.presetLabel} sont connectés dans les deux sens.` : details.wired ? 'Des connexions existent, mais les types de receiver et sender attendus ne sont pas directement reconnus. Vérifiez le routage intermédiaire.' : 'Le préréglage nécessite une connexion entrante et la sortie 3 reliée au sender.'],
-        commands: ['Sortie des commandes KNX', details => !details.enabled ? 'Le contrôle des actionneurs est désactivé : l’assistant reste en lecture seule.' : details.verified ? 'La sortie 4 est reliée à un nœud KNX Ultimate ; validation locale et confirmation restent actives.' : details.connected ? 'La sortie 4 est câblée, mais sa cible n’est pas directement reconnue comme KNX Ultimate. Vérifiez le routage intermédiaire.' : 'Le contrôle est activé, mais la sortie 4 n’est pas connectée.'],
-        tts: ['Sortie TTS Ultimate', details => details.connected ? `La sortie 5 possède ${details.connectionCount} connexion(s).` : 'Optionnel : reliez la sortie 5 à TTS Ultimate pour les annonces dans la maison.'],
-        voice: ['Voix Telegram', details => !details.applicable ? 'La voix est évaluée automatiquement avec le préréglage Telegram.' : details.ready ? 'Configurée via le fournisseur OpenAI-compatible sélectionné ; l’audio sera vérifié au premier vocal.' : 'La voix Telegram exige le fournisseur OpenAI-compatible ; le chat texte reste disponible.'],
-        cameras: ['Adaptateurs caméra', details => details.cameraCount > 0 ? `${details.cameraCount} caméra(s) disponibles via ${details.adapterCount} adaptateur(s).` : details.adapterCount > 0 ? `${details.adapterCount} adaptateur(s) détecté(s), mais aucune caméra prête.` : 'Aucun adaptateur caméra détecté ; cette intégration est optionnelle.'],
-        webAccess: ['Accès Web', details => details.enabled ? `L’outil Web général est activé avec un budget de ${details.budget} appels externes par heure.` : 'L’accès Web est désactivé ; aucune requête externe ne peut être effectuée.'],
-        cerebrumDiscovery: ['Découverte Cerebrum', details => `${details.flowNodeCount} nœuds du flow analysés ; ${details.logicNodeCount} nœuds logiques et ${details.toolCount} capacités utiles détectés.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Prêt : la sortie 6 de Cerebrum et ha-api sont reliés par une boucle requête/réponse complète.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED fonctionne comme add-on Home Assistant, mais aucun nœud API (ha-api) n’est déployé.' : details.recommendationCode === 'wire_round_trip' ? 'Reliez sortie 6 Cerebrum → ha-api → entrée Cerebrum.' : 'Home Assistant n’a pas été détecté ; cette intégration est optionnelle.']
-      },
-      summary: (status, totals, issueCount) => status === 'ready' ? `Prêt : ${totals.groupAddresses} signaux KNX, ${totals.etsAreas} zones/groupes ETS et environ ${totals.logicalFunctionsEstimate} fonctions logiques reconnaissables.` : status === 'attention' ? `Presque prêt : ${totals.groupAddresses} signaux KNX reconnus ; ${issueCount} point(s) demandent votre attention.` : `${totals.groupAddresses} signaux KNX reconnus, mais ${issueCount} point(s) requis restent à compléter.`,
       prompts: { area: name => `Lecture seule : que savez-vous de « ${name} » ?`, inventory: 'Qu’avez-vous reconnu dans mon installation KNX ? Lecture seule.', lights: 'Quelles lumières pouvez-vous lire ? Ne changez rien.', openings: 'Quelles portes ou fenêtres sont ouvertes ? Lecture seule.', climate: 'Quels états de température et de climat pouvez-vous lire ?', anomalies: 'Des anomalies KNX demandent-elles attention ? Lecture seule.', setup: 'Que manque-t-il à ma configuration Cerebrum ?' },
-      welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0 ? `Bonjour${name ? ` ${name}` : ''} ! Je me suis déjà orienté dans le projet ETS sans rien envoyer sur le bus. J’ai trouvé ${totals.groupAddresses} adresses de groupe uniques, ${totals.etsAreas} zones/groupes ETS et environ ${totals.logicalFunctionsEstimate} fonctions logiques reconnaissables. Ce sont des signaux ETS, pas un nombre d’appareils physiques.${assistantEnabled ? '' : '\n\nL’assistant IA n’est pas encore activé ; Setup Doctor indique ce qui manque.'}\n\nVous pouvez commencer sans risque avec :\n${prompts.map(item => `• ${item.text}`).join('\n')}` : `Bonjour${name ? ` ${name}` : ''} ! Aucune adresse ETS n’est encore sélectionnée pour Cerebrum. Configurez l’accès aux objets ETS, vérifiez l’import CSV puis rouvrez Setup Doctor.`
+      welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0 ? `Bonjour${name ? ` ${name}` : ''} ! Je me suis déjà orienté dans le projet ETS sans rien envoyer sur le bus. J’ai trouvé ${totals.groupAddresses} adresses de groupe uniques, ${totals.etsAreas} zones/groupes ETS et environ ${totals.logicalFunctionsEstimate} fonctions logiques reconnaissables. Ce sont des signaux ETS, pas un nombre d’appareils physiques.${assistantEnabled ? '' : '\n\nActivez l’assistant IA dans la configuration du nœud pour commencer à discuter.'}\n\nVous pouvez commencer sans risque avec :\n${prompts.map(item => `• ${item.text}`).join('\n')}` : `Bonjour${name ? ` ${name}` : ''} ! Aucune adresse ETS n’est encore sélectionnée pour Cerebrum. Configurez l’accès aux objets ETS et vérifiez l’import CSV.`
     },
     es: {
-      status: { ready: 'Listo', attention: 'Casi listo', blocked: 'Acción necesaria' },
-      checks: {
-        gateway: ['Gateway KNX', details => !details.configured ? 'Selecciona un gateway KNX Ultimate y vuelve a desplegar.' : details.connected ? `Conectado a ${details.name || 'el gateway configurado'}.` : `${details.name || 'El gateway configurado'} todavía no está conectado.`],
-        ets: ['Proyecto ETS', details => details.objectCount > 0 ? `${details.objectCount} direcciones de grupo únicas y ${details.areaCount} áreas/grupos ETS reconocidos.` : 'No hay direcciones ETS disponibles para Cerebrum. Configura el acceso a objetos ETS y verifica la importación CSV en la pasarela.'],
-        assistant: ['Asistente IA', details => details.enabled ? 'El asistente está habilitado.' : 'Habilita el asistente LLM para iniciar conversaciones.'],
-        provider: ['Proveedor y modelo', details => details.ready ? `${details.providerLabel} · ${details.model}` : `Completa los ajustes que faltan: ${details.missing.join(', ')}.`],
-        providerConnection: ['Conexión del proveedor', details => details.state === 'reachable' ? details.selectedModelAvailable === false ? `Proveedor accesible, pero el modelo seleccionado “${details.model}” no aparece en su catálogo.` : `Proveedor alcanzado correctamente${details.modelCount > 0 ? `; ${details.modelCount} modelo(s) disponibles` : ''}.` : details.state === 'checking' ? 'Comprobando el proveedor sin enviar una solicitud de chat…' : details.state === 'unreachable' ? 'La configuración está guardada, pero el endpoint de modelos no respondió. Actualiza los modelos para reintentar.' : 'La comprobación comenzará después de configurar el proveedor.'],
-        chat: ['Canal de chat', details => details.preset === 'none' ? 'No hay preajuste externo; el Asistente Web sigue disponible.' : details.ready ? `El receiver y el sender de ${details.presetLabel} están conectados en ambas direcciones.` : details.wired ? 'Hay conexiones, pero no se reconocen directamente los tipos de receiver y sender esperados. Comprueba el enrutamiento intermedio.' : 'El preajuste necesita una conexión de entrada y la salida 3 conectada al sender.'],
-        commands: ['Salida de comandos KNX', details => !details.enabled ? 'El control de actuadores está deshabilitado: el asistente queda en solo lectura.' : details.verified ? 'La salida 4 está conectada a un nodo KNX Ultimate; la validación local y la confirmación siguen activas.' : details.connected ? 'La salida 4 está cableada, pero su destino no se reconoce directamente como KNX Ultimate. Comprueba el enrutamiento intermedio.' : 'El control está habilitado, pero la salida 4 no está conectada.'],
-        tts: ['Salida TTS Ultimate', details => details.connected ? `La salida 5 tiene ${details.connectionCount} conexión(es).` : 'Opcional: conecta la salida 5 a TTS Ultimate para anuncios en casa.'],
-        voice: ['Voz de Telegram', details => !details.applicable ? 'La voz se evalúa automáticamente al usar el preajuste Telegram.' : details.ready ? 'Configurada mediante el proveedor OpenAI-compatible; el audio se verificará con el primer mensaje de voz.' : 'La voz de Telegram requiere el proveedor OpenAI-compatible; el chat de texto sigue disponible.'],
-        cameras: ['Adaptadores de cámara', details => details.cameraCount > 0 ? `${details.cameraCount} cámara(s) disponibles mediante ${details.adapterCount} adaptador(es).` : details.adapterCount > 0 ? `${details.adapterCount} adaptador(es) detectados, pero ninguna cámara lista.` : 'No se detectó un adaptador de cámara; esta integración es opcional.'],
-        webAccess: ['Acceso Web', details => details.enabled ? `La herramienta Web general está activada con un presupuesto de ${details.budget} llamadas externas por hora.` : 'El acceso Web está desactivado; no se puede realizar ninguna solicitud externa.'],
-        cerebrumDiscovery: ['Descubrimiento Cerebrum', details => `${details.flowNodeCount} nodos del flow analizados; ${details.logicNodeCount} nodos lógicos y ${details.toolCount} capacidades útiles detectadas.`],
-        homeAssistant: ['Home Assistant', details => details.ready ? 'Listo: la salida 6 de Cerebrum y ha-api están conectados en un circuito completo de solicitud y respuesta.' : details.recommendationCode === 'add_ha_api' ? 'Node-RED funciona como add-on de Home Assistant, pero no hay un nodo API (ha-api) desplegado.' : details.recommendationCode === 'wire_round_trip' ? 'Conecta salida 6 de Cerebrum → ha-api → entrada de Cerebrum.' : 'No se detectó Home Assistant; esta integración es opcional.']
-      },
-      summary: (status, totals, issueCount) => status === 'ready' ? `Listo: ${totals.groupAddresses} señales KNX, ${totals.etsAreas} áreas/grupos ETS y unas ${totals.logicalFunctionsEstimate} funciones lógicas reconocibles.` : status === 'attention' ? `Casi listo: ${totals.groupAddresses} señales KNX reconocidas; ${issueCount} elemento(s) requieren atención.` : `${totals.groupAddresses} señales KNX reconocidas, pero faltan ${issueCount} elemento(s) necesarios.`,
       prompts: { area: name => `Solo lectura: ¿qué sabes de «${name}»?`, inventory: '¿Qué reconoces en mi instalación KNX? Solo lectura.', lights: '¿Qué luces puedes leer ahora? No cambies nada.', openings: '¿Qué puertas o ventanas están abiertas? Solo lectura.', climate: '¿Qué temperaturas y estados del clima puedes leer?', anomalies: '¿Hay anomalías KNX que atender? Solo lectura.', setup: '¿Qué falta en mi configuración de Cerebrum?' },
-      welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0 ? `¡Hola${name ? ` ${name}` : ''}! Ya me he orientado en el proyecto ETS sin enviar nada al bus. Encontré ${totals.groupAddresses} direcciones de grupo únicas, ${totals.etsAreas} áreas/grupos ETS y unas ${totals.logicalFunctionsEstimate} funciones lógicas reconocibles. Son señales ETS, no un recuento de dispositivos físicos.${assistantEnabled ? '' : '\n\nEl asistente IA aún no está habilitado; Setup Doctor muestra lo que falta.'}\n\nPuedes empezar de forma segura con:\n${prompts.map(item => `• ${item.text}`).join('\n')}` : `¡Hola${name ? ` ${name}` : ''}! Aún no hay direcciones ETS seleccionadas para Cerebrum. Configura el acceso a objetos ETS, verifica la importación CSV y vuelve a abrir Setup Doctor.`
+      welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0 ? `¡Hola${name ? ` ${name}` : ''}! Ya me he orientado en el proyecto ETS sin enviar nada al bus. Encontré ${totals.groupAddresses} direcciones de grupo únicas, ${totals.etsAreas} áreas/grupos ETS y unas ${totals.logicalFunctionsEstimate} funciones lógicas reconocibles. Son señales ETS, no un recuento de dispositivos físicos.${assistantEnabled ? '' : '\n\nActiva el asistente IA en la configuración del nodo para empezar a conversar.'}\n\nPuedes empezar de forma segura con:\n${prompts.map(item => `• ${item.text}`).join('\n')}` : `¡Hola${name ? ` ${name}` : ''}! Aún no hay direcciones ETS seleccionadas para Cerebrum. Configura el acceso a objetos ETS y verifica la importación CSV.`
     },
     zh: {
-      status: { ready: '已就绪', attention: '即将就绪', blocked: '需要处理' },
-      checks: {
-        gateway: ['KNX 网关', details => !details.configured ? '请选择 KNX Ultimate 网关并重新部署。' : details.connected ? `已连接到 ${details.name || '已配置网关'}。` : `${details.name || '已配置网关'}尚未连接。`],
-        ets: ['ETS 项目', details => details.objectCount > 0 ? `已识别 ${details.objectCount} 个唯一组地址和 ${details.areaCount} 个 ETS 区域/组。` : 'Cerebrum 没有可用的 ETS 组地址。请配置 ETS 对象访问并检查网关中的 ETS CSV 导入。'],
-        assistant: ['AI 助手', details => details.enabled ? '助手已启用。' : '请启用 LLM 助手以开始对话。'],
-        provider: ['提供商和模型', details => details.ready ? `${details.providerLabel} · ${details.model}` : `请补全缺少的设置：${details.missing.join('、')}。`],
-        providerConnection: ['提供商连接', details => details.state === 'reachable' ? details.selectedModelAvailable === false ? `已连接提供商，但其目录中没有所选模型“${details.model}”。` : `已成功连接提供商${details.modelCount > 0 ? `；报告 ${details.modelCount} 个模型` : ''}。` : details.state === 'checking' ? '正在检查提供商，不会发送聊天请求…' : details.state === 'unreachable' ? '配置已保存，但模型端点没有响应。请刷新模型后重试。' : '配置提供商后将自动检查连接。'],
-        chat: ['聊天通道', details => details.preset === 'none' ? '未选择外部聊天预设；Web 助手仍可使用。' : details.ready ? `${details.presetLabel} 的 receiver 与 sender 已双向连接。` : details.wired ? '已有连接，但未直接识别到预期的 receiver 与 sender 类型。请检查中间路由。' : '聊天预设需要一个输入连接，并将输出 3 连接到 sender。'],
-        commands: ['KNX 命令输出', details => !details.enabled ? '执行器控制已禁用：助手保持只读。' : details.verified ? '输出 4 已连接到 KNX Ultimate 节点；本地验证和确认仍然有效。' : details.connected ? '输出 4 已接线，但目标未被直接识别为 KNX Ultimate。请检查中间路由。' : '执行器控制已启用，但输出 4 未连接。'],
-        tts: ['TTS Ultimate 输出', details => details.connected ? `输出 5 有 ${details.connectionCount} 个连接。` : '可选：将输出 5 连接到 TTS Ultimate 以播放家庭播报。'],
-        voice: ['Telegram 语音', details => !details.applicable ? '使用 Telegram 预设时会自动评估语音功能。' : details.ready ? '已通过所选 OpenAI-compatible 提供商配置；首次语音请求时验证音频支持。' : 'Telegram 语音需要 OpenAI-compatible 提供商；文字聊天仍可使用。'],
-        cameras: ['摄像头适配器', details => details.cameraCount > 0 ? `通过 ${details.adapterCount} 个适配器提供 ${details.cameraCount} 个摄像头。` : details.adapterCount > 0 ? `检测到 ${details.adapterCount} 个摄像头适配器，但没有就绪的摄像头。` : '未检测到摄像头适配器；此集成为可选项。'],
-        webAccess: ['Web 访问', details => details.enabled ? `通用 Web 工具已启用，每小时最多 ${details.budget} 次外部调用。` : 'Web 访问已关闭；不会发起任何外部请求。'],
-        cerebrumDiscovery: ['Cerebrum 发现', details => `已检查 ${details.flowNodeCount} 个流程节点；识别 ${details.logicNodeCount} 个逻辑节点和 ${details.toolCount} 项可用能力。`],
-        homeAssistant: ['Home Assistant', details => details.ready ? '已就绪：Cerebrum 输出 6 与 ha-api 已形成完整请求/响应回路。' : details.recommendationCode === 'add_ha_api' ? 'Node-RED 作为 Home Assistant add-on 运行，但流程中没有 API 节点（ha-api）。' : details.recommendationCode === 'wire_round_trip' ? '请连接 Cerebrum 输出 6 → ha-api → Cerebrum 输入。' : '未检测到 Home Assistant；此集成为可选项。']
-      },
-      summary: (status, totals, issueCount) => status === 'ready' ? `已就绪：${totals.groupAddresses} 个 KNX 信号、${totals.etsAreas} 个 ETS 区域/组，以及约 ${totals.logicalFunctionsEstimate} 个可识别逻辑功能。` : status === 'attention' ? `即将就绪：已识别 ${totals.groupAddresses} 个 KNX 信号；${issueCount} 项需要注意。` : `已识别 ${totals.groupAddresses} 个 KNX 信号，但仍需完成 ${issueCount} 个必要项目。`,
       prompts: { area: name => `只读：你了解“${name}”区域的哪些内容？`, inventory: '你在 KNX 系统中识别到了什么？仅限读取。', lights: '你现在可以读取哪些灯？不要更改任何内容。', openings: '目前哪些门或窗打开？仅限读取。', climate: '你现在可以读取哪些温度和空调状态？', anomalies: '是否有需要注意的 KNX 异常？仅限读取。', setup: '我的 Cerebrum 配置还缺少什么？' },
-      welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0 ? `你好${name ? `，${name}` : ''}！我已经了解 ETS 项目，且没有向总线发送任何内容。我发现了 ${totals.groupAddresses} 个唯一组地址、${totals.etsAreas} 个 ETS 区域/组，以及约 ${totals.logicalFunctionsEstimate} 个可识别逻辑功能。这些是 ETS 信号，并非物理设备数量。${assistantEnabled ? '' : '\n\nAI 助手尚未启用；Setup Doctor 会显示仍需配置的内容。'}\n\n你可以安全地从以下问题开始：\n${prompts.map(item => `• ${item.text}`).join('\n')}` : `你好${name ? `，${name}` : ''}！尚未为 Cerebrum 选择 ETS 组地址。请配置 ETS 对象访问、检查 CSV 导入，然后重新打开 Setup Doctor。`
+      welcome: ({ name, totals, prompts, assistantEnabled }) => totals.groupAddresses > 0 ? `你好${name ? `，${name}` : ''}！我已经了解 ETS 项目，且没有向总线发送任何内容。我发现了 ${totals.groupAddresses} 个唯一组地址、${totals.etsAreas} 个 ETS 区域/组，以及约 ${totals.logicalFunctionsEstimate} 个可识别逻辑功能。这些是 ETS 信号，并非物理设备数量。${assistantEnabled ? '' : '\n\n请在节点配置中启用 AI 助手以开始聊天。'}\n\n你可以安全地从以下问题开始：\n${prompts.map(item => `• ${item.text}`).join('\n')}` : `你好${name ? `，${name}` : ''}！尚未为 Cerebrum 选择 ETS 组地址。请配置 ETS 对象访问并检查 CSV 导入。`
     }
   }
   const code = normalizeLanguageCode(language, 'en')
@@ -906,7 +795,7 @@ const buildCerebrumFirstRunExperience = ({ catalog, areasSnapshot, language = 'e
       readOnly: list.filter(item => item && item.readOnly === true).length
     }
   }
-  const copy = getCerebrumSetupDoctorCopy(language)
+  const copy = getCerebrumFirstRunCopy(language)
   const areaSamples = (Array.isArray(areas.suggested) ? areas.suggested : [])
     .filter(area => area && area.name)
     .slice(0, 6)
@@ -962,158 +851,6 @@ const buildCerebrumFirstRunExperience = ({ catalog, areasSnapshot, language = 'e
   }
 }
 
-const buildCerebrumSetupDoctorSnapshot = ({
-  language = 'en',
-  gateway = {},
-  llm = {},
-  catalog = [],
-  areasSnapshot,
-  wiring = {},
-  integrations = {},
-  providerProbe = {}
-} = {}) => {
-  const copy = getCerebrumSetupDoctorCopy(language)
-  const firstRun = buildCerebrumFirstRunExperience({
-    catalog,
-    areasSnapshot,
-    language,
-    assistantEnabled: llm.enabled === true
-  })
-  const outputMap = new Map((Array.isArray(wiring.outputs) ? wiring.outputs : []).map(item => [item.id, item]))
-  const assistantOutput = outputMap.get('assistant') || {}
-  const commandOutput = outputMap.get('knxCommands') || {}
-  const ttsOutput = outputMap.get('ttsUltimate') || {}
-  const upstream = Array.isArray(wiring.upstream) ? wiring.upstream : []
-  const upstreamCount = upstream.length
-  const provider = normalizeCerebrumLlmProvider(llm.provider)
-  const providerLabels = { openai_compat: 'OpenAI-compatible', anthropic: 'Anthropic', ollama: 'Ollama', lmstudio: 'Bionic LM Studio' }
-  const apiKeyRequired = provider === 'openai_compat' || provider === 'anthropic'
-  const missing = []
-  if (!String(llm.baseUrl || '').trim()) missing.push('endpoint')
-  if (!String(llm.model || '').trim()) missing.push('model')
-  if (apiKeyRequired && llm.apiKeyConfigured !== true) missing.push('API key')
-  const providerReady = missing.length === 0
-  const chatPreset = String(llm.chatAdapterPreset || 'none').trim() || 'none'
-  const telegramVoiceApplicable = ['windkh-telegrambot', 'redbot-telegram'].includes(chatPreset)
-  const chatPresetLabels = {
-    'windkh-telegrambot': 'Telegram Bot',
-    'redbot-telegram': 'RedBot Telegram'
-  }
-  const chatWiringExpectations = {
-    'windkh-telegrambot': {
-      incoming: ['telegram receiver', 'telegram event'],
-      outgoing: ['telegram sender']
-    },
-    'redbot-telegram': {
-      incoming: ['chatbot-telegram-receive'],
-      outgoing: ['chatbot-telegram-send']
-    }
-  }
-  const chatExpectation = chatWiringExpectations[chatPreset]
-  const hasNodeType = (items, types) => {
-    const expectedTypes = new Set((Array.isArray(types) ? types : []).map(type => String(type || '').trim().toLowerCase()).filter(Boolean))
-    return expectedTypes.size > 0 && (Array.isArray(items) ? items : []).some(item => expectedTypes.has(String(item && item.type || '').trim().toLowerCase()))
-  }
-  const assistantTargets = Array.isArray(assistantOutput.targets) ? assistantOutput.targets : []
-  const commandTargets = Array.isArray(commandOutput.targets) ? commandOutput.targets : []
-  const chatWired = upstreamCount > 0 && assistantOutput.connected === true
-  const chatVerified = chatPreset === 'none' || (chatWired && chatExpectation && hasNodeType(upstream, chatExpectation.incoming) && hasNodeType(assistantTargets, chatExpectation.outgoing))
-  const chatStatus = chatPreset === 'none' ? 'info' : chatVerified ? 'pass' : chatWired ? 'warn' : 'fail'
-  const commandTargetVerified = commandOutput.connected === true && hasNodeType(commandTargets, ['knxUltimate'])
-  const commandStatus = llm.allowKnxCommands !== true ? 'info' : commandTargetVerified ? 'pass' : commandOutput.connected === true ? 'warn' : 'fail'
-  const gatewayDetails = {
-    configured: gateway.configured === true,
-    connected: String(gateway.connectionState || '').toLowerCase() === 'connected',
-    name: String(gateway.name || '')
-  }
-  const providerProbeState = String(providerProbe.state || 'idle')
-  const providerConnectionStatus = providerProbeState === 'reachable' && providerProbe.selectedModelAvailable !== false
-    ? 'pass'
-    : providerProbeState === 'checking' || providerProbeState === 'unreachable' || providerProbe.selectedModelAvailable === false || (providerReady && llm.enabled === true)
-      ? 'warn'
-      : 'info'
-  const webHourlyBudget = normalizeCerebrumWebMaxCallsPerHour(llm.webMaxCallsPerHour)
-  const webDetails = {
-    enabled: llm.webAccessEnabled === true,
-    budget: webHourlyBudget,
-    used: Math.max(0, Number(llm.webBudgetUsed) || 0),
-    remaining: llm.webBudgetRemaining === undefined
-      ? webHourlyBudget
-      : Math.max(0, Number(llm.webBudgetRemaining) || 0),
-    lastSuccessAt: String(llm.webLastSuccessAt || ''),
-    lastError: sanitizeCerebrumWebSourceText(llm.webLastError || '', 300)
-  }
-  const cerebrum = integrations.cerebrum && typeof integrations.cerebrum === 'object'
-    ? integrations.cerebrum
-    : inspectCerebrumLearningFlow()
-  const homeAssistant = cerebrum.homeAssistant && typeof cerebrum.homeAssistant === 'object'
-    ? cerebrum.homeAssistant
-    : {}
-  const homeAssistantStatus = homeAssistant.ready === true
-    ? 'pass'
-    : ['add_ha_api', 'wire_round_trip'].includes(String(homeAssistant.recommendationCode || ''))
-        ? 'warn'
-        : 'info'
-  const gatewayStatus = !gatewayDetails.configured ? 'info' : gatewayDetails.connected ? 'pass' : 'warn'
-  const etsStatus = !gatewayDetails.configured ? 'info' : firstRun.totals.groupAddresses > 0 ? 'pass' : 'warn'
-  const checkDefinitions = [
-    { id: 'gateway', status: gatewayStatus, blocking: false, weight: gatewayDetails.configured ? 10 : 0, details: Object.assign({ optional: true }, gatewayDetails) },
-    { id: 'ets', status: etsStatus, blocking: false, weight: gatewayDetails.configured ? 10 : 0, details: { optional: true, objectCount: firstRun.totals.groupAddresses, areaCount: firstRun.totals.etsAreas } },
-    { id: 'assistant', status: llm.enabled === true ? 'pass' : 'fail', blocking: true, weight: 20, details: { enabled: llm.enabled === true } },
-    { id: 'provider', status: providerReady ? 'pass' : 'fail', blocking: true, weight: 20, details: { ready: providerReady, provider, providerLabel: providerLabels[provider] || provider, model: String(llm.model || ''), missing } },
-    { id: 'providerConnection', status: providerConnectionStatus, blocking: false, weight: providerReady && llm.enabled === true ? 5 : 0, details: { state: providerProbeState, modelCount: Math.max(0, Number(providerProbe.modelCount) || 0), selectedModelAvailable: providerProbe.selectedModelAvailable, model: String(llm.model || '') } },
-    { id: 'chat', status: chatStatus, blocking: chatPreset !== 'none', weight: chatPreset !== 'none' ? 10 : 0, details: { preset: chatPreset, presetLabel: chatPresetLabels[chatPreset] || chatPreset, ready: chatVerified, wired: chatWired, upstreamCount, outputConnected: assistantOutput.connected === true } },
-    { id: 'commands', status: commandStatus, blocking: llm.allowKnxCommands === true, weight: llm.allowKnxCommands === true ? 10 : 0, details: { enabled: llm.allowKnxCommands === true, connected: commandOutput.connected === true, verified: commandTargetVerified } },
-    { id: 'tts', status: ttsOutput.connected === true ? 'pass' : 'info', blocking: false, weight: 0, details: { connected: ttsOutput.connected === true, connectionCount: Math.max(0, Number(ttsOutput.connectionCount) || 0) } },
-    { id: 'voice', status: !telegramVoiceApplicable ? 'info' : provider === 'openai_compat' && providerReady ? 'pass' : 'warn', blocking: false, weight: 0, details: { applicable: telegramVoiceApplicable, ready: telegramVoiceApplicable && provider === 'openai_compat' && providerReady } },
-    { id: 'cameras', status: Number(integrations.cameraCount) > 0 ? 'pass' : 'info', blocking: false, weight: 0, details: { cameraCount: Math.max(0, Number(integrations.cameraCount) || 0), adapterCount: Math.max(0, Number(integrations.cameraAdapterCount) || 0) } },
-    { id: 'webAccess', status: webDetails.enabled ? 'pass' : 'info', blocking: false, weight: 0, details: webDetails },
-    { id: 'cerebrumDiscovery', status: cerebrum.discoveredToolCount > 0 ? 'pass' : 'info', blocking: false, weight: 0, details: { flowNodeCount: Math.max(0, Number(cerebrum.flowNodeCount) || 0), logicNodeCount: Math.max(0, Number(cerebrum.logicNodeCount) || 0), toolCount: Math.max(0, Number(cerebrum.discoveredToolCount) || 0) } },
-    { id: 'homeAssistant', status: homeAssistantStatus, blocking: false, weight: 0, details: { ready: homeAssistant.ready === true, addonDetected: homeAssistant.addonDetected === true, apiNodePresent: homeAssistant.apiNodePresent === true, cerebrumNodePresent: homeAssistant.cerebrumNodePresent === true, roundTripWired: homeAssistant.roundTripWired === true, recommendationCode: String(homeAssistant.recommendationCode || 'optional') } }
-  ]
-  const checks = checkDefinitions.map(check => {
-    const copyDefinition = copy.checks[check.id] || [check.id, () => '']
-    return Object.assign({}, check, {
-      title: copyDefinition[0],
-      detail: copyDefinition[1](check.details)
-    })
-  })
-  const weightedChecks = checks.filter(check => check.weight > 0)
-  const totalWeight = weightedChecks.reduce((sum, check) => sum + check.weight, 0) || 1
-  const earnedWeight = weightedChecks.reduce((sum, check) => sum + (check.status === 'pass' ? check.weight : check.status === 'warn' ? check.weight * 0.5 : 0), 0)
-  const score = Math.max(0, Math.min(100, Math.round((earnedWeight / totalWeight) * 100)))
-  const blockingFailures = checks.filter(check => check.blocking && check.status === 'fail')
-  const warnings = checks.filter(check => check.status === 'warn')
-  const status = blockingFailures.length > 0 ? 'blocked' : warnings.length > 0 ? 'attention' : 'ready'
-  const issueCount = status === 'blocked' ? blockingFailures.length : warnings.length
-  return {
-    version: CEREBRUM_SETUP_DOCTOR_VERSION,
-    generatedAt: new Date().toISOString(),
-    status,
-    statusLabel: copy.status[status],
-    score,
-    summary: copy.summary(status, firstRun.totals, issueCount),
-    checks,
-    inventory: firstRun.totals,
-    integrations: {
-      cameraAdapterCount: Math.max(0, Number(integrations.cameraAdapterCount) || 0),
-      cameraCount: Math.max(0, Number(integrations.cameraCount) || 0),
-      web: {
-        enabled: webDetails.enabled,
-        maxCallsPerHour: webDetails.budget,
-        usedCallsThisHour: webDetails.used,
-        remainingCallsThisHour: webDetails.remaining,
-        lastSuccessAt: webDetails.lastSuccessAt,
-        lastError: webDetails.lastError
-      },
-      cerebrum,
-      homeAssistant,
-      wiring
-    },
-    firstRun
-  }
-}
-
 const isCerebrumOnboardingRequest = ({ msg, question, topic } = {}) => {
   if (msg && msg.cerebrum && msg.cerebrum.onboarding === true) return true
   const normalizedTopic = String(topic || '').trim().toLowerCase()
@@ -1126,7 +863,7 @@ const isCerebrumSafeFirstRunPrompt = (question) => {
   const normalizedQuestion = String(question || '').replace(/\s+/g, ' ').trim().toLowerCase()
   if (!normalizedQuestion) return false
   const matchesFixedPrompt = ['en', 'it', 'de', 'fr', 'es', 'zh'].some(language => {
-    const prompts = getCerebrumSetupDoctorCopy(language).prompts || {}
+    const prompts = getCerebrumFirstRunCopy(language).prompts || {}
     return Object.values(prompts).some(prompt => typeof prompt === 'string' && prompt.replace(/\s+/g, ' ').trim().toLowerCase() === normalizedQuestion)
   })
   if (matchesFixedPrompt) return true
@@ -6238,7 +5975,6 @@ module.exports = function (RED) {
         if (deployedNode && typeof deployedNode.refreshCameraAdapterRegistry === 'function') {
           await deployedNode.refreshCameraAdapterRegistry({ force: true })
         }
-        const language = normalizeLanguageCode(req.query?.language || extractLanguageCodeFromHeader(req.headers && req.headers['accept-language']), 'en')
         const flowNodes = []
         try {
           RED.nodes.eachNode(flowNode => {
@@ -6253,52 +5989,6 @@ module.exports = function (RED) {
         })
         const wiring = summarizeCerebrumFlowWiring({ nodeId, wires: rawConfig.wires, flowNodes })
         const cerebrumDiscovery = inspectCerebrumLearningFlow({ flowNodes, env: process.env })
-        if (deployedNode && typeof deployedNode.refreshSetupDoctorProviderProbe === 'function') {
-          await deployedNode.refreshSetupDoctorProviderProbe({ force: req.query?.refreshSetup === '1' })
-        }
-        let setupDoctor = null
-        if (deployedNode && typeof deployedNode.getSetupDoctorSnapshot === 'function') {
-          setupDoctor = deployedNode.getSetupDoctorSnapshot({ language, flowNodes })
-        } else {
-          const gatewayId = String(rawConfig.server || '').trim()
-          const gatewayNode = gatewayId ? RED.nodes.getNode(gatewayId) : null
-          const csv = gatewayNode && Array.isArray(gatewayNode.csv) ? gatewayNode.csv : []
-          const provider = normalizeCerebrumLlmProvider(rawConfig.llmProvider)
-          setupDoctor = buildCerebrumSetupDoctorSnapshot({
-            language,
-            gateway: {
-              configured: !!gatewayNode,
-              connectionState: gatewayNode && gatewayNode.linkStatus,
-              name: gatewayNode && (gatewayNode.name || gatewayNode.id)
-            },
-            llm: {
-              enabled: coerceBoolean(rawConfig.llmEnabled),
-              provider,
-              baseUrl: rawConfig.llmBaseUrl || '',
-              model: rawConfig.llmModel || '',
-              apiKeyConfigured: !!(deployedNode && deployedNode.credentials && deployedNode.credentials.llmApiKey),
-              allowKnxCommands: coerceBoolean(rawConfig.llmAllowKnxCommands),
-              chatAdapterPreset: rawConfig.chatAdapterPreset || 'none',
-              webAccessEnabled: coerceBoolean(rawConfig.webAccessEnabled),
-              webMaxCallsPerHour: rawConfig.webMaxCallsPerHour,
-              aiEducation: rawConfig.aiEducation || ''
-            },
-            catalog: enrichCerebrumHomeCatalog(applyCerebrumCatalogAccessConfiguration({
-              catalog: buildGaCatalogFromCsv(csv),
-              exposeConfigured: rawConfig.etsExposeConfigured === true,
-              exposedGAs: rawConfig.etsExposedGAs,
-              readOnlyGAs: rawConfig.etsReadOnlyGAs
-            })),
-            areasSnapshot: buildSuggestedAreasFromCsv(csv),
-            wiring,
-            integrations: {
-              cameraAdapterCount: cameraAdapters.length,
-              cameraCount: cameraAdapters.reduce((sum, adapter) => sum + Math.max(0, Number(adapter && adapter.cameraCount) || 0), 0),
-              cerebrum: cerebrumDiscovery
-            },
-            providerProbe: { state: 'idle' }
-          })
-        }
         const hasRuntimeNodeType = type => {
           try { return typeof RED.nodes.getType === 'function' && !!RED.nodes.getType(type) } catch (error) { return false }
         }
@@ -6325,8 +6015,7 @@ module.exports = function (RED) {
             node: deployedNode,
             nodeId,
             redUserDir: RED.settings.userDir
-          }),
-          setupDoctor
+          })
         })
       } catch (error) {
         res.status(500).json({ error: error.message || String(error) })
@@ -6382,11 +6071,7 @@ module.exports = function (RED) {
           res.status(404).json({ error: 'Cerebrum node not found' })
           return
         }
-        const language = normalizeLanguageCode(req.query?.language || extractLanguageCodeFromHeader(req.headers && req.headers['accept-language']), 'en')
-        if (fresh && typeof n.refreshSetupDoctorProviderProbe === 'function') {
-          await n.refreshSetupDoctorProviderProbe({ force: true })
-        }
-        res.json(n.getSidebarState({ fresh, language }))
+        res.json(n.getSidebarState({ fresh }))
       } catch (error) {
         res.status(500).json({ error: error.message || String(error) })
       }
@@ -6858,7 +6543,16 @@ module.exports = function (RED) {
           return
         }
         const ret = await n.exportAiConfig()
-        res.json(ret)
+        res.set('Cache-Control', 'no-store')
+        if (req.body?.format === 'zip') {
+          const archive = await createBackupZip(ret)
+          const filename = `cerebrum-backup-${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}-${new Date().toISOString().slice(0, 10)}.zip`
+          res.set('Content-Type', 'application/zip')
+          res.set('Content-Disposition', `attachment; filename="${filename}"`)
+          res.send(archive)
+        } else {
+          res.json(ret)
+        }
       } catch (error) {
         res.status(error.status || 500).json({ error: error.message || String(error) })
       }
@@ -6880,7 +6574,7 @@ module.exports = function (RED) {
       try {
         const nodeId = req.body?.nodeId ? String(req.body.nodeId) : ''
         const configPayload = req.body?.uploadId
-          ? backupUploads.take({ owner: String(req.user?.username || ''), nodeId, uploadId: req.body.uploadId })
+          ? await decodeBackupUpload(backupUploads.takeBuffer({ owner: String(req.user?.username || ''), nodeId, uploadId: req.body.uploadId }))
           : req.body?.config
         if (!nodeId) {
           res.status(400).json({ error: 'Missing nodeId' })
@@ -7632,8 +7326,6 @@ module.exports = function (RED) {
     node._runtimeStateWriteTimer = null
     node._homeCatalogByGa = null
     node._homeCatalogSnapshotRef = null
-    node._setupDoctorProviderProbe = { state: 'idle', checkedAt: '', modelCount: 0 }
-    node._setupDoctorProviderProbePromise = null
     node._closing = false
     node._busConnectionState = (node.serverKNX && typeof node.serverKNX.linkStatus === 'string')
       ? String(node.serverKNX.linkStatus).toLowerCase()
@@ -12957,7 +12649,7 @@ module.exports = function (RED) {
         routinePlanningPass
           ? '- Routine planning pass: use FRESH ROUTINE INSPECTION RESULTS, routine phase plan, no reads, and only necessary safe writes. NO_RESPONSE is unknown.'
           : '- A multi-operation routine needing state uses phase inspect with only necessary reads; after results the node calls a planning pass. Otherwise use routine inactive, empty name and phase none.',
-        safeReadOnly ? '- Setup Doctor pass: explanation and exact reads only; no writes or other execution tools.' : '',
+        safeReadOnly ? '- Read-only onboarding: explanation and exact reads only; no writes or other execution tools.' : '',
         allowKnxCommands ? '' : '- KNX commands are disabled: commands must be empty.',
         requireConfirmation ? '- For writes, describe only the proposal; the node supplies confirmation wording and has not sent the writes yet.' : '',
         webToolEnabled
@@ -13000,7 +12692,7 @@ module.exports = function (RED) {
           allowKnxCommands ? '' : 'commands must be empty.',
           requireConfirmation ? 'Writes are proposals only; local confirmation and validation remain authoritative.' : '',
           routinePlanningPass ? 'Routine planning: use fresh inspection, phase plan, no reads.' : 'A state-dependent multi-action routine first returns phase inspect and reads only.',
-          safeReadOnly ? 'Setup Doctor: explanation and reads only; no execution tools.' : '',
+          safeReadOnly ? 'Read-only onboarding: explanation and reads only; no execution tools.' : '',
           webToolEnabled ? 'webActions {"operation":"search|open","query":"","url":"","reason":""} only when fresh public Web evidence is genuinely needed; it is intermediate and must contain no private/local data.' : 'webActions empty.',
           historyToolEnabled ? 'historyActions: at most two local read-only KNX archive queries with ISO from/to, exact destinations/sources/events/dpts, optional query, includeRaw, limit and reason. It is intermediate and every other output must be empty.' : 'historyActions empty.',
           codeToolEnabled ? 'codeActions: at most one {"operation":"run","code":"synchronous JavaScript body ending with return","reason":""}. Direct globals: node, RED, question, sessionId. Read/inspect only; return small JSON. It is intermediate and every other output must be empty.' : 'codeActions empty.',
@@ -17866,122 +17558,7 @@ module.exports = function (RED) {
       }
     }
 
-    node.refreshSetupDoctorProviderProbe = ({ force = false } = {}) => {
-      if (node._setupDoctorProviderProbePromise) return node._setupDoctorProviderProbePromise
-      const provider = normalizeCerebrumLlmProvider(node.llmProvider)
-      const apiKeyRequired = provider === 'openai_compat' || provider === 'anthropic'
-      const configured = node.llmEnabled === true && String(node.llmBaseUrl || '').trim() && String(node.llmModel || '').trim() && (!apiKeyRequired || !!node.llmApiKey)
-      if (!configured) {
-        node._setupDoctorProviderProbe = { state: node.llmEnabled === true ? 'idle' : 'skipped', checkedAt: '', modelCount: 0 }
-        return Promise.resolve(node._setupDoctorProviderProbe)
-      }
-      const checkedAtMs = new Date(String(node._setupDoctorProviderProbe && node._setupDoctorProviderProbe.checkedAt || '')).getTime()
-      if (!force && node._setupDoctorProviderProbe.state === 'reachable' && Number.isFinite(checkedAtMs) && (nowMs() - checkedAtMs) < (5 * 60 * 1000)) {
-        return Promise.resolve(node._setupDoctorProviderProbe)
-      }
-      node._setupDoctorProviderProbe = { state: 'checking', checkedAt: '', modelCount: 0 }
-      const probePromise = Promise.resolve().then(async () => {
-        let models = []
-        let selectedModelAvailable = null
-        if (provider === 'ollama') {
-          const json = await getJson({ url: deriveOllamaApiUrl(node.llmBaseUrl, '/api/tags'), timeoutMs: 7000 })
-          models = Array.isArray(json && json.models) ? json.models.map(item => item && (item.name || item.model)).filter(Boolean) : []
-          if (models.length) {
-            const selected = String(node.llmModel || '').trim()
-            selectedModelAvailable = models.some(model => {
-              const candidate = String(model || '').trim()
-              return candidate === selected || candidate.replace(/:latest$/i, '') === selected.replace(/:latest$/i, '')
-            })
-          }
-        } else if (provider === 'anthropic') {
-          const json = await getJson({ url: deriveAnthropicModelsUrl(node.llmBaseUrl), headers: buildAnthropicHeaders(node.llmApiKey), timeoutMs: 7000 })
-          models = Array.isArray(json && json.data) ? json.data.map(item => item && item.id).filter(Boolean) : []
-          if (models.length) selectedModelAvailable = models.includes(node.llmModel)
-        } else if (provider === 'lmstudio') {
-          const headers = node.llmApiKey ? { authorization: `Bearer ${node.llmApiKey}` } : {}
-          const json = await getJson({ url: deriveLmStudioNativeApiUrl(node.llmBaseUrl, '/api/v1/models'), headers, timeoutMs: 7000 })
-          const catalog = normalizeLmStudioModelCatalog(json)
-          models = catalog.map(item => item.id).filter(Boolean)
-          if (models.length) selectedModelAvailable = !!findLmStudioModel({ catalog, model: node.llmModel })
-        } else {
-          const headers = node.llmApiKey ? { authorization: `Bearer ${node.llmApiKey}` } : {}
-          const json = await getJson({ url: deriveModelsUrlFromBaseUrl(node.llmBaseUrl), headers, timeoutMs: 7000 })
-          models = Array.isArray(json && json.data)
-            ? json.data.map(item => item && item.id).filter(Boolean)
-            : Array.isArray(json && json.models)
-              ? json.models.map(item => typeof item === 'string' ? item : item && item.id).filter(Boolean)
-              : []
-          if (models.length) selectedModelAvailable = models.includes(node.llmModel)
-        }
-        node._setupDoctorProviderProbe = {
-          state: 'reachable',
-          checkedAt: new Date().toISOString(),
-          modelCount: models.length,
-          selectedModelAvailable
-        }
-        return node._setupDoctorProviderProbe
-      }).catch(error => {
-        node._setupDoctorProviderProbe = {
-          state: 'unreachable',
-          checkedAt: new Date().toISOString(),
-          modelCount: 0,
-          error: String(error && error.message || error || '').replace(/\s+/g, ' ').slice(0, 300)
-        }
-        return node._setupDoctorProviderProbe
-      }).finally(() => {
-        if (node._setupDoctorProviderProbePromise === probePromise) node._setupDoctorProviderProbePromise = null
-      })
-      node._setupDoctorProviderProbePromise = probePromise
-      return probePromise
-    }
-
-    node.getSetupDoctorSnapshot = ({ language = 'en', flowNodes = null } = {}) => {
-      const currentFlowNodes = Array.isArray(flowNodes) ? flowNodes : []
-      if (!currentFlowNodes.length) {
-        try {
-          RED.nodes.eachNode(flowNode => {
-            if (flowNode && typeof flowNode === 'object') currentFlowNodes.push(flowNode)
-          })
-        } catch (error) { /* use saved wiring only */ }
-      }
-      const webBudget = getCerebrumWebBudgetSnapshot()
-      const cerebrum = inspectCerebrumLearningFlow({ flowNodes: currentFlowNodes, env: process.env })
-      return buildCerebrumSetupDoctorSnapshot({
-        language,
-        gateway: {
-          configured: !!node.serverKNX,
-          connectionState: node._busConnectionState || (node.serverKNX && node.serverKNX.linkStatus),
-          name: node.serverKNX && (node.serverKNX.name || node.serverKNX.id)
-        },
-        llm: {
-          enabled: node.llmEnabled === true,
-          provider: node.llmProvider,
-          baseUrl: node.llmBaseUrl,
-          model: node.llmModel,
-          apiKeyConfigured: !!node.llmApiKey,
-          allowKnxCommands: node.llmAllowKnxCommands === true,
-          chatAdapterPreset: node.chatAdapterPreset,
-          webAccessEnabled: node.webAccessEnabled === true,
-          webMaxCallsPerHour: node.webMaxCallsPerHour,
-          webBudgetUsed: webBudget.used,
-          webBudgetRemaining: webBudget.remaining,
-          webLastSuccessAt: node._webAccessLastSuccessAt > 0 ? new Date(node._webAccessLastSuccessAt).toISOString() : '',
-          webLastError: node._webAccessLastError,
-          aiEducation: node.aiEducation
-        },
-        catalog: getGaCatalogSnapshot(),
-        areasSnapshot: getAreasBaseSnapshot(),
-        wiring: summarizeCerebrumFlowWiring({ nodeId: node.id, wires: config.wires, flowNodes: currentFlowNodes }),
-        integrations: {
-          cameraAdapterCount: node._cameraAdapters instanceof Map ? node._cameraAdapters.size : 0,
-          cameraCount: node._cameraCatalog instanceof Map ? node._cameraCatalog.size : 0,
-          cerebrum
-        },
-        providerProbe: node._setupDoctorProviderProbe
-      })
-    }
-
-    node.getSidebarState = ({ fresh = false, language = 'en' } = {}) => {
+    node.getSidebarState = ({ fresh = false } = {}) => {
       try {
         const now = nowMs()
         trimHistory(now)
@@ -18015,7 +17592,6 @@ module.exports = function (RED) {
             webLastError: node._webAccessLastError,
             activeScheduleCount: listActiveCerebrumSchedules(node._scheduleStore).length
           },
-          setupDoctor: node.getSetupDoctorSnapshot({ language }),
           summary,
           etsAccess: buildEtsAccessSnapshot({ includeItems: false }),
           areas,
@@ -18038,7 +17614,6 @@ module.exports = function (RED) {
             name: node.name || '',
             topic: node.topic || ''
           },
-          setupDoctor: buildCerebrumSetupDoctorSnapshot({ language }),
           summary: { error: error.message || String(error) },
           etsAccess: {
             configured: false,
@@ -18496,8 +18071,6 @@ module.exports = function (RED) {
     }, 1000)
     pollBusConnectionStatus()
 
-    Promise.resolve(node.refreshSetupDoctorProviderProbe()).catch(() => {})
-
     updateStatus({ fill: 'grey', shape: 'dot', text: 'AI ready' })
   }
 
@@ -18514,7 +18087,6 @@ module.exports.__test = {
   CEREBRUM_LOCAL_CONTEXT_TOKEN_OPTIONS,
   CEREBRUM_REASONING_EFFORT_OPTIONS,
   CEREBRUM_ROUTINE_FEEDBACK_TIMEOUT_MS,
-  CEREBRUM_SETUP_DOCTOR_VERSION,
   CEREBRUM_THINKING_DELAY_MS,
   CEREBRUM_TRAFFIC_DEFAULTS,
   CEREBRUM_TELEGRAM_VOICE_MAX_BYTES,
@@ -18559,7 +18131,6 @@ module.exports.__test = {
   deriveOpenAiResponsesUrl,
   deriveLmStudioNativeApiUrl,
   buildCerebrumTtsUltimateAnnouncementMessage,
-  buildCerebrumSetupDoctorSnapshot,
   resolveLmStudioModelContext,
   executeCerebrumChatAdapter,
   extractLlmHttpErrorDetail,

@@ -12,7 +12,6 @@ const {
   normalizeCerebrumFlowSendEvent,
   normalizeCerebrumHomeAutomationEvent
 } = require('../nodes/utils/cerebrumLearning')
-const { buildCerebrumSetupDoctorSnapshot, summarizeCerebrumFlowWiring } = require('../nodes/cerebrumUltimate').__test
 
 describe('Cerebrum discovery and Home Assistant round trip', () => {
   it('discovers flow logic, HUE, Matter and a complete ha-api round trip', () => {
@@ -48,7 +47,7 @@ describe('Cerebrum discovery and Home Assistant round trip', () => {
     expect(buildCerebrumLearningPromptContext(snapshot)).to.include('CEREBRUM FLOW DISCOVERY')
   })
 
-  it('asks Setup Doctor for ha-api when the Home Assistant add-on is detected', () => {
+  it('recommends ha-api when the Home Assistant add-on is detected', () => {
     const snapshot = inspectCerebrumLearningFlow({ flowNodes: [], env: { SUPERVISOR_TOKEN: 'present' } })
     expect(snapshot.homeAssistant).to.include({
       addonDetected: true,
@@ -56,18 +55,6 @@ describe('Cerebrum discovery and Home Assistant round trip', () => {
       ready: false,
       recommendationCode: 'add_ha_api'
     })
-    const doctor = buildCerebrumSetupDoctorSnapshot({
-      language: 'it',
-      gateway: { configured: true, connectionState: 'connected' },
-      llm: { enabled: true, provider: 'ollama', baseUrl: 'http://localhost/api/chat', model: 'local' },
-      catalog: [{ ga: '1/1/1', dpt: '1.001', label: 'Luce', semantic: { kind: 'light' } }],
-      wiring: summarizeCerebrumFlowWiring({ wires: [[], [], [], [], [], []] }),
-      integrations: { cerebrum: snapshot },
-      providerProbe: { state: 'reachable', modelCount: 1 }
-    })
-    const check = doctor.checks.find(item => item.id === 'homeAssistant')
-    expect(check).to.include({ status: 'warn', blocking: false })
-    expect(check.detail).to.include('ha-api')
   })
 
   it('normalizes Home Assistant state events without retaining the raw message', () => {

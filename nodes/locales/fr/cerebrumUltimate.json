@@ -4,7 +4,6 @@
     "sections": {
       "groupAssistant": "Assistant IA",
       "groupChatHome": "Cerebrum (BETA)",
-      "setupDoctor": "Setup Doctor",
       "webIntelligence": "Intelligence Web",
       "detectedAdapters": "Nœuds compatibles détectés",
       "chatContextOverview": "Aperçu du contexte Cerebrum",
@@ -81,15 +80,6 @@
       }
     },
     "messages": {
-      "setupDoctorLoading": "Analyse de cette installation…",
-      "setupDoctorUnavailable": "Setup Doctor est temporairement indisponible.",
-      "setupDoctorPromptsTitle": "Essayer votre installation",
-      "setupDoctorPromptsHint": "Chaque suggestion ouvre l’Assistant Web avec une demande personnalisée et sûre. Rien n’est exécuté automatiquement.",
-      "setupDoctorDeployHint": "Setup Doctor lit le dernier flow déployé. Déployez les modifications, puis revérifiez.",
-      "setupDoctorPass": "OK",
-      "setupDoctorWarn": "Vérifier",
-      "setupDoctorFail": "Corriger",
-      "setupDoctorInfo": "Optionnel",
       "webAccessHint": "Le modèle choisit sémantiquement cet outil Web général pour chaque demande claire adressée à Cerebrum ou planifiée. Si une portée essentielle est ambiguë, il demande une précision à l’utilisateur avant la recherche ; aucun polling en arrière-plan, mot-clé ni classificateur d’intention n’est utilisé. Les sites externes et le service de recherche reçoivent la requête et l’adresse IP publique de ce serveur. Les données privées KNX, caméra, conversation, mémoire et identifiants d’accès ne sont jamais ajoutées automatiquement.",
       "webBudgetHint": "Le budget glissant compte les appels externes réels des conversations et des tâches planifiées créées par l’utilisateur.",
       "runtimeCodeHint": "Fonction avancée et potentiellement dangereuse. Ce n’est pas une sandbox de sécurité : le JavaScript synchrone généré accède directement à node et RED, et les résultats sont envoyés au fournisseur du modèle sélectionné. Activez-la uniquement avec un modèle et des instructions de confiance.",
@@ -226,7 +216,6 @@
       }
     },
     "buttons": {
-      "refreshSetupDoctor": "Revérifier",
       "installOllamaModel": "2) Install it",
       "ollamaLibrary": "Model library",
       "downloadOllamaModel": "1) Download model",

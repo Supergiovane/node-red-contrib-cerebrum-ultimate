@@ -4,7 +4,6 @@
     "sections": {
       "groupAssistant": "Asistente IA",
       "groupChatHome": "Cerebrum (BETA)",
-      "setupDoctor": "Setup Doctor",
       "webIntelligence": "Inteligencia Web",
       "detectedAdapters": "Nodos compatibles detectados",
       "chatContextOverview": "Resumen del contexto de Cerebrum",
@@ -81,15 +80,6 @@
       }
     },
     "messages": {
-      "setupDoctorLoading": "Analizando esta instalación…",
-      "setupDoctorUnavailable": "Setup Doctor no está disponible temporalmente.",
-      "setupDoctorPromptsTitle": "Probar tu instalación",
-      "setupDoctorPromptsHint": "Cada sugerencia abre el Asistente Web con una consulta personalizada y segura. Nada se ejecuta automáticamente.",
-      "setupDoctorDeployHint": "Setup Doctor lee el último flow desplegado. Despliega los cambios y vuelve a comprobar.",
-      "setupDoctorPass": "OK",
-      "setupDoctorWarn": "Revisar",
-      "setupDoctorFail": "Corregir",
-      "setupDoctorInfo": "Opcional",
       "webAccessHint": "El modelo elige semánticamente esta herramienta Web general para cada solicitud clara a Cerebrum o programada. Si falta un alcance esencial, pide una aclaración al usuario antes de buscar; no se usan consultas periódicas en segundo plano, palabras clave ni clasificadores de intención. Los sitios externos y el servicio de búsqueda reciben la consulta y la IP pública de este servidor. Los datos privados de KNX, cámaras, conversaciones, memoria y credenciales nunca se añaden automáticamente.",
       "webBudgetHint": "El presupuesto deslizante cuenta las llamadas externas reales de las conversaciones y las tareas programadas creadas por el usuario.",
       "runtimeCodeHint": "Función avanzada y potencialmente peligrosa. No es un entorno aislado de seguridad: el JavaScript síncrono generado accede directamente a node y RED, y los resultados se envían al proveedor del modelo seleccionado. Actívala solo con un modelo e instrucciones de confianza.",
@@ -226,7 +216,6 @@
       }
     },
     "buttons": {
-      "refreshSetupDoctor": "Comprobar de nuevo",
       "installOllamaModel": "2) Install it",
       "ollamaLibrary": "Model library",
       "downloadOllamaModel": "1) Download model",
