@@ -55,6 +55,8 @@ Observation, background reasoning and autonomous actions are built into Cerebrum
 
 The persistent world model lives in `cerebrumultimatestorage/cerebrum/memory/cerebrum-world-model-NODEID.json`. The model receives a bounded working view of relevant entities, episodes and situations, rather than the complete memory file. Raw archives and learned home memory remain separate sources. This lets knowledge survive between reasoning passes without accumulating every previous pass in the prompt.
 
+In the node editor, **AI Assistant → Maximum managed context (KB)** controls the application context ceiling. Leave it at `0` to use the selected model's known or detected maximum automatically; enter a positive value to set a lower ceiling. For an otherwise unknown OpenAI-compatible model, the value declares the endpoint's effective context limit. Cerebrum never uses it to exceed a known or locally detected physical model window.
+
 ### Shared conversation and situational context
 
 Web chat and Telegram use the same household memory. Every incoming message and outgoing reply is written in full to `cerebrumultimatestorage/cerebrum/memory/shared/cerebrum-memory.jsonl`, together with KNX and integration observations, model/tool results, catalog records and changes to learned home/world context. This append-only archive is flushed on each write and has no automatic expiry or total size cap. It is included as a streamed file in full ZIP backups.

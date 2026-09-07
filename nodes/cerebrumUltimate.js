@@ -259,13 +259,33 @@ const normalizeCerebrumLocalContextTokens = (value) => {
   return CEREBRUM_LOCAL_CONTEXT_TOKEN_OPTIONS.includes(requested) ? requested : 0
 }
 
-const resolveCerebrumOperationalContextLimit = ({ provider, model, contextLength, localContextTokens } = {}) => {
+const normalizeCerebrumMaxContextKb = (value) => {
+  const requested = Number(value)
+  return Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : 0
+}
+
+const resolveCerebrumOperationalContextLimit = ({ provider, model, contextLength, localContextTokens, maxContextKb } = {}) => {
   const normalizedProvider = String(provider || '').trim().toLowerCase()
+  const configuredContextKb = normalizeCerebrumMaxContextKb(maxContextKb)
+  const configuredContextTokens = configuredContextKb > 0
+    ? Math.min(Number.MAX_SAFE_INTEGER, configuredContextKb * 1024)
+    : 0
   if (normalizedProvider !== 'lmstudio' && normalizedProvider !== 'ollama') {
+    // A user limit can declare the real window of an otherwise unknown
+    // OpenAI-compatible model. Known/reported physical windows always win.
+    const reportedContextLength = Math.max(0, Number(contextLength) || 0)
+    const modelContextTokens = resolveCloudContextTokens({
+      model,
+      contextLength: reportedContextLength || configuredContextTokens
+    })
     return {
       provider: normalizedProvider,
-      tokens: resolveCloudContextTokens({ model, contextLength }),
-      mode: 'bounded-cloud-window'
+      tokens: configuredContextTokens > 0
+        ? Math.min(modelContextTokens, configuredContextTokens)
+        : modelContextTokens,
+      modelContextTokens,
+      configuredContextKb,
+      mode: configuredContextTokens > 0 ? 'configured-managed-window' : 'bounded-cloud-window'
     }
   }
   const activeContextLength = Math.max(0, Number(contextLength) || 0)
@@ -275,13 +295,17 @@ const resolveCerebrumOperationalContextLimit = ({ provider, model, contextLength
       ? Math.min(activeContextLength, selectedContextLength)
       : selectedContextLength
     : activeContextLength || 8192
+  const effectiveContextLength = configuredContextTokens > 0
+    ? Math.min(resolvedContextLength, configuredContextTokens)
+    : resolvedContextLength
   return {
     provider: normalizedProvider,
-    tokens: resolvedContextLength,
+    tokens: effectiveContextLength,
     maxContextTokens: activeContextLength,
     selectedContextTokens: selectedContextLength,
-    mode: resolvedContextLength
-      ? selectedContextLength > 0 ? 'selected-window' : activeContextLength > 0 ? 'model-window' : 'safe-fallback-window'
+    configuredContextKb,
+    mode: effectiveContextLength
+      ? configuredContextTokens > 0 ? 'configured-managed-window' : selectedContextLength > 0 ? 'selected-window' : activeContextLength > 0 ? 'model-window' : 'safe-fallback-window'
       : 'provider-managed'
   }
 }
@@ -637,7 +661,8 @@ const summarizeCerebrumChatContext = ({ node, nodeId, redUserDir } = {}) => {
       provider: node && node.llmProvider,
       model: node && node.llmModel,
       contextLength: node && node.llmContextLength,
-      localContextTokens: node && node.llmLocalContextTokens
+      localContextTokens: node && node.llmLocalContextTokens,
+      maxContextKb: node && node.llmMaxContextKb
     }),
     lastPromptUsage: node && node._lastChatPromptUsage
       ? Object.assign({}, node._lastChatPromptUsage)
@@ -7206,6 +7231,7 @@ module.exports = function (RED) {
     node.llmReasoningEffort = normalizeCerebrumReasoningEffort(config.llmReasoningEffort)
     node.llmContextLength = Math.max(0, Number(config.llmContextLength) || 0)
     node.llmLocalContextTokens = normalizeCerebrumLocalContextTokens(config.llmLocalContextTokens)
+    node.llmMaxContextKb = normalizeCerebrumMaxContextKb(config.llmMaxContextKb)
     node.llmTimeoutMs = resolveCerebrumLlmTimeoutMs({
       configuredTimeoutMs: config.llmTimeoutMs
     })
@@ -12027,7 +12053,8 @@ module.exports = function (RED) {
         provider: node.llmProvider,
         model: node.llmModel,
         contextLength: node.llmContextLength,
-        localContextTokens: node.llmLocalContextTokens
+        localContextTokens: node.llmLocalContextTokens,
+        maxContextKb: node.llmMaxContextKb
       })
       if (contextTokensOverride > 0) contextLimit.tokens = Math.min(contextLimit.tokens, contextTokensOverride)
       let resolvedMaxTokens = resolveCerebrumLocalGenerationBudget({
@@ -12116,7 +12143,8 @@ module.exports = function (RED) {
             const retryContextTokens = resolveCerebrumOperationalContextLimit({
               provider: node.llmProvider,
               contextLength: node.llmContextLength,
-              localContextTokens: node.llmLocalContextTokens
+              localContextTokens: node.llmLocalContextTokens,
+              maxContextKb: node.llmMaxContextKb
             }).tokens
             if (retryContextTokens > 0 && retryContextTokens < contextLimit.tokens) {
               throw new Error(`Model maximum context length is ${retryContextTokens} tokens after reconnect`)
@@ -12361,7 +12389,8 @@ module.exports = function (RED) {
         provider: node.llmProvider,
         model: node.llmModel,
         contextLength: node.llmContextLength,
-        localContextTokens: node.llmLocalContextTokens
+        localContextTokens: node.llmLocalContextTokens,
+        maxContextKb: node.llmMaxContextKb
       }).tokens
       return withCerebrumContextRetry({
         contextTokens: Math.min(configuredLimit, learnedContextLimits.get(key) || configuredLimit),
@@ -12705,7 +12734,8 @@ module.exports = function (RED) {
         provider: node.llmProvider,
         model: node.llmModel,
         contextLength: node.llmContextLength,
-        localContextTokens: node.llmLocalContextTokens
+        localContextTokens: node.llmLocalContextTokens,
+        maxContextKb: node.llmMaxContextKb
       }).tokens
       const promptLimits = activeContextTokens > 0 && activeContextTokens <= 8192
         ? { chatChars: 2800, scheduleChars: 1600, webChars: 6000, homeMemoryChars: 1500, functionSourceChars: 3500, analysisSummaryChars: 1600, knxEvents: 12, adapterEvents: 8 }
@@ -18263,7 +18293,7 @@ module.exports = function (RED) {
         getCatalog: getGaCatalogSnapshot,
         normalizeCommands: normalizeCerebrumCommandCandidates,
         coercePayload: coerceCerebrumCommandPayload,
-        contextTokens: () => resolveCerebrumOperationalContextLimit({ provider: node.llmProvider, model: node.llmModel, contextLength: node.llmContextLength, localContextTokens: node.llmLocalContextTokens }).tokens,
+        contextTokens: () => resolveCerebrumOperationalContextLimit({ provider: node.llmProvider, model: node.llmModel, contextLength: node.llmContextLength, localContextTokens: node.llmLocalContextTokens, maxContextKb: node.llmMaxContextKb }).tokens,
         sendCommands: (commands, situation) => {
           if (node._closing) return false
           const at = nowMs()

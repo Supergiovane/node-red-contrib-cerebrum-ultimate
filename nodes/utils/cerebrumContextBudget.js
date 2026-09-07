@@ -3,13 +3,15 @@
 const positiveInteger = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Math.floor(Number(value)) : 0
 
 const resolveCloudContextTokens = ({ model, contextLength } = {}) => {
-  // Official model pages, checked 2026-09-06. Match aliases and dated snapshots
+  // Official model pages, checked 2026-09-07. Match aliases and dated snapshots
   // exactly; unknown compatible endpoints must not inherit a guessed large limit.
-  const id = String(model || '').replace(/-\d{4}-\d{2}-\d{2}$/, '')
+  const id = String(model || '').trim().toLowerCase().replace(/-\d{4}-\d{2}-\d{2}$/, '')
   const known = {
     'gpt-6-astra': 1050000,
     'gpt-5.6-sol': 1050000,
     'gpt-5.6-terra': 1050000,
+    'gpt-5.5': 1050000,
+    'gpt-5.5-pro': 1050000,
     'gpt-5.4': 1050000,
     'gpt-4o': 128000,
     'gpt-4o-mini': 128000

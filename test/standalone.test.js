@@ -169,6 +169,8 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(editor.indexOf('id="cerebrum-detected-adapters-panel"')).to.be.lessThan(editor.indexOf('id="node-input-server"'))
     expect(editor.indexOf('id="cerebrum-detected-adapters-panel"')).to.be.lessThan(editor.indexOf('id="node-input-unifiProtectConfig"'))
     expect(editor).to.include('id="cerebrum-open-ets-access"')
+    expect(editor).to.include('llmMaxContextKb: { value: 0 }')
+    expect(editor).to.include('type="number" id="node-input-llmMaxContextKb"')
     expect(editor).to.include('params.set("tab", "etsAccess")')
     expect(editor).not.to.include('id="cerebrum-mount-ets-access"')
     expect(editor).not.to.include('id="cerebrum-ets-ga-list"')
@@ -303,12 +305,14 @@ describe('Cerebrum Ultimate standalone package', () => {
       server: '',
       unifiProtectConfig: '',
       llmEnabled: false,
+      llmMaxContextKb: 384,
       etsExposedGAs: [],
       etsReadOnlyGAs: []
     })
     expect(node.serverKNX).to.equal(undefined)
     expect(node.unifiProtectConfig).to.equal(undefined)
     expect(node.llmAllowRuntimeCode).to.equal(false)
+    expect(node.llmMaxContextKb).to.equal(384)
     expect(node._autonomyRuntime).to.be.an('object')
     expect(node.cerebrumAutonomyEnabled).to.equal(true)
     expect(node.cerebrumAutonomyAllowActions).to.equal(true)

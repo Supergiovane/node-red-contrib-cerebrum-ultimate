@@ -354,6 +354,7 @@
             llmReasoningEffort: { value: "default" },
             llmContextLength: { value: 0 },
             llmLocalContextTokens: { value: 0 },
+            llmMaxContextKb: { value: 0 },
             llmAllowKnxCommands: { value: false },
             llmRequireCommandConfirmation: { value: true },
             llmAllowRuntimeCode: { value: false },
@@ -818,6 +819,7 @@
 
             let lastChatContextOverview = null;
             const selectedLocalContextTokens = () => Math.max(0, Number($("#node-input-llmLocalContextTokens").val()) || 0);
+            const selectedMaxContextKb = () => Math.max(0, Math.floor(Number($("#node-input-llmMaxContextKb").val()) || 0));
             const formatCompactContextTokens = (value) => {
                 const tokens = Math.max(0, Number(value) || 0);
                 if (!tokens) return "?";
@@ -884,6 +886,10 @@
                     contextLimitTokens = selectedTokens > 0
                         ? (modelContextTokens > 0 ? Math.min(modelContextTokens, selectedTokens) : selectedTokens)
                         : modelContextTokens;
+                }
+                const configuredContextKb = selectedMaxContextKb();
+                if (configuredContextKb > 0 && contextLimitTokens > 0) {
+                    contextLimitTokens = Math.min(contextLimitTokens, configuredContextKb * 1024);
                 }
                 const contextLimitValue = contextLimitTokens
                     ? formatCompactContextTokens(contextLimitTokens) + " " + t("cerebrumUltimate.messages.chatContextTokens", "tokens")
@@ -1440,6 +1446,9 @@
                 updateLocalContextTokenOptions(detail);
                 if (detail) setLocalModelContextStatus(detail, detail.loadedContextLength > 0 ? "configured" : undefined);
             });
+            $("#node-input-llmMaxContextKb").on("input change", function () {
+                if (lastChatContextOverview) renderChatContextOverview(lastChatContextOverview);
+            });
             $("#cerebrum-downloadOllamaModel").on("click", function (evt) {
                 evt.preventDefault();
                 openOllamaLibrary();
@@ -1614,8 +1623,8 @@
 
             <div id="cerebrum-llm-connection-settings">
                 <div class="form-row">
-                    <label style="width:290px" for="node-input-llmProvider"><i class="fa fa-cog"></i> <span data-i18n="cerebrumUltimate.properties.llmProvider"></span></label>
-                    <select style="width:100%" id="node-input-llmProvider">
+                    <label  for="node-input-llmProvider"><i class="fa fa-cog"></i> <span data-i18n="cerebrumUltimate.properties.llmProvider"></span></label>
+                    <select style="width:200px" id="node-input-llmProvider">
                         <option value="openai_compat" data-i18n="cerebrumUltimate.selectlists.llmProvider.openai_compat"></option>
                         <option value="anthropic" data-i18n="cerebrumUltimate.selectlists.llmProvider.anthropic"></option>
                         <option value="ollama" data-i18n="cerebrumUltimate.selectlists.llmProvider.ollama"></option>
@@ -1623,20 +1632,20 @@
                     </select>
                 </div>
                 <div class="form-row" id="cerebrum-apikey-row">
-                    <label style="width:290px" for="node-input-llmApiKey"><i class="fa fa-key"></i> <span data-i18n="cerebrumUltimate.properties.llmApiKey"></span></label>
+                    <label  for="node-input-llmApiKey"><i class="fa fa-key"></i> <span data-i18n="cerebrumUltimate.properties.llmApiKey"></span></label>
                     <input type="password" id="node-input-llmApiKey" data-i18n="[placeholder]cerebrumUltimate.placeholder.llmApiKey">
                 </div>
 
                 <div class="form-row">
-                    <label style="width:290px" for="node-input-llmModel"><i class="fa fa-cube"></i> <span data-i18n="cerebrumUltimate.properties.llmModel"></span></label>
-                    <input style="width:calc(100% - 110px)" type="text" id="node-input-llmModel" autocomplete="off" data-i18n="[placeholder]cerebrumUltimate.placeholder.llmModel">
+                    <label  for="node-input-llmModel"><i class="fa fa-cube"></i> <span data-i18n="cerebrumUltimate.properties.llmModel"></span></label>
+                    <input style="width:150px" type="text" id="node-input-llmModel" autocomplete="off" data-i18n="[placeholder]cerebrumUltimate.placeholder.llmModel">
                     <button type="button" class="red-ui-button" id="cerebrum-refreshModels" style="margin-left:6px;" title="Refresh models">
                         <i class="fa fa-refresh"></i> <span data-i18n="cerebrumUltimate.buttons.refreshModels"></span>
                     </button>
                 </div>
                 <div class="form-row">
-                    <label style="width:290px" for="node-input-llmReasoningEffort"><i class="fa fa-tachometer"></i> <span data-i18n="cerebrumUltimate.properties.llmReasoningEffort"></span></label>
-                    <select style="width:100%" id="node-input-llmReasoningEffort">
+                    <label  for="node-input-llmReasoningEffort"><i class="fa fa-tachometer"></i> <span data-i18n="cerebrumUltimate.properties.llmReasoningEffort"></span></label>
+                    <select style="width:200px" id="node-input-llmReasoningEffort">
                         <option value="default" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.default"></option>
                         <option value="none" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.none"></option>
                         <option value="minimal" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.minimal"></option>
@@ -1648,11 +1657,16 @@
                     </select>
                     <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.reasoningEffortHint"></div>
                 </div>
+                <div class="form-row">
+                    <label  for="node-input-llmMaxContextKb"><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.properties.llmMaxContextKb"></span></label>
+                    <input style="width:100px" type="number" id="node-input-llmMaxContextKb" min="0" step="1">
+                    <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.maxContextKbHint"></div>
+                </div>
                 <input type="hidden" id="node-input-llmContextLength">
                 <div id="cerebrum-local-context-status" style="display:none;"></div>
                 <div class="form-row" id="cerebrum-local-context-row" style="display:none;">
-                    <label style="width:290px" for="node-input-llmLocalContextTokens"><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.properties.llmLocalContextTokens"></span></label>
-                    <select style="width:100%" id="node-input-llmLocalContextTokens">
+                    <label  for="node-input-llmLocalContextTokens"><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.properties.llmLocalContextTokens"></span></label>
+                    <select style="width:200px" id="node-input-llmLocalContextTokens">
                         <option value="0" data-i18n="cerebrumUltimate.selectlists.localContext.maximum"></option>
                         <option value="4096" data-context-tokens="4096" data-i18n="cerebrumUltimate.selectlists.localContext.k4"></option>
                         <option value="8192" data-context-tokens="8192" data-i18n="cerebrumUltimate.selectlists.localContext.k8"></option>
@@ -1677,19 +1691,19 @@
 
         <div id="cerebrum-tab-chat-adapter">
             <div class="form-row">
-                <label style="width:290px" for="node-input-chatAdapterPreset"><i class="fa fa-plug"></i> <span data-i18n="cerebrumUltimate.properties.chatAdapterPreset"></span></label>
-                <select style="width:100%" id="node-input-chatAdapterPreset">
+                <label  for="node-input-chatAdapterPreset"><i class="fa fa-plug"></i> <span data-i18n="cerebrumUltimate.properties.chatAdapterPreset"></span></label>
+                <select style="width:200px" id="node-input-chatAdapterPreset">
                     <option value="none" data-i18n="cerebrumUltimate.selectlists.chatAdapter.none"></option>
                 </select>
             </div>
             <div id="cerebrum-chat-adapter-fields" style="display:none;">
                 <div class="form-row">
-                    <label style="width:100%" for="node-input-chatInputCode"><i class="fa fa-sign-in"></i> <span data-i18n="cerebrumUltimate.properties.chatInputCode"></span></label>
+                    <label  for="node-input-chatInputCode"><i class="fa fa-sign-in"></i> <span data-i18n="cerebrumUltimate.properties.chatInputCode"></span></label>
                     <input type="hidden" id="node-input-chatInputCode">
                     <div id="node-input-chatInputCode-editor" class="node-text-editor cerebrum-chat-adapter-editor"></div>
                 </div>
                 <div class="form-row">
-                    <label style="width:100%" for="node-input-chatOutputCode"><i class="fa fa-sign-out"></i> <span data-i18n="cerebrumUltimate.properties.chatOutputCode"></span></label>
+                    <label  for="node-input-chatOutputCode"><i class="fa fa-sign-out"></i> <span data-i18n="cerebrumUltimate.properties.chatOutputCode"></span></label>
                     <input type="hidden" id="node-input-chatOutputCode">
                     <div id="node-input-chatOutputCode-editor" class="node-text-editor cerebrum-chat-adapter-editor"></div>
                 </div>
@@ -1701,7 +1715,7 @@
                 <p data-i18n="cerebrumUltimate.messages.homeIntelligenceIntro"></p>
             </div>
             <div class="form-row">
-                <label style="width:100%" for="cerebrum-ai-education-content"><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.properties.aiEducation"></span></label>
+                <label style="width:290px" for="cerebrum-ai-education-content"><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.properties.aiEducation"></span></label>
                 <textarea id="cerebrum-ai-education-content" maxlength="16000" disabled style="width:100%; min-height:180px; box-sizing:border-box;" data-i18n="[placeholder]cerebrumUltimate.placeholder.aiEducation"></textarea>
                 <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.aiEducationFileHelp"></div>
                 <div id="cerebrum-ai-education-status" role="status" aria-live="polite" class="cerebrum-prompt-context-hint"></div>
@@ -1717,8 +1731,8 @@
             </div>
             <div id="cerebrum-web-access-settings">
                 <div class="form-row">
-                    <label style="width:290px" for="node-input-webMaxCallsPerHour"><i class="fa fa-tachometer"></i> <span data-i18n="cerebrumUltimate.properties.webMaxCallsPerHour"></span></label>
-                    <input type="number" id="node-input-webMaxCallsPerHour" min="1" max="60" step="1" style="width:100%;">
+                    <label  for="node-input-webMaxCallsPerHour"><i class="fa fa-tachometer"></i> <span data-i18n="cerebrumUltimate.properties.webMaxCallsPerHour"></span></label>
+                    <input type="number" id="node-input-webMaxCallsPerHour" min="1" max="60" step="1" style="width:100px;">
                     <!-- <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.webBudgetHint"></div> -->
                 </div>
             </div>
@@ -1732,11 +1746,11 @@
                     <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.runtimeCodeHint"></div>
                 </div>
                 <div class="form-row">
-                    <label style="width:290px" for="node-input-llmBaseUrl"><i class="fa fa-link"></i> <span data-i18n="cerebrumUltimate.properties.llmBaseUrl"></span></label>
+                    <label  for="node-input-llmBaseUrl"><i class="fa fa-link"></i> <span data-i18n="cerebrumUltimate.properties.llmBaseUrl"></span></label>
                     <input type="text" id="node-input-llmBaseUrl" data-i18n="[placeholder]cerebrumUltimate.placeholder.llmBaseUrl">
                 </div>
                 <div class="form-row" id="cerebrum-ollama-install-row" style="display:none;">
-                    <label style="width:290px"><i class="fa fa-download"></i> Ollama</label>
+                    <label ><i class="fa fa-download"></i> Ollama</label>
                     <div class="cerebrum-ollama-actions">
                         <button type="button" class="red-ui-button" id="cerebrum-downloadOllamaModel">
                             <i class="fa fa-cloud-download"></i> <span data-i18n="cerebrumUltimate.buttons.downloadOllamaModel"></span>

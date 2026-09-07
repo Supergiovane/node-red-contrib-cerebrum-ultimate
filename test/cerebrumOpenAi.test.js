@@ -12,6 +12,8 @@ const {
 describe('Cerebrum context protection', () => {
   it('uses bounded cloud windows, snapshots and smaller configured limits', () => {
     expect(resolveCloudContextTokens({ model: 'gpt-6-astra-2026-09-05' })).to.equal(1050000)
+    expect(resolveCloudContextTokens({ model: ' GPT-5.5-2026-04-23 ' })).to.equal(1050000)
+    expect(resolveCloudContextTokens({ model: 'gpt-5.5-pro' })).to.equal(1050000)
     expect(resolveCloudContextTokens({ model: 'gpt-4o-mini', contextLength: 4096 })).to.equal(4096)
     expect(resolveCloudContextTokens({ model: 'gpt-4o-mini', contextLength: 9999999 })).to.equal(128000)
     for (const contextLength of [0, -1, Infinity, NaN]) {
@@ -21,6 +23,10 @@ describe('Cerebrum context protection', () => {
       expect(resolveCerebrumOperationalContextLimit({ provider, contextLength: 4096 }).tokens).to.equal(4096)
     }
     expect(resolveCerebrumOperationalContextLimit({ provider: 'openai_compat', model: 'gpt-6-astra' }).tokens).to.equal(1050000)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'openai_compat', model: 'gpt-5.5', maxContextKb: 512 }).tokens).to.equal(512 * 1024)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'openai_compat', model: 'gpt-5.5', maxContextKb: 2048 }).tokens).to.equal(1050000)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'openai_compat', model: 'custom-model', maxContextKb: 64 }).tokens).to.equal(64 * 1024)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'ollama', contextLength: 131072, maxContextKb: 64 }).tokens).to.equal(64 * 1024)
   })
 
   it('bounds large memory/catalogs without mutating input or losing trusted instructions', () => {

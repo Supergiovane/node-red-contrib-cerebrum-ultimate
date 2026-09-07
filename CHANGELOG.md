@@ -1,7 +1,8 @@
 # Changelog
 
-## 0.1.4 — 2026-09-07
+## 0.1.5 — 2026-09-07
 
+- Recognize the full 1,050,000-token GPT-5.5/GPT-5.5 Pro context window instead of falling back to 8,192 tokens. Added a free **Maximum managed context (KB)** editor field: zero follows the model maximum automatically, while positive values cap all conversational and autonomous requests without exceeding known or detected physical limits.
 - Simplified the Web Learning screen to show learned instructions first, with conversations, observed behaviour and file tools in collapsed details. Memory, Goals, Web Research and Activity now keep primary information visible while filters, collection statistics and complete record details remain expandable.
 - Fixed GA selection loss during ZIP migration: preserve flow-based access on the first export, copy current file-backed selections/read-only permissions into portable flows, recover legacy access from the source flow, and refresh the ETS screen after restore. Saved selections survive destination node/gateway changes and restarts, including while the catalog is unavailable.
 - Added explicit current KNX capability diagnostics to every conversational pass and context fallback. Distinguishes missing gateways/catalogs, unconfigured or unmatched ETS selections, read-only objects and disabled commands from details awaiting retrieval; newly saved access supersedes older chat unavailability claims.

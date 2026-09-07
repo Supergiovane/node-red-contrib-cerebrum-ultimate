@@ -50,7 +50,7 @@ If processing takes longer than 1.2 seconds, output 3 emits the localized interm
 
 Every LLM chat request uses a provider-independent minimum timeout of 30 minutes. There is no timeout field to maintain in the editor. This is a maximum wait, not an artificial delay: faster models still finish as soon as their response is ready. If even this limit is reached, Cerebrum reports that the model did not finish and suggests retrying or reducing the prompt context.
 
-Cerebrum no longer exposes an application context-size selector. The complete selected ETS catalog stays inside the node and the model queries it through bounded local retrieval actions; only the retrieved objects enter the prompt. Search covers exact addresses, ETS names, aliases, hierarchy, areas, semantics, DPTs and value labels, with accent-insensitive and typo-tolerant ranking, plus exact lookup, area browsing and related command/status discovery. Without an explicit time range, KNX and adapter events cover the last 20 minutes. Packaged help, README, wiki, examples and changelog content are never embedded; the model may use the Web tool to consult public GitHub documentation when needed. Retrieved ETS data, the current request and archive rows each appear once, while only derived bus aggregates remain in the analysis block. Complete Function source is added only for an explicit Function-code review. Cerebrum does not retry an oversized request by compacting the prompt.
+Cerebrum exposes a free numeric maximum-managed-context limit in KB. Zero automatically uses the selected model's known or detected maximum; a positive value caps every request without exceeding that physical window and can declare the effective limit of an otherwise unknown compatible endpoint. The complete selected ETS catalog stays inside the node and the model queries it through bounded local retrieval actions; only the retrieved objects enter the prompt. Search covers exact addresses, ETS names, aliases, hierarchy, areas, semantics, DPTs and value labels, with accent-insensitive and typo-tolerant ranking, plus exact lookup, area browsing and related command/status discovery. Without an explicit time range, KNX and adapter events cover the last 20 minutes. Packaged help, README, wiki, examples and changelog content are never embedded; the model may use the Web tool to consult public GitHub documentation when needed. Retrieved ETS data, the current request and archive rows each appear once, while only derived bus aggregates remain in the analysis block. Complete Function source is added only for an explicit Function-code review.
 
 Before each request to a local model, Cerebrum reserves answer space from the active 8K/16K window. It automatically bounds the newest conversation turns, exact archive rows, learned home memory, Web results, schedules, requested Function source, retrieved ETS objects and camera metadata. This is proactive prompt construction, not an oversized-request retry, and the complete selected ETS catalog remains available locally through retrieval.
 
@@ -174,6 +174,7 @@ All fields exposed in the Cerebrum editor are listed below.
 - **API key**: API key (not required for local Ollama; optional for Bionic LM Studio unless server authentication is enabled).
 - **Model**: Model ID/name.
 - **Reasoning effort**: Provider-agnostic preference for models that expose reasoning-effort control. **Automatic** sends no preference and preserves the model/provider default. Explicit choices are `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`; support depends on the request protocol and model, and Cerebrum retries without the preference if it is rejected.
+- **Maximum managed context (KB)**: free numeric limit for every model request. `0` uses the known or detected model maximum automatically; a positive value sets a lower cap and, for an unknown compatible model, declares the endpoint's effective limit.
 - **Allow the AI to use the Web**: Off by default. Lets the model choose the general Web tool semantically and return verified, cited sources.
 - **Maximum Web calls per hour**: Rolling budget shared by conversations and user-created scheduled tasks. Each turn or scheduled run can use at most three operations in total.
 - **Allow the AI to run privileged local JavaScript**: Off by default. Lets the model generate synchronous code with direct access to the live `node` and `RED` objects and use the bounded result in a following reasoning pass. This is not a security sandbox: the code can affect Node-RED with the permissions of its process, and results are sent to the selected model provider. Enable it only with a trusted model and instructions.
@@ -194,7 +195,7 @@ All fields exposed in the Cerebrum editor are listed below.
   - **2) Install it**: downloads and installs the model locally (for example `llama3.1`).
 - During model refresh/install, Cerebrum also tries to auto-start the Ollama server when possible.
 - If install fails with connection errors, ensure Ollama is running (desktop app or `ollama serve`).
-- The maximum context reported by `/api/show` is used directly as `num_ctx`. Cerebrum applies no smaller prompt budget and sends the deduplicated operational prompt without size-based compaction, never beyond the model's declared physical maximum.
+- The maximum context reported by `/api/show` is used as `num_ctx`, capped by **Maximum managed context (KB)** when configured and never allowed past the model's declared physical maximum.
 - If Node-RED runs in Docker, use `host.docker.internal` instead of `localhost` in the endpoint URL.
 
 ### Bionic LM Studio quick setup (local)
@@ -202,7 +203,7 @@ All fields exposed in the Cerebrum editor are listed below.
 - Start the LM Studio API server from the **Developer** page or with `lms server start`.
 - Default endpoint: `http://localhost:1234/v1/chat/completions`.
 - Click **Refresh** to load all models exposed by `/v1/models`; the first model is selected when none is configured.
-- When a model is already loaded, Cerebrum preserves its active context length. Cerebrum never loads an inactive Bionic model through the management API: the first chat request lets Bionic JIT-load it with its saved per-model defaults. Every available prompt context is sent without an application size budget; if it does not fit the active model window, the request fails explicitly.
+- When a model is already loaded, Cerebrum preserves its active context length. Cerebrum never loads an inactive Bionic model through the management API: the first chat request lets Bionic JIT-load it with its saved per-model defaults. The configured managed-context limit may reduce the prompt budget but can never increase the active model window.
 - An API key is optional unless authentication is enabled in the LM Studio server settings. In Docker, replace `localhost` with `host.docker.internal`.
 
 ## Security note
