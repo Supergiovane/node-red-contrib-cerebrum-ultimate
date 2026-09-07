@@ -3,8 +3,12 @@
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
+const os = require('os')
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024
+// Only JSON metadata is held in memory. ZIPs and their daily archives use disk.
+const archiveSources = new WeakMap()
+const backupCleanups = new WeakMap()
 const digest = content => crypto.createHash('sha256').update(content, 'utf8').digest('hex')
 const backupError = message => Object.assign(new Error(message), { status: 400 })
 const clone = value => JSON.parse(JSON.stringify(value))
@@ -20,11 +24,75 @@ function validateFile (file, id) {
   return file.content
 }
 
+function createBackupDirectory () {
+  const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'cerebrum-backup-'))
+  return { directory, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) }
+}
+
+function registerBackupCleanup (backup, cleanup) { backupCleanups.set(backup, cleanup) }
+function disposeBackup (backup) {
+  const cleanup = backupCleanups.get(backup)
+  backupCleanups.delete(backup)
+  if (cleanup) cleanup()
+}
+
+function registerBackupArchive (file, filePath, bytes, sha256) {
+  if (!file || file.encoding !== 'utf8' || file.bytes !== bytes || file.sha256 !== sha256 || Object.hasOwn(file, 'content')) throw backupError('Invalid or damaged backup archive')
+  archiveSources.set(file, { filePath, bytes, sha256 })
+  return file
+}
+
+function backupArchiveSource (file) { return archiveSources.get(file)?.filePath }
+
+function snapshotArchive (id, name, source, destination) {
+  fs.mkdirSync(path.dirname(destination), { recursive: true })
+  fs.copyFileSync(source, destination, fs.constants.COPYFILE_FICLONE)
+  fs.chmodSync(destination, 0o600)
+  const hash = crypto.createHash('sha256')
+  const buffer = Buffer.allocUnsafe(64 * 1024)
+  const fd = fs.openSync(destination, 'r')
+  let bytes = 0
+  try {
+    let size
+    while ((size = fs.readSync(fd, buffer, 0, buffer.length, null))) {
+      bytes += size
+      hash.update(buffer.subarray(0, size))
+    }
+  } finally { fs.closeSync(fd) }
+  const sha256 = hash.digest('hex')
+  return registerBackupArchive({ id, name, mediaType: 'text/plain', encoding: 'utf8', bytes, sha256 }, destination, bytes, sha256)
+}
+
+function validateArchiveFile (file, id) {
+  const source = archiveSources.get(file)
+  if (!source) return validateFile(file, id)
+  if (file.id !== id || file.encoding !== 'utf8' || file.bytes !== source.bytes || file.sha256 !== source.sha256 || Object.hasOwn(file, 'content')) throw backupError(`Invalid or damaged backup file: ${id}`)
+}
+
 // These logical names are resolved locally. A backup can never choose a disk path.
 const archiveNames = ['history', 'adapterHistory', 'operations']
 const singleNames = ['habitLearning', 'worldModel', 'worldObservations', 'runtimeState', 'lastChatPrompt', 'legacyAreas']
 const optionalSingleNames = new Set(['worldModel', 'worldObservations', 'runtimeState'])
 const archivePattern = /^\d{4}-\d{2}-\d{2}\.(?:knxctx|jsonl)$/
+
+function mapBackupArchives (backup, visit) {
+  if (!backup.supplementalFiles) return { ...backup }
+  const supplementalFiles = { ...backup.supplementalFiles }
+  for (const group of archiveNames) {
+    if (Array.isArray(supplementalFiles[group])) supplementalFiles[group] = supplementalFiles[group].map(file => visit(file, group))
+  }
+  return { ...backup, supplementalFiles }
+}
+
+function assertBackupSize (backup) {
+  const metadata = mapBackupArchives(backup, file => {
+    if (!file || (typeof file.content !== 'string' && !backupArchiveSource(file))) throw backupError('Invalid backup archive content')
+    const { content, ...info } = file
+    return info
+  })
+  const metadataBytes = Buffer.byteLength(JSON.stringify(metadata), 'utf8')
+  if (metadataBytes > MAX_BACKUP_BYTES) throw Object.assign(new Error('Backup metadata exceeds 256 MiB'), { status: 413 })
+}
 
 function assertRegularPath (filePath, directory = false) {
   // Reject symlinks in every existing path component, including the storage root.
@@ -39,7 +107,7 @@ function assertRegularPath (filePath, directory = false) {
   }
 }
 
-function readSupplementalFiles (locations) {
+function readSupplementalFiles (locations, { archiveDirectory } = {}) {
   const result = {}
   for (const group of archiveNames) {
     const dir = locations[group]
@@ -48,7 +116,9 @@ function readSupplementalFiles (locations) {
       ? fs.readdirSync(dir).sort().filter(name => archivePattern.test(name)).map(name => {
         const filePath = path.join(dir, name)
         assertRegularPath(filePath)
-        return backupFile(`${group}/${name}`, name, fs.readFileSync(filePath, 'utf8'))
+        return archiveDirectory
+          ? snapshotArchive(`${group}/${name}`, name, filePath, path.join(archiveDirectory, group, name))
+          : backupFile(`${group}/${name}`, name, fs.readFileSync(filePath, 'utf8'))
       })
       : []
   }
@@ -56,6 +126,7 @@ function readSupplementalFiles (locations) {
     const filePath = locations[id]
     if (optionalSingleNames.has(id) && !filePath) continue
     assertRegularPath(filePath)
+    if (fs.existsSync(filePath) && fs.statSync(filePath).size > MAX_BACKUP_BYTES) throw Object.assign(new Error('Backup metadata file exceeds 256 MiB'), { status: 413 })
     result[id] = fs.existsSync(filePath) ? backupFile(id, path.basename(filePath), fs.readFileSync(filePath, 'utf8')) : null
   }
   return result
@@ -69,7 +140,7 @@ function validateSupplementalFiles (files) {
     for (const file of files[group]) {
       if (!file || typeof file.name !== 'string' || !archivePattern.test(file.name) || names.has(file.name)) throw backupError(`Invalid or duplicate ${group} filename`)
       names.add(file.name)
-      validateFile(file, `${group}/${file.name}`)
+      validateArchiveFile(file, `${group}/${file.name}`)
     }
   }
   for (const id of singleNames) {
@@ -91,7 +162,15 @@ function replaceSupplementalFiles (files, locations, writeFile) {
     for (const file of files[group]) {
       const filePath = path.join(dir, file.name)
       assertRegularPath(filePath)
-      writeFile({ filePath, content: file.content })
+      const source = backupArchiveSource(file)
+      if (source) {
+        fs.mkdirSync(dir, { recursive: true })
+        const temporary = path.join(dir, `.restore-${crypto.randomUUID()}.tmp`)
+        try {
+          fs.copyFileSync(source, temporary, fs.constants.COPYFILE_FICLONE)
+          fs.renameSync(temporary, filePath)
+        } finally { fs.rmSync(temporary, { force: true }) }
+      } else writeFile({ filePath, content: file.content })
     }
     if (fs.existsSync(dir)) {
       for (const name of fs.readdirSync(dir).filter(name => archivePattern.test(name) && !names.has(name))) {
@@ -188,9 +267,11 @@ function buildMigrationFlows (RED, node, config) {
 // Small requests bypass Node-RED's JSON body limit without changing global settings.
 function createBackupUploads () {
   const uploads = new Map()
-  const remove = id => {
-    clearTimeout(uploads.get(id)?.timer)
+  const remove = (id, preserveFile = false) => {
+    const upload = uploads.get(id)
+    clearTimeout(upload?.timer)
     uploads.delete(id)
+    if (!preserveFile) upload?.cleanup()
   }
   const prune = () => {
     for (const [id, upload] of uploads) if (Date.now() - upload.updatedAt > 10 * 60 * 1000) remove(id)
@@ -198,33 +279,36 @@ function createBackupUploads () {
   return {
     append ({ owner, nodeId, uploadId, index, total, chunk }) {
       prune()
-      if (!Number.isInteger(index) || !Number.isInteger(total) || total < 1 || total > 8192 || index < 0 || index >= total || typeof chunk !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(chunk) || chunk.length > 65536) throw backupError('Invalid backup upload chunk')
+      if (!Number.isSafeInteger(index) || !Number.isSafeInteger(total) || total < 1 || index < 0 || index >= total || typeof chunk !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(chunk) || chunk.length > 65536) throw backupError('Invalid backup upload chunk')
       if (!uploadId && index === 0) {
         if (uploads.size >= 4) throw Object.assign(new Error('Too many backup uploads'), { status: 429 })
         uploadId = crypto.randomUUID()
-        uploads.set(uploadId, { owner, nodeId, total, chunks: [], bytes: 0 })
+        const temporary = createBackupDirectory()
+        const filePath = path.join(temporary.directory, 'upload')
+        try { fs.writeFileSync(filePath, '', { flag: 'wx', mode: 0o600 }) } catch (error) { temporary.cleanup(); throw error }
+        uploads.set(uploadId, { owner, nodeId, total, nextIndex: 0, filePath, cleanup: temporary.cleanup })
       }
       const upload = uploads.get(uploadId)
-      if (!upload || upload.owner !== owner || upload.nodeId !== nodeId || upload.total !== total || upload.chunks.length !== index) throw backupError('Expired or out-of-order backup upload')
+      if (!upload || upload.owner !== owner || upload.nodeId !== nodeId || upload.total !== total || upload.nextIndex !== index) throw backupError('Expired or out-of-order backup upload')
       const data = Buffer.from(chunk, 'base64')
-      upload.bytes += data.length
-      if (upload.bytes > MAX_BACKUP_BYTES) {
-        remove(uploadId)
-        throw Object.assign(new Error('Backup exceeds 256 MiB'), { status: 413 })
-      }
+      try { fs.appendFileSync(upload.filePath, data) } catch (error) { remove(uploadId); throw error }
+      upload.nextIndex++
       upload.updatedAt = Date.now()
       clearTimeout(upload.timer)
       upload.timer = setTimeout(() => remove(uploadId), 10 * 60 * 1000)
       upload.timer.unref()
-      upload.chunks.push(data)
       return { uploadId }
     },
-    takeBuffer ({ owner, nodeId, uploadId }) {
+    takeFile ({ owner, nodeId, uploadId }) {
       prune()
       const upload = uploads.get(uploadId)
-      if (!upload || upload.owner !== owner || upload.nodeId !== nodeId || upload.chunks.length !== upload.total) throw backupError('Incomplete or expired backup upload')
-      remove(uploadId)
-      return Buffer.concat(upload.chunks)
+      if (!upload || upload.owner !== owner || upload.nodeId !== nodeId || upload.nextIndex !== upload.total) throw backupError('Incomplete or expired backup upload')
+      remove(uploadId, true)
+      return { filePath: upload.filePath, cleanup: upload.cleanup }
+    },
+    takeBuffer (request) {
+      const upload = this.takeFile(request)
+      try { return fs.readFileSync(upload.filePath) } finally { upload.cleanup() }
     },
     take (request) {
       return JSON.parse(this.takeBuffer(request).toString('utf8'))
@@ -232,4 +316,4 @@ function createBackupUploads () {
   }
 }
 
-module.exports = { MAX_BACKUP_BYTES, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads }
+module.exports = { MAX_BACKUP_BYTES, mapBackupArchives, assertBackupSize, createBackupDirectory, registerBackupCleanup, disposeBackup, registerBackupArchive, backupArchiveSource, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads }

@@ -6462,17 +6462,6 @@ async function runActuatorTest() {
   }
 }
 
-function downloadBackupBlob(blob, name) {
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = name;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
-}
-
 async function exportFullConfig() {
   if (!state.selectedNodeId || backupBusy.value) return;
   const nodeId = state.selectedNodeId;
@@ -6485,19 +6474,28 @@ async function exportFullConfig() {
       credentials: "same-origin",
       cache: "no-store",
       headers: withAuthHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ nodeId, format: "zip" }),
+      body: JSON.stringify({ nodeId, format: "zip", download: true }),
     });
     const contentType = String(response.headers.get("content-type") || "").toLowerCase();
-    if (!response.ok || !contentType.includes("application/zip")) {
+    if (!response.ok || !contentType.includes("application/json")) {
       if ([401, 403].includes(response.status) || contentType.includes("text/html")) {
         throw new Error("Authentication required or insufficient permissions (session token missing or expired).");
       }
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || "Failed to export Cerebrum backup");
     }
-    const blob = await response.blob();
-    const safeNodeId = nodeId.replace(/[^a-zA-Z0-9_-]/g, "_");
-    downloadBackupBlob(blob, `cerebrum-backup-${safeNodeId}-${new Date().toISOString().slice(0, 10)}.zip`);
+    const download = await response.json();
+    if (!download.downloadId || !download.filename) throw new Error("Failed to export Cerebrum backup");
+    const url = new URL(apiUrl("config/download"), window.location.href);
+    url.searchParams.set("nodeId", nodeId);
+    url.searchParams.set("downloadId", download.downloadId);
+    const link = document.createElement("a");
+    link.href = url.href;
+    link.download = download.filename;
+    link.referrerPolicy = "no-referrer";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
     setStatus("Cerebrum backup exported");
   } catch (error) {
     state.lastError =
@@ -6521,11 +6519,11 @@ async function importFullConfig(event) {
   const nodeId = state.selectedNodeId;
   backupBusy.value = true;
   try {
-    if (file.size > 256 * 1024 * 1024) throw new Error("Backup exceeds 256 MiB");
     state.lastError = "";
     const signature = new Uint8Array(await file.slice(0, 4).arrayBuffer());
     const isZip = signature[0] === 0x50 && signature[1] === 0x4b;
     if (!isZip) {
+      if (file.size > 256 * 1024 * 1024) throw new Error("Backup JSON metadata exceeds 256 MiB");
       const parsed = JSON.parse((await file.text()).replace(/^\uFEFF/, ""));
       if (parsed?.format !== "cerebrum-ultimate-backup" || ![1, 2].includes(parsed.version)) throw new Error("Unsupported Cerebrum backup");
     }

@@ -11,8 +11,9 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const unreadableCerebrumFiles = new Set()
-const { MAX_BACKUP_BYTES, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads } = require('./utils/cerebrumBackup')
-const { createBackupZip, decodeBackupUpload } = require('./utils/cerebrumBackupZip')
+const { MAX_BACKUP_BYTES, assertBackupSize, createBackupDirectory, registerBackupCleanup, disposeBackup, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads } = require('./utils/cerebrumBackup')
+const { createBackupZipFile, decodeBackupFile, createBackupDownloads } = require('./utils/cerebrumBackupZip')
+const { pipeline } = require('stream/promises')
 const { spawn } = require('child_process')
 const simpleGet = require('simple-get')
 const CEREBRUM_CHAT_ADAPTER_MAPPINGS = require('../resources/CerebrumChatAdapterMappings')
@@ -6530,7 +6531,30 @@ module.exports = function (RED) {
       }
     })
 
+    const backupDownloads = createBackupDownloads()
+    const sendBackupDownload = async (archive, res) => {
+      res.set('Cache-Control', 'no-store')
+      res.set('Referrer-Policy', 'no-referrer')
+      res.set('Content-Type', 'application/zip')
+      res.set('Content-Disposition', `attachment; filename="${archive.filename}"`)
+      res.set('Content-Length', String(archive.bytes))
+      await pipeline(fs.createReadStream(archive.filePath), res)
+    }
+    // A single-use, short-lived capability issued only by the flows.write
+    // endpoint lets the browser download natively without an auth header.
+    RED.httpAdmin.get('/cerebrumUltimate/sidebar/config/download', async (req, res) => {
+      let archive
+      try {
+        archive = backupDownloads.take({ nodeId: String(req.query?.nodeId || ''), downloadId: String(req.query?.downloadId || '') })
+        await sendBackupDownload(archive, res)
+      } catch (error) {
+        if (!res.headersSent && !res.destroyed) res.status(error.status || 500).json({ error: error.message || String(error) })
+      } finally { archive?.cleanup() }
+    })
+
     RED.httpAdmin.post('/cerebrumUltimate/sidebar/config/export', RED.auth.needsPermission('flows.write'), async (req, res) => {
+      let ret
+      let archive
       try {
         const nodeId = req.body?.nodeId ? String(req.body.nodeId) : ''
         if (!nodeId) {
@@ -6542,20 +6566,22 @@ module.exports = function (RED) {
           res.status(404).json({ error: 'Cerebrum node not found' })
           return
         }
-        const ret = await n.exportAiConfig()
+        ret = await n.exportAiConfig({ format: req.body?.format })
         res.set('Cache-Control', 'no-store')
         if (req.body?.format === 'zip') {
-          const archive = await createBackupZip(ret)
+          archive = await createBackupZipFile(ret)
           const filename = `cerebrum-backup-${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}-${new Date().toISOString().slice(0, 10)}.zip`
-          res.set('Content-Type', 'application/zip')
-          res.set('Content-Disposition', `attachment; filename="${filename}"`)
-          res.send(archive)
+          if (req.body?.download === true) {
+            const ticket = backupDownloads.add({ ...archive, nodeId, filename })
+            archive = null // The download ticket owns the temporary ZIP now.
+            res.json(ticket)
+          } else await sendBackupDownload({ ...archive, filename }, res)
         } else {
           res.json(ret)
         }
       } catch (error) {
-        res.status(error.status || 500).json({ error: error.message || String(error) })
-      }
+        if (!res.headersSent && !res.destroyed) res.status(error.status || 500).json({ error: error.message || String(error) })
+      } finally { if (ret) disposeBackup(ret); archive?.cleanup() }
     })
 
     const backupUploads = createBackupUploads()
@@ -6571,11 +6597,14 @@ module.exports = function (RED) {
     })
 
     RED.httpAdmin.post('/cerebrumUltimate/sidebar/config/import', RED.auth.needsPermission('cerebrumUltimate.write'), async (req, res) => {
+      let upload
+      let configPayload
       try {
         const nodeId = req.body?.nodeId ? String(req.body.nodeId) : ''
-        const configPayload = req.body?.uploadId
-          ? await decodeBackupUpload(backupUploads.takeBuffer({ owner: String(req.user?.username || ''), nodeId, uploadId: req.body.uploadId }))
-          : req.body?.config
+        if (req.body?.uploadId) {
+          upload = backupUploads.takeFile({ owner: String(req.user?.username || ''), nodeId, uploadId: req.body.uploadId })
+          configPayload = await decodeBackupFile(upload.filePath)
+        } else configPayload = req.body?.config
         if (!nodeId) {
           res.status(400).json({ error: 'Missing nodeId' })
           return
@@ -6589,7 +6618,7 @@ module.exports = function (RED) {
         res.json(ret)
       } catch (error) {
         res.status(error.status || 500).json({ error: error.message || String(error) })
-      }
+      } finally { if (configPayload) disposeBackup(configPayload); upload?.cleanup() }
     })
 
     RED.httpAdmin.post('/cerebrumUltimate/sidebar/actuator-tests/save', RED.auth.needsPermission('cerebrumUltimate.write'), async (req, res) => {
@@ -10133,7 +10162,7 @@ module.exports = function (RED) {
       legacyAreas: getLegacyAreaStorageFile()
     })
 
-    const buildAiConfigExport = () => {
+    const buildAiConfigExport = ({ archiveDirectory } = {}) => {
       const configurationPath = getAiConfigStorageFile()
       const chatLearningPath = getChatContextFile()
       const homeMemoryPath = getHomeMemoryFile()
@@ -10142,7 +10171,7 @@ module.exports = function (RED) {
       return {
         format: 'cerebrum-ultimate-backup',
         version: 2,
-        supplementalFiles: readSupplementalFiles(getBackupSupplementalLocations()),
+        supplementalFiles: readSupplementalFiles(getBackupSupplementalLocations(), { archiveDirectory }),
         migration: buildMigrationFlows(RED, node, config),
         exportedAt: new Date().toISOString(),
         node: {
@@ -11554,7 +11583,7 @@ module.exports = function (RED) {
       }
     }
 
-    node.exportAiConfig = async () => {
+    node.exportAiConfig = async ({ format } = {}) => {
       await flushBackupArchiveWrites()
       writePersistedAiConfig(loadPersistedAiConfig())
       if (!scheduleChatContextPersist({ immediate: true })) throw new Error('Unable to prepare Cerebrum Learning for export')
@@ -11562,10 +11591,15 @@ module.exports = function (RED) {
       if (!scheduleScheduleStorePersist({ immediate: true })) throw new Error('Unable to prepare Cerebrum schedules for export')
       scheduleRuntimeStatePersist({ immediate: true })
       node._autonomyRuntime?.checkpoint()
-      const backup = buildAiConfigExport()
-      validateSupplementalFiles(backup.supplementalFiles)
-      if (Buffer.byteLength(JSON.stringify(backup, null, 2), 'utf8') > MAX_BACKUP_BYTES) throw Object.assign(new Error('Backup exceeds 256 MiB; copy the complete Cerebrum storage directory with Node-RED stopped.'), { status: 413 })
-      return backup
+      const temporary = format === 'zip' ? createBackupDirectory() : null
+      try {
+        const backup = buildAiConfigExport({ archiveDirectory: temporary?.directory })
+        validateSupplementalFiles(backup.supplementalFiles)
+        assertBackupSize(backup)
+        if (format !== 'zip' && Buffer.byteLength(JSON.stringify(backup, null, 2), 'utf8') > MAX_BACKUP_BYTES) throw Object.assign(new Error('JSON backup exceeds 256 MiB; download the compressed ZIP instead.'), { status: 413 })
+        if (temporary) registerBackupCleanup(backup, temporary.cleanup)
+        return backup
+      } catch (error) { temporary?.cleanup(); throw error }
     }
 
     node.getChatLearningFile = async () => {
@@ -11618,7 +11652,7 @@ module.exports = function (RED) {
       if (p.format !== 'cerebrum-ultimate-backup' || ![1, 2].includes(p.version)) {
         throw Object.assign(new Error('Unsupported backup. Import a Cerebrum backup version 1 or 2.'), { status: 400 })
       }
-      if (Buffer.byteLength(JSON.stringify(p), 'utf8') > MAX_BACKUP_BYTES) throw Object.assign(new Error('Backup exceeds 256 MiB'), { status: 413 })
+      assertBackupSize(p)
       if (p.version === 2) {
         validateSupplementalFiles(p.supplementalFiles)
         validateFile(p.migration && p.migration.flows, 'nodeRedFlows')
@@ -11694,6 +11728,7 @@ module.exports = function (RED) {
       const previousChatContext = node._chatContext
       const previousHomeMemory = node._homeMemory
       const previousScheduleStore = node._scheduleStore
+      const rollback = p.version === 2 ? createBackupDirectory() : null
       try {
         await node._autonomyRuntime?.close()
         node._autonomyRuntime = null
@@ -11702,7 +11737,7 @@ module.exports = function (RED) {
           scheduleRuntimeStatePersist({ immediate: true })
           // Capture rollback state after any in-flight autonomous claim/research
           // has finished persisting, so rollback cannot erase its reservation.
-          previousSupplemental = p.version === 2 ? readSupplementalFiles(getBackupSupplementalLocations()) : null
+          previousSupplemental = p.version === 2 ? readSupplementalFiles(getBackupSupplementalLocations(), { archiveDirectory: rollback.directory }) : null
           writePersistedAiConfig({
             etsAccess: nextEtsAccess,
             areas: nextAreas,
@@ -11760,6 +11795,7 @@ module.exports = function (RED) {
           throw error
         }
       } finally {
+        rollback?.cleanup()
         initializeAutonomyRuntime()
       }
       if (p.version === 2) {

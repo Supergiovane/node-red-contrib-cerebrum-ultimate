@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 — 2026-09-07
+
+- Fixed ZIP backups failing when retained histories exceed 256 MiB. Version 3 stores daily archives as separate ZIP entries, prepares downloads on disk and uses native browser downloads.
+- Removed fixed ZIP upload/download and total archive byte limits. Restore stages uploads, decoded archives and rollback copies on disk, preserves integrity checks and keeps previous JSON/ZIP backups importable.
+
 ## 0.1.0 — 2026-09-07
 
 - Unified the Web dashboard with the neural-map palette, reorganized navigation and responsive layouts, and made the Neural Map the default opening page while preserving direct links to other sections.

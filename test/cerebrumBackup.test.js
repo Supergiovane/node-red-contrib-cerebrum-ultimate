@@ -7,7 +7,9 @@ const yauzl = require('yauzl')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const crypto = require('crypto')
 const { EventEmitter } = require('events')
+const { Writable } = require('stream')
 const { backupFile, createBackupUploads, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows } = require('../nodes/utils/cerebrumBackup')
 const { createBackupZip, decodeBackupUpload } = require('../nodes/utils/cerebrumBackupZip')
 const Module = require('module')
@@ -39,7 +41,7 @@ describe('Cerebrum portable backup', () => {
     ]
     const RED = {
       auth: { needsPermission: () => noop },
-      httpAdmin: { get: noop, post: (url, permission, handler) => routes.set(url, handler), use: noop },
+      httpAdmin: { get: (url, ...handlers) => routes.set(url, handlers.at(-1)), post: (url, permission, handler) => routes.set(url, handler), use: noop },
       settings: { userDir: path.join(root, id), httpAdminRoot: '/' },
       nodes: {
         getNode: () => undefined,
@@ -60,13 +62,14 @@ describe('Cerebrum portable backup', () => {
   }
   async function request (node, action, body = {}) {
     const response = { statusCode: 200, headers: {} }
-    const res = {
-      status: code => { response.statusCode = code; return res },
-      set: (key, value) => { response.headers[key.toLowerCase()] = value; return res },
-      json: value => { response.body = value },
-      send: value => { response.body = value }
-    }
-    await routes.get(`/cerebrumUltimate/sidebar/config/${action}`)({ body: { nodeId: node.id, ...body }, user: { username: 'backup-user' } }, res)
+    const chunks = []
+    const res = new Writable({ write: (chunk, encoding, callback) => { chunks.push(chunk); callback() } })
+    res.on('finish', () => { response.body = Buffer.concat(chunks) })
+    res.status = code => { response.statusCode = code; return res }
+    res.set = (key, value) => { response.headers[key.toLowerCase()] = value; return res }
+    res.json = value => { response.body = value }
+    res.send = value => { response.body = value }
+    await routes.get(`/cerebrumUltimate/sidebar/config/${action}`)({ body: { nodeId: node.id, ...body }, query: { nodeId: node.id, ...body }, user: { username: 'backup-user' } }, res)
     return response
   }
   async function zipEntries (entries) {
@@ -381,9 +384,99 @@ describe('Cerebrum portable backup', () => {
     expect(JSON.parse(files['cerebrum-flows.json'])).to.deep.equal(JSON.parse(backup.migration.flows.content))
     expect(JSON.parse(files['required-packages.json'])).to.deep.equal(backup.migration.dependencies)
     expect(files['README.txt']).to.include('Ripristina ZIP')
+    expect(JSON.parse(files['cerebrum-backup.json']).version).to.equal(3)
     expect(await decodeBackupUpload(bytes)).to.deep.equal(backup)
     expect(await decodeBackupUpload(Buffer.from(JSON.stringify(backup)))).to.deep.equal(backup)
     expect((await request(node, 'export')).body.format).to.equal('cerebrum-ultimate-backup')
+  })
+
+  it('downloads and restores over 512 MiB of history, including individual files over 256 MiB', async function () {
+    this.timeout(60000)
+    const source = create('large-source')
+    const block = 'KNX history marker è casa 🏠\n'.repeat(1024)
+    const content = Buffer.from(block.repeat(Math.ceil(1024 * 1024 / Buffer.byteLength(block))))
+    const copies = 260
+    const contentBytes = content.length * copies
+    const expectedHash = crypto.createHash('sha256')
+    for (let index = 0; index < copies; index++) expectedHash.update(content)
+    const digest = expectedHash.digest('hex')
+    const names = Array.from({ length: 2 }, (_, index) => `${new Date(Date.now() - index * 86400000).toISOString().slice(0, 10)}.knxctx`)
+    for (const name of names) {
+      seed(source, `history/large-source/${name}`, '')
+      const fd = fs.openSync(path.join(storage(source), 'history/large-source', name), 'w')
+      try { for (let index = 0; index < copies; index++) fs.writeSync(fd, content) } finally { fs.closeSync(fd) }
+    }
+    expect(contentBytes).to.be.greaterThan(256 * 1024 * 1024)
+    expect(contentBytes * names.length).to.be.greaterThan(512 * 1024 * 1024)
+    const prepared = await request(source, 'export', { format: 'zip', download: true })
+    expect(prepared.statusCode).to.equal(200)
+    expect(prepared.body.downloadId).to.match(/^[a-f0-9]{64}$/)
+    expect((await request({ id: 'different-node' }, 'download', prepared.body)).statusCode).to.equal(404)
+    const download = await request(source, 'download', prepared.body)
+    expect(download.statusCode).to.equal(200)
+    expect(Number(download.headers['content-length'])).to.equal(download.body.length)
+    expect((await request(source, 'download', prepared.body)).statusCode).to.equal(404)
+    expect(download.body.length).to.be.lessThan(256 * 1024 * 1024)
+    const zip = await yauzl.fromBufferPromise(download.body, { lazyEntries: true })
+    for await (const entry of zip.eachEntry()) {
+      if (entry.fileName === 'cerebrum-backup.json') expect(entry.uncompressedSize).to.be.lessThan(1024 * 1024)
+    }
+    const target = create('large-target')
+    const chunkSize = 48 * 1024
+    const total = Math.ceil(download.body.length / chunkSize)
+    let uploadId
+    for (let index = 0; index < total; index++) {
+      const response = await request(target, 'import-chunk', { uploadId, index, total, chunk: download.body.subarray(index * chunkSize, (index + 1) * chunkSize).toString('base64') })
+      expect(response.statusCode).to.equal(200)
+      uploadId = response.body.uploadId
+    }
+    const imported = await request(target, 'import', { uploadId })
+    expect(imported.statusCode).to.equal(200)
+    for (const name of names) {
+      const filePath = path.join(storage(target), 'history/large-target', name)
+      expect(fs.statSync(filePath).size).to.equal(contentBytes)
+      const restoredHash = crypto.createHash('sha256')
+      for await (const chunk of fs.createReadStream(filePath)) restoredHash.update(chunk)
+      expect(restoredHash.digest('hex')).to.equal(digest)
+    }
+  })
+
+  it('keeps version 2 ZIPs importable and checks every version 3 archive reference', async () => {
+    const source = create('zip-references')
+    seed(source, 'history/zip-references/2026-09-07.knxctx', 'archive marker 🏠\n')
+    const backup = await source.exportAiConfig()
+    const legacy = await zipEntries([['cerebrum-backup.json', JSON.stringify(backup)]])
+    expect(await decodeBackupUpload(legacy)).to.deep.equal(backup)
+    const manifest = copy(backup)
+    manifest.version = 3
+    const file = manifest.supplementalFiles.history[0]
+    const archive = file.content
+    delete file.content
+    file.zipEntry = `archives/history/${file.name}`
+    const encode = (extra = []) => zipEntries([['cerebrum-backup.json', JSON.stringify(manifest)], ...extra])
+    await rejects(decodeBackupUpload(Buffer.from(JSON.stringify(manifest))), /Unsupported/)
+    await rejects(decodeBackupUpload(await encode()), /reference/)
+    await rejects(decodeBackupUpload(await encode([[file.zipEntry, 'damaged']])), /damaged/)
+    await rejects(decodeBackupUpload(await encode([[file.zipEntry, archive], ['archives/history/2000-01-01.knxctx', 'extra']])), /Unreferenced/)
+    const originalEntry = file.zipEntry
+    file.zipEntry = 'archives/operations/2026-09-07.knxctx'
+    await rejects(decodeBackupUpload(await encode([[originalEntry, archive]])), /reference/)
+    file.zipEntry = originalEntry
+    expect(await decodeBackupUpload(await encode([[file.zipEntry, archive]]))).to.deep.equal(backup)
+    const oversized = await zipEntries([
+      ['archives/history/2026-09-05.knxctx', 'a'],
+      ['archives/history/2026-09-06.knxctx', 'b'],
+      ['archives/history/2026-09-07.knxctx', 'c'],
+      ['cerebrum-backup.json', JSON.stringify(manifest)]
+    ])
+    // Declared sizes must match the actual decoded archive streams.
+    let offset = 0
+    for (let index = 0; index < 3; index++) {
+      offset = oversized.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]), offset)
+      oversized.writeUInt32LE(180 * 1024 * 1024, offset + 24)
+      offset++
+    }
+    await rejects(decodeBackupUpload(oversized), /ZIP|size/)
   })
 
   it('accepts old JSON and rejects unrelated, truncated or damaged ZIP backups', async () => {
@@ -399,7 +492,7 @@ describe('Cerebrum portable backup', () => {
     await rejects(decodeBackupUpload(damaged), /Damaged.*ZIP/)
   })
 
-  it('bounds ZIP expansion and rejects duplicate names, paths, symlinks and encryption', async () => {
+  it('bounds JSON metadata and rejects duplicate names, paths, symlinks and encryption', async () => {
     const content = JSON.stringify({ format: 'cerebrum-ultimate-backup', version: 1, repeated: 'x'.repeat(10000) })
     await rejects(decodeBackupUpload(await zipEntries([['cerebrum-backup.json', content], ['cerebrum-backup.json', content]])), /duplicate/)
     await rejects(decodeBackupUpload(await zipEntries([['cerebrum-backup.json', content, { mode: 0o120777 }]])), /Unsupported/)
@@ -443,5 +536,27 @@ describe('Cerebrum portable backup', () => {
     uploads.append({ ...first, owner: 'one', nodeId: 'a', index: 1, total: 2, chunk: bytes.subarray(24).toString('base64') })
     expect(uploads.take({ ...first, owner: 'one', nodeId: 'a' })).to.deep.equal({ message: 'Memoria è casa 🏠' })
     expect(() => uploads.take({ ...first, owner: 'one', nodeId: 'a' })).to.throw()
+  })
+
+  it('accepts uploads over 256 MiB on disk and removes their temporary files after use or write failure', function () {
+    this.timeout(15000)
+    const uploads = createBackupUploads()
+    const bytes = Buffer.alloc(48 * 1024, 42)
+    const chunk = bytes.toString('base64')
+    const total = Math.floor(256 * 1024 * 1024 / bytes.length) + 1
+    let uploadId
+    for (let index = 0; index < total; index++) {
+      uploadId = uploads.append({ owner: 'one', nodeId: 'a', uploadId, index, total, chunk }).uploadId
+    }
+    const upload = uploads.takeFile({ owner: 'one', nodeId: 'a', uploadId })
+    try { expect(fs.statSync(upload.filePath).size).to.equal(bytes.length * total) } finally { upload.cleanup() }
+    expect(fs.existsSync(path.dirname(upload.filePath))).to.equal(false)
+    const append = fs.appendFileSync
+    let failedPath
+    fs.appendFileSync = filePath => { failedPath = filePath; throw new Error('simulated full disk') }
+    try {
+      expect(() => uploads.append({ owner: 'one', nodeId: 'a', index: 0, total: 1, chunk })).to.throw('full disk')
+    } finally { fs.appendFileSync = append }
+    expect(fs.existsSync(path.dirname(failedPath))).to.equal(false)
   })
 })
