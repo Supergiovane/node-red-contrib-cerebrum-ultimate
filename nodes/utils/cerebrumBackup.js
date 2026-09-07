@@ -4,6 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const os = require('os')
+const { validateCerebrumSharedArchive } = require('./cerebrumSharedArchive')
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024
 // Only JSON metadata is held in memory. ZIPs and their daily archives use disk.
@@ -70,10 +71,11 @@ function validateArchiveFile (file, id) {
 }
 
 // These logical names are resolved locally. A backup can never choose a disk path.
-const archiveNames = ['history', 'adapterHistory', 'operations']
+const archiveNames = ['history', 'adapterHistory', 'operations', 'sharedMemory']
 const singleNames = ['habitLearning', 'worldModel', 'worldObservations', 'runtimeState', 'lastChatPrompt', 'legacyAreas']
 const optionalSingleNames = new Set(['worldModel', 'worldObservations', 'runtimeState'])
 const archivePattern = /^\d{4}-\d{2}-\d{2}\.(?:knxctx|jsonl)$/
+const validArchiveName = (group, name) => group === 'sharedMemory' ? name === 'cerebrum-memory.jsonl' : archivePattern.test(name)
 
 function mapBackupArchives (backup, visit) {
   if (!backup.supplementalFiles) return { ...backup }
@@ -111,9 +113,10 @@ function readSupplementalFiles (locations, { archiveDirectory } = {}) {
   const result = {}
   for (const group of archiveNames) {
     const dir = locations[group]
+    if (group === 'sharedMemory' && !dir) continue
     assertRegularPath(dir, true)
     result[group] = fs.existsSync(dir)
-      ? fs.readdirSync(dir).sort().filter(name => archivePattern.test(name)).map(name => {
+      ? fs.readdirSync(dir).sort().filter(name => validArchiveName(group, name)).map(name => {
         const filePath = path.join(dir, name)
         assertRegularPath(filePath)
         return archiveDirectory
@@ -135,12 +138,14 @@ function readSupplementalFiles (locations, { archiveDirectory } = {}) {
 function validateSupplementalFiles (files) {
   if (!files || typeof files !== 'object') throw backupError('Missing supplemental backup files')
   for (const group of archiveNames) {
+    if (group === 'sharedMemory' && !Object.hasOwn(files, group)) continue
     if (!Array.isArray(files[group])) throw backupError(`Missing backup archive: ${group}`)
     const names = new Set()
     for (const file of files[group]) {
-      if (!file || typeof file.name !== 'string' || !archivePattern.test(file.name) || names.has(file.name)) throw backupError(`Invalid or duplicate ${group} filename`)
+      if (!file || typeof file.name !== 'string' || !validArchiveName(group, file.name) || names.has(file.name)) throw backupError(`Invalid or duplicate ${group} filename`)
       names.add(file.name)
       validateArchiveFile(file, `${group}/${file.name}`)
+      if (group === 'sharedMemory') validateCerebrumSharedArchive({ filePath: backupArchiveSource(file), content: file.content })
     }
   }
   for (const id of singleNames) {
@@ -157,6 +162,7 @@ function replaceSupplementalFiles (files, locations, writeFile) {
   validateSupplementalFiles(files)
   for (const group of archiveNames) {
     const dir = locations[group]
+    if (group === 'sharedMemory' && (!dir || !Object.hasOwn(files, group))) continue
     assertRegularPath(dir, true)
     const names = new Set(files[group].map(file => file.name))
     for (const file of files[group]) {
@@ -173,7 +179,7 @@ function replaceSupplementalFiles (files, locations, writeFile) {
       } else writeFile({ filePath, content: file.content })
     }
     if (fs.existsSync(dir)) {
-      for (const name of fs.readdirSync(dir).filter(name => archivePattern.test(name) && !names.has(name))) {
+      for (const name of fs.readdirSync(dir).filter(name => validArchiveName(group, name) && !names.has(name))) {
         const filePath = path.join(dir, name)
         assertRegularPath(filePath)
         fs.unlinkSync(filePath)
@@ -189,7 +195,28 @@ function replaceSupplementalFiles (files, locations, writeFile) {
   }
 }
 
-function buildMigrationFlows (RED, node, config) {
+function readBackupEtsAccess (backup, configuration) {
+  const validate = access => {
+    if (!access || typeof access !== 'object' || Array.isArray(access)) throw backupError('Invalid ETS access configuration in backup')
+    const configured = access.configured ?? access.exposeConfigured
+    if (typeof configured !== 'boolean' || !Array.isArray(access.exposedGAs) || !Array.isArray(access.readOnlyGAs) || [...access.exposedGAs, ...access.readOnlyGAs].some(ga => typeof ga !== 'string' || !ga.trim())) throw backupError('Invalid ETS selection or read-only permissions in backup')
+    const selected = new Set(access.exposedGAs.map(ga => ga.trim()))
+    if (access.readOnlyGAs.some(ga => !selected.has(ga.trim()))) throw backupError('Backup read-only ETS objects must also be selected')
+    return { configured, exposedGAs: access.exposedGAs.slice(), readOnlyGAs: access.readOnlyGAs.slice() }
+  }
+  // An explicitly empty/disabled selection is authoritative. Null/missing was
+  // used by older files before file-backed access configuration was populated.
+  if (configuration?.etsAccess !== undefined && configuration.etsAccess !== null) return validate(configuration.etsAccess)
+  if (!backup.migration?.flows) return undefined
+  const flows = JSON.parse(validateFile(backup.migration.flows, 'nodeRedFlows'))
+  const sourceId = backup.node?.id || configuration?.nodeId
+  const candidates = (Array.isArray(flows) ? flows : []).filter(item => item?.type === 'cerebrumUltimate' && (!sourceId || item.id === sourceId))
+  if (candidates.length !== 1 || !Object.hasOwn(candidates[0], 'etsExposeConfigured')) return undefined
+  const source = candidates[0]
+  return validate({ configured: source.etsExposeConfigured, exposedGAs: source.etsExposedGAs === undefined ? [] : source.etsExposedGAs, readOnlyGAs: source.etsReadOnlyGAs === undefined ? [] : source.etsReadOnlyGAs })
+}
+
+function buildMigrationFlows (RED, node, config, { etsAccess } = {}) {
   const all = new Map()
   RED.nodes.eachNode(item => all.set(item.id, clone(item)))
   if (!all.has(node.id)) all.set(node.id, { ...clone(config), id: node.id, type: 'cerebrumUltimate' })
@@ -223,6 +250,13 @@ function buildMigrationFlows (RED, node, config) {
   const flows = [...selected].map(id => {
     const item = clone(all.get(id))
     if (item.type === 'cerebrumUltimate') delete item.aiEducation
+    // Dashboard changes live in Cerebrum's file, not RED.nodes.eachNode(). The
+    // portable flow must carry the same current permissions as the data backup.
+    if (id === node.id && etsAccess) {
+      item.etsExposeConfigured = etsAccess.configured === true
+      item.etsExposedGAs = clone(etsAccess.exposedGAs)
+      item.etsReadOnlyGAs = clone(etsAccess.readOnlyGAs)
+    }
     const live = RED.nodes.getNode(id)
     const credentials = typeof RED.nodes.getCredentials === 'function' ? RED.nodes.getCredentials(id) : live && live.credentials
     if (credentials) item.credentials = clone(credentials)
@@ -317,4 +351,4 @@ function createBackupUploads () {
   }
 }
 
-module.exports = { MAX_BACKUP_BYTES, mapBackupArchives, assertBackupSize, assertRegularPath, createBackupDirectory, registerBackupCleanup, disposeBackup, registerBackupArchive, backupArchiveSource, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, createBackupUploads }
+module.exports = { MAX_BACKUP_BYTES, mapBackupArchives, assertBackupSize, assertRegularPath, createBackupDirectory, registerBackupCleanup, disposeBackup, registerBackupArchive, backupArchiveSource, backupFile, validateFile, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows, readBackupEtsAccess, createBackupUploads }

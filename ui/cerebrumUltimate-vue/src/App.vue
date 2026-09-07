@@ -807,6 +807,7 @@ const state = reactive({
   chatLearningRevision: "",
   chatLearningName: "",
   chatLearningPath: "",
+  chatLearningArchivePath: "",
   chatLearningBytes: 0,
   chatLearningMaxBytes: 512 * 1024,
   chatLearningModifiedAt: "",
@@ -4176,6 +4177,8 @@ async function fetchNodes() {
   }
 }
 
+let etsAccessLoadGeneration = 0;
+
 async function loadEtsAccessConfiguration({ force = false } = {}) {
   if (!state.selectedNodeId || state.etsAccessLoading) return;
   if (
@@ -4187,17 +4190,21 @@ async function loadEtsAccessConfiguration({ force = false } = {}) {
     return;
   state.etsAccessLoading = true;
   state.etsAccessError = "";
+  const nodeId = state.selectedNodeId;
+  const generation = ++etsAccessLoadGeneration;
   try {
     const data = await requestJson(
-      apiUrl(`ets-access?nodeId=${encodeURIComponent(state.selectedNodeId)}`),
+      apiUrl(`ets-access?nodeId=${encodeURIComponent(nodeId)}`),
     );
+    if (generation !== etsAccessLoadGeneration || state.selectedNodeId !== nodeId) return;
     state.etsAccessData = data && data.etsAccess ? data.etsAccess : null;
     hydrateEtsAccessDraft(state.etsAccessData, { force: true });
   } catch (error) {
+    if (generation !== etsAccessLoadGeneration || state.selectedNodeId !== nodeId) return;
     state.etsAccessError = error.message || "Failed to load ETS access";
     setStatus(state.etsAccessError);
   } finally {
-    state.etsAccessLoading = false;
+    if (generation === etsAccessLoadGeneration) state.etsAccessLoading = false;
   }
 }
 
@@ -4205,10 +4212,10 @@ function hydrateEtsAccessDraft(snapshot, { force = false } = {}) {
   const source =
     snapshot && typeof snapshot === "object" ? snapshot : { items: [] };
   if (source.catalogIncluded !== true) return;
-  const selected = (Array.isArray(source.items) ? source.items : [])
+  const selected = Array.isArray(source.exposedGAs) ? source.exposedGAs : (Array.isArray(source.items) ? source.items : [])
     .filter((item) => item && item.selected === true)
     .map((item) => item.ga);
-  const readOnly = (Array.isArray(source.items) ? source.items : [])
+  const readOnly = Array.isArray(source.readOnlyGAs) ? source.readOnlyGAs : (Array.isArray(source.items) ? source.items : [])
     .filter((item) => item && item.selected === true && item.readOnly === true)
     .map((item) => item.ga);
   const sameNode = state.etsAccessLoadedNodeId === state.selectedNodeId;
@@ -4285,7 +4292,7 @@ function discardEtsAccessChanges() {
 }
 
 async function saveEtsAccessConfiguration() {
-  if (!state.selectedNodeId || state.etsAccessSaving) return;
+  if (!state.selectedNodeId || state.etsAccessSaving || backupBusy.value) return;
   state.etsAccessSaving = true;
   state.etsAccessError = "";
   setStatus("Saving ETS access...");
@@ -6515,7 +6522,7 @@ async function importFullConfig(event) {
     event && event.target && event.target.files && event.target.files[0]
       ? event.target.files[0]
       : null;
-  if (!file || !state.selectedNodeId || backupBusy.value) return;
+  if (!file || !state.selectedNodeId || backupBusy.value || state.etsAccessSaving) return;
   const nodeId = state.selectedNodeId;
   backupBusy.value = true;
   try {
@@ -6559,7 +6566,16 @@ async function importFullConfig(event) {
       actuatorTests: data.actuatorTests || actuatorTests.value,
       testPlans: data.testPlans || testPlans.value,
       testResults: data.testResults || persistedTestResults.value,
+      etsAccess: data.etsAccess || null,
     });
+    // Restore replaces the saved selection and the visible draft together.
+    // Ignore any ETS request started before the import completed.
+    etsAccessLoadGeneration++;
+    state.etsAccessLoading = false;
+    state.etsAccessData = data.etsAccess || null;
+    state.etsAccessLoadedNodeId = "";
+    if (data.etsAccess) hydrateEtsAccessDraft(data.etsAccess, { force: true });
+    else await loadEtsAccessConfiguration({ force: true });
     await fetchGaCatalog();
     resetChatLearningEditor();
     resetCerebrumMemoryEditor();
@@ -6570,7 +6586,9 @@ async function importFullConfig(event) {
       await loadCerebrumMemoryFile();
     if (state.activeTab === "cerebrum" && state.cerebrumTab === "operations")
       await loadCerebrumOperations({ force: true });
-    setStatus("Cerebrum backup imported");
+    setStatus(data.etsAccessRestored === false
+      ? "Cerebrum backup imported; no ETS selection was included, so the existing selection was preserved."
+      : "Cerebrum backup imported");
   } catch (error) {
     state.lastError =
       error.message || "Failed to import Cerebrum backup";
@@ -6588,6 +6606,7 @@ function resetChatLearningEditor() {
   state.chatLearningRevision = "";
   state.chatLearningName = "";
   state.chatLearningPath = "";
+  state.chatLearningArchivePath = "";
   state.chatLearningBytes = 0;
   state.chatLearningModifiedAt = "";
   state.chatLearningSessionCount = 0;
@@ -6606,6 +6625,7 @@ function applyChatLearningSnapshot(data = {}, nodeId = state.selectedNodeId) {
   state.chatLearningRevision = String(data.revision || "");
   state.chatLearningName = String(data.name || "cerebrum-chat-context.knxctx");
   state.chatLearningPath = String(data.path || "");
+  state.chatLearningArchivePath = String(data.archivePath || "");
   state.chatLearningBytes = Math.max(
     0,
     Number(data.bytes) || new Blob([content]).size,
@@ -7454,6 +7474,7 @@ onBeforeUnmount(() => {
                   !etsAccessDirty ||
                   state.etsAccessSaving ||
                   state.etsAccessLoading ||
+                  backupBusy ||
                   !etsAccessState.gateway?.configured
                 "
                 @click="saveEtsAccessConfiguration"
@@ -9936,7 +9957,7 @@ onBeforeUnmount(() => {
               <button
                 class="secondary-button"
                 type="button"
-                :disabled="!state.selectedNodeId || backupBusy"
+                :disabled="!state.selectedNodeId || backupBusy || state.etsAccessSaving"
                 @click="exportFullConfig"
               >
                 Download ZIP
@@ -9944,7 +9965,7 @@ onBeforeUnmount(() => {
               <button
                 class="secondary-button"
                 type="button"
-                :disabled="!state.selectedNodeId || backupBusy"
+                :disabled="!state.selectedNodeId || backupBusy || state.etsAccessSaving"
                 @click="triggerConfigImport"
               >
                 Restore ZIP
@@ -9964,6 +9985,26 @@ onBeforeUnmount(() => {
             v-else-if="state.cerebrumTab === 'learning'"
             class="area-detail settings-panel chat-learning-panel"
           >
+            <div class="memory-section-toolbar memory-primary-heading">
+              <h3>Learned instructions</h3>
+              <button class="secondary-button" type="button"
+                :disabled="!state.selectedNodeId || chatLearningDirty || state.chatLearningLoading || state.chatLearningSaving || state.chatLearningResetting"
+                :title="chatLearningDirty ? localizeUiText('Unsaved changes') : ''"
+                @click="loadChatLearningFile()">
+                {{ state.chatLearningLoading ? 'Loading...' : 'Refresh' }}
+              </button>
+            </div>
+            <CerebrumSharedInsights
+              :key="`${state.selectedNodeId}:instructions`"
+              mode="learning"
+              instructions-only
+              :content="state.chatLearningBaseline"
+              :language="uiLanguage"
+              :loading="state.chatLearningLoading"
+              :error="state.chatLearningError"
+            />
+            <details class="memory-file-tools">
+              <summary>Conversations, observed behaviour and details</summary>
             <CerebrumWorldInsights
               :key="`${state.selectedNodeId}:learning`"
               :node-id="state.selectedNodeId"
@@ -9976,7 +10017,7 @@ onBeforeUnmount(() => {
 <div class="chat-learning-meta">
                 <span class="meta-chip"
                   >{{ state.chatLearningSessionCount }}
-                  <span>sessions</span></span
+                  <span>channels</span></span
                 >
                 <span
                   v-if="chatLearningDirty"
@@ -10000,8 +10041,11 @@ onBeforeUnmount(() => {
               :loading="state.chatLearningLoading"
               :error="state.chatLearningError"
             />
+            </details>
             <details class="memory-file-tools" :open="chatLearningDirty">
               <summary>Advanced files and backups</summary>
+              <p class="area-detail-subhead">Full conversations, observations and operations from every channel are retained in the shared archive and included in the full Cerebrum backup. The editor below shows the shared working memory.</p>
+              <code v-if="state.chatLearningArchivePath">{{ state.chatLearningArchivePath }}</code>
               <p class="area-detail-subhead" :class="{ 'chat-learning-size-over': chatLearningTooLarge }">
                 {{ formatByteSize(chatLearningEditorBytes) }} / {{ formatByteSize(state.chatLearningMaxBytes) }}
               </p>
@@ -10187,6 +10231,8 @@ onBeforeUnmount(() => {
               mode="memory"
               :request="requestWorldInsight"
             />
+            <details class="memory-file-tools">
+              <summary>Habits, decisions and shared memory</summary>
             <div class="memory-section-toolbar">
               <div class="memory-section-heading"><h4>Shared household learning</h4>
 <div class="chat-learning-meta">
@@ -10227,6 +10273,7 @@ onBeforeUnmount(() => {
               :loading="state.cerebrumMemoryLoading"
               :error="state.cerebrumMemoryError"
             />
+            </details>
             <details class="memory-file-tools" :open="cerebrumMemoryDirty">
               <summary>Advanced files and backups</summary>
               <p class="area-detail-subhead" :class="{ 'chat-learning-size-over': cerebrumMemoryTooLarge }">

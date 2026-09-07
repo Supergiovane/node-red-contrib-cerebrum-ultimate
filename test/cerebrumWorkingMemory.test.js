@@ -63,6 +63,16 @@ describe('Cerebrum bounded working memory', function () {
     }
   })
 
+  it('uses available context for more than 24 entities and preserves small-window prioritization', function () {
+    const world = makeWorld()
+    world.entities.push(...Array.from({ length: 100 }, (_, index) => ({ id: `ha:other_${index}`, area: 'Other', value: true })))
+    const large = buildCerebrumWorkingMemory({ world, byteBudget: 128000 })
+    const small = buildCerebrumWorkingMemory({ world, question: 'giardino', byteBudget: 1800 })
+    expect(large.stats.included.entities).to.equal(103)
+    expect(small.stats.packedBytes).to.be.at.most(1800)
+    expect(readRecords(small.text, 'ENTITY')[0].id).to.equal('knx:1/2/3')
+  })
+
   it('omits oversized fields explicitly instead of turning partial text into a fact', function () {
     const world = makeWorld()
     world.entities[0].label = '🌍'.repeat(10000)

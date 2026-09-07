@@ -1,7 +1,48 @@
-const CEREBRUM_CATALOG_MAX_RESEARCH_ROUNDS = 1
 const CEREBRUM_CATALOG_MAX_ACTIONS_PER_ROUND = 4
 const CEREBRUM_CATALOG_MAX_RESULTS_PER_ACTION = 12
-const CEREBRUM_CATALOG_MAX_ACCUMULATED_OBJECTS = 24
+
+// Describe current node capabilities separately from historical device data and
+// the replaceable subset of ETS details in the model's working context.
+const buildCerebrumKnxAvailabilityContext = ({ access = {}, gatewayConnection, allowCommands = false, requireConfirmation = true, safeReadOnly = false } = {}) => {
+  const count = value => Math.max(0, Math.floor(Number(value) || 0))
+  const gatewayConfigured = access.gateway?.configured === true
+  const catalogObjects = count(access.totalCount)
+  const readableObjects = access.configured === true ? count(access.selectedCount) : 0
+  const writableObjects = Math.max(0, readableObjects - count(access.readOnlyCount))
+  const catalogStatus = !gatewayConfigured
+    ? 'gateway_missing'
+    : !catalogObjects
+        ? 'catalog_empty'
+        : access.configured !== true
+          ? 'access_not_configured'
+          : !count(access.requestedSelectionCount)
+              ? 'nothing_selected'
+              : !readableObjects ? 'selection_not_in_catalog' : 'available'
+  const explanations = {
+    gateway_missing: 'The configured KNX gateway is missing or unavailable to this node. Check the gateway selected in the Cerebrum node configuration.',
+    catalog_empty: 'The KNX gateway currently provides no usable ETS catalog. Check its ETS import/loading; this does not prove the bus is disconnected.',
+    access_not_configured: 'ETS access has not been configured for this Cerebrum node. Select the permitted objects in KNX > ETS Access and save.',
+    nothing_selected: 'No ETS objects are selected for this Cerebrum node. Select the permitted objects in KNX > ETS Access and save.',
+    selection_not_in_catalog: 'The saved ETS selection does not match objects in the current gateway catalog. Check the gateway/catalog and saved selection in KNX > ETS Access.',
+    available: 'The authorized ETS catalog is available across chat channels. Missing KNX-DETAILS rows mean details still need retrieval; use catalogActions before concluding a target is unavailable.'
+  }
+  return [
+    'CURRENT KNX CAPABILITIES — LIVE NODE CONFIGURATION:',
+    JSON.stringify({
+      scope: 'node_across_all_chat_channels',
+      gatewayConfigured,
+      gatewayConnection: ['connected', 'connecting', 'disconnected'].includes(gatewayConnection) ? gatewayConnection : 'unknown',
+      catalogStatus,
+      catalogObjects,
+      readableObjects,
+      writableObjects,
+      commandPolicy: !allowCommands ? 'disabled_in_node_configuration' : safeReadOnly ? 'read_only_for_this_request' : 'enabled_with_ets_validation',
+      writeConfirmationRequired: requireConfirmation === true
+    }),
+    explanations[catalogStatus],
+    'These current capabilities supersede earlier chat claims about missing commands or disconnections. They are not session memory. Never describe KNX commands as unavailable "in this session". Unknown connection state does not mean disconnected. Retrieval and current user authority are still required; configuration alone never authorizes an action.'
+  ].join('\n')
+}
 
 const normalizeText = (value) => String(value || '')
   .normalize('NFKD')
@@ -80,7 +121,7 @@ const editDistanceAtMostTwo = (left, right) => {
 
 const tokenQuality = (queryToken, candidateToken) => {
   if (queryToken === candidateToken) return 1
-  const substringMinimum = /[^\u0000-\u007f]/.test(queryToken) ? 2 : 3
+  const substringMinimum = Array.from(queryToken).some(character => character.codePointAt(0) > 127) ? 2 : 3
   if (queryToken.length >= substringMinimum && (candidateToken.includes(queryToken) || queryToken.includes(candidateToken))) return 0.82
   if (queryToken.length < 4) return 0
   const distance = editDistanceAtMostTwo(queryToken, candidateToken)
@@ -176,7 +217,7 @@ const scoreSearchMatch = (item, action) => {
 }
 
 const sortScoredItems = (scored) => scored
-  .sort((left, right) => right.score - left.score || String(left.item && left.item.hierarchyPath || left.item && left.item.label || left.item && left.item.ga || '').localeCompare(String(right.item && right.item.hierarchyPath || right.item && right.item.label || right.item && right.item.ga || '')))
+  .sort((left, right) => right.score - left.score || String(left.item?.hierarchyPath || left.item?.label || left.item?.ga || '').localeCompare(String(right.item?.hierarchyPath || right.item?.label || right.item?.ga || '')))
   .map(entry => entry.item)
 
 const findSearchItems = (catalog, action) => sortScoredItems(
@@ -196,7 +237,7 @@ const buildAreaRows = (catalog) => {
     if (!areas.has(key)) areas.set(key, { area, count: 0, sampleLabels: [] })
     const row = areas.get(key)
     row.count += 1
-    const label = String(item && item.label || item && item.ga || '').trim()
+    const label = String(item?.label || item?.ga || '').trim()
     if (label && row.sampleLabels.length < 3 && !row.sampleLabels.includes(label)) row.sampleLabels.push(label)
   })
   return Array.from(areas.values()).sort((left, right) => right.count - left.count || left.area.localeCompare(right.area))
@@ -257,10 +298,10 @@ const actionFingerprint = (action) => JSON.stringify({
   limit: action.limit
 })
 
-const executeCerebrumCatalogActions = ({ actions, catalog, priorResults = [] } = {}) => {
+const executeCerebrumCatalogActions = ({ actions, catalog } = {}) => {
   const safeCatalog = Array.isArray(catalog) ? catalog : []
   const normalized = normalizeCerebrumCatalogActions(actions)
-  const seen = new Set((Array.isArray(priorResults) ? priorResults : []).map(result => String(result && result.fingerprint || '')).filter(Boolean))
+  const seen = new Set()
   const results = []
   normalized.forEach(action => {
     const fingerprint = actionFingerprint(action)
@@ -303,7 +344,7 @@ const executeCerebrumCatalogActions = ({ actions, catalog, priorResults = [] } =
   return results
 }
 
-const collectCerebrumCatalogObjects = (results, maxItems = CEREBRUM_CATALOG_MAX_ACCUMULATED_OBJECTS) => {
+const collectCerebrumCatalogObjects = (results, maxItems = Infinity) => {
   const byGa = new Map()
   ;(Array.isArray(results) ? results.slice().reverse() : []).forEach(result => {
     ;(Array.isArray(result && result.items) ? result.items : []).forEach(item => {
@@ -338,11 +379,10 @@ const buildCerebrumCatalogResearchContext = (results) => {
 }
 
 module.exports = {
-  CEREBRUM_CATALOG_MAX_ACCUMULATED_OBJECTS,
   CEREBRUM_CATALOG_MAX_ACTIONS_PER_ROUND,
-  CEREBRUM_CATALOG_MAX_RESEARCH_ROUNDS,
   CEREBRUM_CATALOG_MAX_RESULTS_PER_ACTION,
   buildCerebrumCatalogResearchContext,
+  buildCerebrumKnxAvailabilityContext,
   collectCerebrumCatalogObjects,
   executeCerebrumCatalogActions,
   normalizeCerebrumCatalogActions

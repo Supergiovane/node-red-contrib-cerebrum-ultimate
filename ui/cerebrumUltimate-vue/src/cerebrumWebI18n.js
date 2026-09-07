@@ -4,6 +4,11 @@
 export const CEREBRUM_WEB_I18N = {
   en: {},
   it: {
+    'Learned instructions': 'Istruzioni apprese',
+    'Conversations, observed behaviour and details': 'Conversazioni, comportamenti osservati e dettagli',
+    'Habits, decisions and shared memory': 'Abitudini, decisioni e memoria condivisa',
+    "channels": "canali",
+    "Full conversations, observations and operations from every channel are retained in the shared archive and included in the full Cerebrum backup. The editor below shows the shared working memory.": "Le conversazioni complete, le osservazioni e le operazioni di tutti i canali sono conservate nell’archivio comune e incluse nel backup completo di Cerebrum. L’editor qui sotto mostra la memoria di lavoro condivisa.",
     "Download ZIP": "Scarica ZIP",
     "Restore ZIP": "Ripristina ZIP",
     "Select the ZIP directly to restore Cerebrum. Existing JSON backups are also supported.": "Seleziona direttamente lo ZIP per ripristinare Cerebrum. Sono supportati anche i precedenti backup JSON.",
@@ -98,6 +103,7 @@ export const CEREBRUM_WEB_I18N = {
     'Failed to export Cerebrum backup': 'Impossibile esportare il backup Cerebrum',
     'Importing Cerebrum backup...': 'Importazione del backup Cerebrum...',
     'Cerebrum backup imported': 'Backup Cerebrum importato',
+    'Cerebrum backup imported; no ETS selection was included, so the existing selection was preserved.': 'Backup Cerebrum importato; non conteneva una selezione GA, quindi è stata mantenuta quella esistente.',
     'Failed to import Cerebrum backup': 'Impossibile importare il backup Cerebrum',
     "Import this backup? It replaces this node's Cerebrum configuration and scheduled Cerebrum tasks, plus the shared Cerebrum Learning and Cerebrum Memory used by every Cerebrum node on this storage.": 'Importare questo backup? Sostituisce la configurazione Cerebrum e le attività Cerebrum pianificate di questo nodo, oltre all’Apprendimento Cerebrum e alla Memoria Cerebrum condivisi da ogni nodo Cerebrum nello stesso archivio.',
     'Open Cerebrum from a deployed Cerebrum node.': 'Apri Cerebrum da un nodo Cerebrum distribuito.',

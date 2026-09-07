@@ -67,7 +67,7 @@ const unescapeField = value => {
 }
 
 export function parseChatLearningNativeFile (value) {
-  const context = { version: 3, createdAt: '', updatedAt: '', sessions: [] }
+  const context = { version: 4, createdAt: '', updatedAt: '', instructions: [], turns: [], sessions: [] }
   let headerSeen = false
   let currentSession = null
   String(value || '').split(/\r?\n/).forEach((line, lineIndex) => {
@@ -76,7 +76,8 @@ export function parseChatLearningNativeFile (value) {
     const record = fields.shift()
     const fail = message => { throw new Error(`Invalid Cerebrum Learning file at line ${lineIndex + 1}: ${message}`) }
     if (!headerSeen) {
-      if (record !== 'CEREBRUM_CHAT_CONTEXT' || String(fields[0] || '') !== '3') fail('expected CEREBRUM_CHAT_CONTEXT 3 header')
+      if (record !== 'CEREBRUM_CHAT_CONTEXT' || !['3', '4'].includes(String(fields[0] || ''))) fail('expected CEREBRUM_CHAT_CONTEXT 3 or 4 header')
+      context.version = Number(fields[0])
       headerSeen = true
       return
     }
@@ -95,6 +96,17 @@ export function parseChatLearningNativeFile (value) {
       if (!currentSession) fail('END_SESSION without SESSION')
       context.sessions.push(currentSession)
       currentSession = null
+      return
+    }
+    if (record === 'GLOBAL_INSTRUCTION' || record === 'GLOBAL_TURN') {
+      if (context.version !== 4 || currentSession) fail(`${record} requires a v4 record outside a session`)
+      if (record === 'GLOBAL_INSTRUCTION') {
+        if (fields.length !== 2 || !oneLine(fields[1])) fail('GLOBAL_INSTRUCTION requires timestamp and text')
+        context.instructions.push({ at: fields[0], text: fields[1] })
+      } else {
+        if (fields.length !== 4) fail('GLOBAL_TURN requires timestamp, channel, question and reply')
+        context.turns.push({ at: fields[0], channel: fields[1], question: fields[2], reply: fields[3] })
+      }
       return
     }
     if (!currentSession) fail(`${record || 'empty record'} is not allowed outside a session`)
@@ -118,7 +130,7 @@ export function parseChatLearningNativeFile (value) {
     }
     fail(`unknown ${record || 'empty'} record`)
   })
-  if (!headerSeen) throw new Error('The file does not contain a CEREBRUM_CHAT_CONTEXT 3 header')
+  if (!headerSeen) throw new Error('The file does not contain a CEREBRUM_CHAT_CONTEXT 3 or 4 header')
   if (currentSession) throw new Error('Invalid Cerebrum Learning file: SESSION without END_SESSION')
   if (!context.createdAt || !context.updatedAt) throw new Error('Invalid Cerebrum Learning file: CREATED_AT and UPDATED_AT are required')
   return context
@@ -128,7 +140,11 @@ export function formatChatLearningSimpleText (value, { language = 'en' } = {}) {
   const context = typeof value === 'string' ? parseChatLearningNativeFile(value) : (value || {})
   const lang = normalizeLanguage(language)
   const t = COPY[lang] || COPY.en
-  const sessions = Array.isArray(context.sessions) ? context.sessions : []
+  const sharedLabel = { en: 'Shared memory — all channels', it: 'Memoria condivisa — tutti i canali', de: 'Gemeinsames Gedächtnis — alle Kanäle', fr: 'Mémoire partagée — tous les canaux', es: 'Memoria compartida — todos los canales', 'zh-CN': '共享记忆 — 所有渠道' }[lang]
+  const sessions = [
+    ...(context.version === 4 ? [{ id: sharedLabel, shared: true, updatedAt: context.updatedAt, instructions: context.instructions, turns: context.turns }] : []),
+    ...(Array.isArray(context.sessions) ? context.sessions : [])
+  ]
   const instructionCount = sessions.reduce((sum, session) => sum + (Array.isArray(session.instructions) ? session.instructions.length : 0), 0)
   const turnCount = sessions.reduce((sum, session) => sum + (Array.isArray(session.turns) ? session.turns.length : 0), 0)
   const watchCount = sessions.reduce((sum, session) => sum + (Array.isArray(session.cameraWatches) ? session.cameraWatches.length : 0), 0)
@@ -144,7 +160,7 @@ export function formatChatLearningSimpleText (value, { language = 'en' } = {}) {
     const instructions = Array.isArray(session.instructions) ? session.instructions : []
     const turns = Array.isArray(session.turns) ? session.turns : []
     const watches = Array.isArray(session.cameraWatches) ? session.cameraWatches : []
-    lines.push('', `${t.session} ${sessionIndex + 1} — ${oneLine(session.id, 'default', 160)}`)
+    lines.push('', session.shared ? sharedLabel : `${t.session} ${sessionIndex + 1} — ${oneLine(session.id, 'default', 160)}`)
     lines.push(`${t.updated}: ${formatDate(session.updatedAt, lang)}`)
     lines.push('', t.learned.toUpperCase())
     if (!instructions.length) lines.push(t.none)
@@ -152,7 +168,7 @@ export function formatChatLearningSimpleText (value, { language = 'en' } = {}) {
     lines.push('', t.recent.toUpperCase())
     if (!turns.length) lines.push(t.none)
     turns.forEach((turn, index) => {
-      lines.push(`${index + 1}. ${formatDate(turn.at, lang)}`)
+      lines.push(`${index + 1}. ${formatDate(turn.at, lang)}${turn.channel ? ` — ${oneLine(turn.channel)}` : ''}`)
       lines.push(`   ${t.user}: ${oneLine(turn.question, '—')}`)
       lines.push(`   ${t.cerebrum}: ${oneLine(turn.reply, '—')}`)
     })

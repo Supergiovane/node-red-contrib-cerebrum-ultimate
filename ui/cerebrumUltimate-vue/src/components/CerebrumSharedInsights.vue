@@ -5,6 +5,7 @@ import { parseCerebrumMemoryJson } from '../cerebrumMemoryView.mjs'
 
 const props = defineProps({
   mode: { type: String, default: 'learning' },
+  instructionsOnly: { type: Boolean, default: false },
   content: { type: String, default: '' },
   language: { type: String, default: 'en' },
   loading: { type: Boolean, default: false },
@@ -113,13 +114,21 @@ const parseResult = computed(() => {
   }
 })
 const data = computed(() => parseResult.value.data)
-const sessions = computed(() => array(data.value?.sessions))
+const sessions = computed(() => {
+  const channels = new Map(array(data.value?.sessions).map(session => [session.id, session]))
+  array(data.value?.turns).forEach(turn => {
+    if (turn.channel && !channels.has(turn.channel)) channels.set(turn.channel, { id: turn.channel })
+  })
+  return Array.from(channels.values())
+})
 const recordDate = row => row.at || row.updatedAt || row.createdAt || row.decidedAt || row.firstSeenAt || ''
 const rows = computed(() => {
   if (!data.value) return []
   const result = []
   const add = (type, item, index, session = '') => result.push({ type, item, session, at: recordDate(item), key: `${type}:${session}:${index}`, searchText: `${session}\n${JSON.stringify(item)}`.toLocaleLowerCase() })
   if (isLearning.value) {
+    array(data.value.instructions).forEach((item, index) => add('instructions', item, index))
+    array(data.value.turns).forEach((item, index) => add('turns', item, index, item.channel || ''))
     sessions.value.forEach(session => {
       array(session.instructions).forEach((item, index) => add('instructions', item, index, session.id))
       array(session.turns).forEach((item, index) => add('turns', item, index, session.id))
@@ -139,7 +148,7 @@ const categories = computed(() => {
 const statuses = computed(() => Array.from(new Set(rows.value.filter(row => row.type === 'habits').map(row => row.item.status).filter(Boolean))))
 const filteredRows = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
-  return rows.value.filter(row => (category.value === 'all' || row.type === category.value) && (!query || row.searchText.includes(query)) && (!sessionFilter.value || row.session === sessionFilter.value) && (!statusFilter.value || (row.type === 'habits' && row.item.status === statusFilter.value)))
+  return rows.value.filter(row => (props.instructionsOnly ? row.type === 'instructions' : category.value === 'all' || row.type === category.value) && (!query || row.searchText.includes(query)) && (!sessionFilter.value || row.session === sessionFilter.value) && (!statusFilter.value || (row.type === 'habits' && row.item.status === statusFilter.value)))
 })
 const pages = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / pageSize)))
 const pageRows = computed(() => filteredRows.value.slice((page.value - 1) * pageSize, page.value * pageSize).map(row => ({ ...row, card: buildCard(row) })))
@@ -217,7 +226,7 @@ const collectionFields = computed(() => {
 
 <template>
   <section class="shared-insights" data-cerebrum-localized :aria-label="isLearning ? t.learningTitle : t.memoryTitle" :aria-busy="loading">
-    <header class="insights-intro">
+    <header v-if="!instructionsOnly" class="insights-intro">
       <h3>{{ isLearning ? t.learningTitle : t.memoryTitle }}</h3>
       <p>{{ isLearning ? t.learningIntro : t.memoryIntro }}</p>
       <p class="insights-note">{{ t.shared }} {{ t.authority }}</p>
@@ -239,29 +248,29 @@ const collectionFields = computed(() => {
     </div>
     <p v-else-if="!data" class="insights-state" role="status">{{ t.unloaded }}</p>
     <template v-else>
-      <div class="insights-categories" :aria-label="t.all">
+      <div v-if="!instructionsOnly" class="insights-categories" :aria-label="t.all">
         <button v-for="entry in categories" :key="entry.key" type="button" :class="{ selected: category === entry.key }" :aria-pressed="category === entry.key" @click="category = entry.key; statusFilter = ''">
           <strong>{{ entry.count }}</strong><span>{{ t[entry.key] }}</span>
         </button>
       </div>
 
-      <div class="insights-filters">
+      <div v-if="!instructionsOnly" class="insights-filters">
         <label class="insights-search"><span>{{ t.search }}</span><input v-model="search" type="search" :placeholder="t.searchHint" /></label>
         <label v-if="isLearning && sessions.length"><span>{{ t.session }}</span><select v-model="sessionFilter"><option value="">{{ t.allSessions }}</option><option v-for="(session, index) in sessions" :key="`${session.id}:${index}`" :value="session.id">{{ session.id }}</option></select></label>
         <label v-if="!isLearning && statuses.length && (category === 'habits' || category === 'all')"><span>{{ t.status }}</span><select v-model="statusFilter"><option value="">{{ t.allStatuses }}</option><option v-for="status in statuses" :key="status" :value="status">{{ translated(status) }}</option></select></label>
         <button v-if="hasFilters" type="button" class="insights-clear" @click="resetFilters">{{ t.clear }}</button>
       </div>
 
-      <p class="insights-results" role="status">{{ t.showing }} {{ filteredRows.length ? (page - 1) * pageSize + 1 : 0 }}–{{ Math.min(page * pageSize, filteredRows.length) }} {{ t.of }} {{ filteredRows.length }}</p>
+      <p v-if="!instructionsOnly || pages > 1" class="insights-results" role="status">{{ t.showing }} {{ filteredRows.length ? (page - 1) * pageSize + 1 : 0 }}–{{ Math.min(page * pageSize, filteredRows.length) }} {{ t.of }} {{ filteredRows.length }}</p>
       <p v-if="!pageRows.length" class="insights-state">{{ search || sessionFilter || statusFilter ? t.noMatches : t.empty }}</p>
-      <div v-else class="insights-cards">
+      <div v-else class="insights-cards" :class="{ 'insights-instructions': instructionsOnly }">
         <article v-for="row in pageRows" :key="row.key" class="insights-card">
-          <div class="insights-card-heading"><span class="insights-kind">{{ t[row.type] }}</span><span v-if="row.card.status" class="insights-status">{{ row.card.status }}</span></div>
-          <h4>{{ row.card.title }}</h4>
-          <div class="insights-meta"><span>{{ t.recorded }}: {{ date(row.at) }}</span><span v-if="row.session">{{ t.session }}: {{ row.session }}</span></div>
+          <div v-if="!instructionsOnly" class="insights-card-heading"><span class="insights-kind">{{ t[row.type] }}</span><span v-if="row.card.status" class="insights-status">{{ row.card.status }}</span></div>
+          <h4 v-if="!instructionsOnly">{{ row.card.title }}</h4>
+          <div v-if="!instructionsOnly" class="insights-meta"><span>{{ t.recorded }}: {{ date(row.at) }}</span><span v-if="row.session">{{ t.session }}: {{ row.session }}</span></div>
           <template v-if="row.card.body">
-            <p class="insights-text" :class="{ 'insights-preview': row.card.body.length > 400 }">{{ row.card.body }}</p>
-            <details v-if="row.card.body.length > 400" class="insights-text-details"><summary>{{ t.fullText }}</summary><p class="insights-text">{{ row.card.body }}</p></details>
+            <p class="insights-text" :class="{ 'insights-preview': !instructionsOnly && row.card.body.length > 400 }">{{ row.card.body }}</p>
+            <details v-if="!instructionsOnly && row.card.body.length > 400" class="insights-text-details"><summary>{{ t.fullText }}</summary><p class="insights-text">{{ row.card.body }}</p></details>
           </template>
           <dl v-if="row.card.fields.length" class="insights-fields"><div v-for="(entry, index) in row.card.fields" :key="index"><dt>{{ entry.label }}</dt><dd>{{ entry.value }}</dd></div></dl>
           <div v-for="(entry, index) in row.card.sections" :key="index" class="insights-section">
@@ -275,7 +284,7 @@ const collectionFields = computed(() => {
       <nav v-if="pages > 1" class="insights-pagination" :aria-label="t.page">
         <button type="button" :disabled="page <= 1" @click="page -= 1">{{ t.previous }}</button><span>{{ t.page }} {{ page }} {{ t.of }} {{ pages }}</span><button type="button" :disabled="page >= pages" @click="page += 1">{{ t.next }}</button>
       </nav>
-      <p class="insights-note insights-retention">{{ t.retention }}</p>
+      <p v-if="!instructionsOnly" class="insights-note insights-retention">{{ t.retention }}</p>
       <details v-if="collectionFields.length" class="insights-details insights-collection"><summary>{{ t.refresh }}</summary><dl class="insights-fields"><div v-for="(entry, index) in collectionFields" :key="index"><dt>{{ entry.label }}</dt><dd>{{ entry.value }}</dd></div></dl></details>
     </template>
   </section>
@@ -305,6 +314,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .insights-error { padding: 12px 18px; border: 1px solid var(--err-border, #d95b63); border-radius: 6px; line-height: 1.6; overflow-wrap: anywhere; }
 .insights-results { margin: 16px 0 10px; }
 .insights-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
+.insights-instructions { grid-template-columns: minmax(0, 1fr); }
+.insights-instructions .insights-text { margin-top: 0; }
 .insights-card { min-width: 0; padding: 18px; border: 1px solid var(--line, #ddd); border-radius: 8px; background: var(--panel, white); overflow-wrap: anywhere; }
 .insights-card-heading { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: center; gap: 8px; }
 .insights-kind { color: var(--muted, #666); font-size: .76rem; font-weight: 600; }

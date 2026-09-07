@@ -171,7 +171,7 @@ const rankRecords = (records, { section, words, preferredIds, preferredRecordIds
 /** Bounded, optional working memory. Trusted instructions and the current task
  * belong in the caller's mandatory prompt, never in this evictable snapshot. */
 const buildCerebrumWorkingMemory = ({ world, question = '', situation = null, byteBudget = CEREBRUM_WORKING_MEMORY_DEFAULT_BYTES, includeCurrentSituation = true } = {}) => {
-  const budget = finiteInteger(byteBudget, CEREBRUM_WORKING_MEMORY_DEFAULT_BYTES, 0, 64000)
+  const budget = finiteInteger(byteBudget, CEREBRUM_WORKING_MEMORY_DEFAULT_BYTES, 0, Number.MAX_SAFE_INTEGER)
   const { sections, linkedIds } = prepareWorld(world)
   if (situation && typeof situation === 'object' && identifier(situation)) {
     sections.situations = [situation, ...sections.situations.filter(record => identifier(record) !== identifier(situation))]
@@ -215,10 +215,9 @@ const buildCerebrumWorkingMemory = ({ world, question = '', situation = null, by
   }
   // Round-robin prevents a large entity catalogue from crowding out an active
   // expectation or the previous outcome of this same situation.
-  const limits = { entities: 24, situations: 8, expectations: 8, goals: 6, patterns: 6, knowledge: 4, evidence: 8, episodes: 6, habits: 8 }
-  for (let round = 0; round < 24; round++) {
+  const rounds = Math.max(...Object.values(queues).map(queue => queue.length))
+  for (let round = 0; round < rounds; round++) {
     for (const section of ['entities', 'expectations', 'goals', 'situations', 'evidence', 'patterns', 'knowledge', 'episodes', 'habits']) {
-      if (round >= limits[section]) continue
       const record = queues[section][round]
       if (record) add(section, record)
     }

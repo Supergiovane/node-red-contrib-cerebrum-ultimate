@@ -57,7 +57,7 @@ Cerebrum 不再提供应用级上下文大小选项。完整的已选 ETS 目录
 
 Canvas 上的节点状态专门用于显示最近收到的请求，以及 LLM 运行期间本地化的“我正在思考…”状态。KNX 报文、网关更新、流量速率、ready 消息和技术结果绝不会覆盖该状态；这些信息仍可通过节点输出、日志和助手数据查看。
 
-每个 Ask/聊天会话都会保留最近 8 轮对话和最多 20 条由模型选择的长期指令，并按 `msg.cerebrum.sessionId`、`msg.sessionId` 或检测到的 Telegram 聊天 ID 隔离。模型通过结构化记忆工具，按语义判断一段对话的含义应被记住还是遗忘；系统不使用语言关键词或 intent 列表。使用相同存储的所有 Cerebrum 节点实时共享此上下文，并在 Node-RED 重启后从 `cerebrumultimatestorage/cerebrum/memory/cerebrum-chat-context.knxctx` 重新加载。该文件采用原子写入，最多保存 50 个会话且不超过 512 KB。启用 KNX 控制后，将输出 3 连接到聊天发送节点，将输出 4 连接到配置为**通用模式**的 KNX Ultimate 节点。启用确认后，第一条回复会显示 GA、DPT 和 payload，但不会发送写入；同一会话必须在 5 分钟内回复“确认”或“取消”。新请求会替换旧的待处理计划。每条已确认命令都包含 `msg.destination`、`msg.dpt`、`msg.payload` 和 `msg.event = "GroupValue_Write"`。
+网页聊天与 Telegram 共用家庭记忆。完整的收发对话、KNX 和集成观测、工具结果及上下文变更会追加并同步到 `cerebrumultimatestorage/cerebrum/memory/shared/cerebrum-memory.jsonl`，没有自动过期或档案总大小限制。模型可搜索档案并读取完整记录。渠道标识仅表示来源和回复接收者，不隔离知识。启用 KNX 控制后，将输出 3 连接到聊天发送节点，将输出 4 连接到配置为**通用模式**的 KNX Ultimate 节点。启用确认后，第一条回复会显示 GA、DPT 和 payload，但不会发送写入；同一会话必须在 5 分钟内回复“确认”或“取消”。新请求会替换旧的待处理计划。每条已确认命令都包含 `msg.destination`、`msg.dpt`、`msg.payload` 和 `msg.event = "GroupValue_Write"`。
 最近的会话记忆会紧邻当前请求放置，使本地模型即使面对很大的 KNX 提示，也能保留用户提供的事实，例如首选姓名或语言。模型可以通过 `memoryActions` 持久保存耐久的事实、偏好和指令；这仍是没有短语分类器或 intent 路由的语义工具选择。凭据、安全代码和 API 密钥绝不能被学习。
 
 对于 DPT 1.xxx 写入，AI 生成的安全等价值 `true`/`false`、`1`/`0` 和 `on`/`off` 会在本地校验和输出前统一转换为真正的布尔值。
@@ -104,9 +104,7 @@ Canvas 上的节点状态专门用于显示最近收到的请求，以及 LLM �
 ### 编辑和备份 Cerebrum 学习
 Node-RED 的 Cerebrum 配置中，**对话与家庭**选项卡包含**打开 Cerebrum 学习**按钮；它会为当前节点直接打开 Vue Web UI 中的此编辑器。
 
-在 Vue Web UI 中打开**设置 → Cerebrum 学习**，即可查看和编辑准确的共享文件 `cerebrum-chat-context.knxctx` 及其绝对路径。可复制该文件、下载备份，或从另一个 `.knxctx` 文件恢复。**重新初始化记忆**操作受明确确认保护；它会用新的空白上下文替换该文件，并清除使用同一存储的所有 Cerebrum 节点中的已保存会话、指令、摄像机监视和待处理对话确认。以制表符分隔的原生 `CEREBRUM_CHAT_CONTEXT 3` 记录是权威数据，并可直接编辑：`SESSION` 包含 `INSTRUCTION`、`TURN` 和 `CAMERA_WATCH` 记录，直至 `END_SESSION`。保存时会验证并限制这些记录、以原子方式重写文件，并立即更新所有相关节点的活动上下文。修订检查会拒绝覆盖或重置编辑器加载后又发生变化的学习内容。
-
-仅支持原生 V3 格式。旧版 Markdown/JSON V2 和 Base64 V1 文件不会被读取、导入或迁移；旧的 `.md` 文件保持不变，Cerebrum 会启动新的 `.knxctx` 上下文。仍保留 50 个会话和 512 KB 的限制。
+共享工作视图使用原生 V4 GLOBAL_INSTRUCTION 和 GLOBAL_TURN 记录。现有 V3 指令和对话会自动迁移，在限制最近视图之前先归档所有仍可用的记录。512 KB 限制仅适用于可编辑工作视图。完整 Cerebrum ZIP 备份也包含完整档案。重置工作视图不会删除历史档案。
 
 ### ETS 对象访问
 ETS 对象访问是唯一的操作权限依据。**ETS 对象访问**中选中的每个地址都处于活动状态且可读取；除非标记为**只读**，否则也可写入。聊天模型不会收到任何推断出的角色分类，写入授权也不再依赖角色。

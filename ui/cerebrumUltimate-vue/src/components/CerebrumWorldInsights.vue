@@ -145,7 +145,6 @@ const search = ref("");
 const status = ref("");
 const offset = ref(0);
 const previousOffsets = ref([]);
-const expanded = ref(new Set());
 let epoch = 0;
 let searchTimer;
 let disposed = false;
@@ -207,11 +206,6 @@ const titleFor = (item) => {
 };
 const timeFor = (item) => item.at || item.updatedAt || item.retrievedAt || item.lastObserved || item.observedAt || item.createdAt;
 const detailFields = (item) => Object.entries(item).filter(([key]) => key !== "display");
-const toggleDetails = (id) => {
-  const next = new Set(expanded.value);
-  if (next.has(id)) next.delete(id); else next.add(id);
-  expanded.value = next;
-};
 const load = async () => {
   clearTimeout(searchTimer);
   const currentEpoch = ++epoch;
@@ -224,7 +218,6 @@ const load = async () => {
   loading.value = true;
   error.value = "";
   overviewError.value = "";
-  expanded.value = new Set();
   const nodePath = `world-model/${encodeURIComponent(props.nodeId)}`;
   const params = new URLSearchParams({ operation: "inspect", collection: collection.value, q: search.value.trim(), status: status.value, limit: "12", offset: String(offset.value) });
   const results = await Promise.allSettled([
@@ -283,15 +276,16 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
   <section class="world-insights" data-cerebrum-localized :aria-label="heading">
     <header class="wi-header">
       <div>
-        <p class="wi-eyebrow">{{ words("La conoscenza di questa casa", "This house’s knowledge") }}</p>
         <h3>{{ heading }}</h3>
-        <p class="wi-intro">{{ introduction }}</p>
       </div>
       <button type="button" class="wi-button" :disabled="loading || !nodeId" @click="load">{{ loading ? words("Aggiornamento…", "Refreshing…") : words("Aggiorna", "Refresh") }}</button>
     </header>
 
     <p v-if="!nodeId" class="wi-empty">{{ words("Seleziona un nodo Cerebrum per esplorare ciò che ha appreso.", "Select a Cerebrum node to explore what it has learned.") }}</p>
     <template v-else>
+      <details class="memory-file-tools wi-tools">
+        <summary>{{ words("Filtri, raccolte e stato di Cerebrum", "Filters, collections and Cerebrum status") }}</summary>
+        <p class="wi-intro">{{ introduction }}</p>
       <div v-if="overview" class="wi-activity">
         <span class="wi-badge" :class="overview.activity?.enabled ? 'positive' : 'neutral'">{{ overview.activity?.enabled ? words("Cerebrum attivo", "Cerebrum active") : words("Ragionamento in pausa", "Reasoning paused") }}</span>
         <span>{{ overview.activity?.actionsEnabled ? words("Azioni autonome abilitate", "Autonomous actions enabled") : words("Azioni autonome non abilitate", "Autonomous actions disabled") }}</span>
@@ -310,10 +304,7 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
         </button>
       </div>
 
-      <div class="wi-collection-heading">
-        <h4>{{ label(collection) }}</h4>
-        <p>{{ collectionNote }}</p>
-      </div>
+      <p class="wi-note">{{ collectionNote }}</p>
       <form class="wi-filters" @submit.prevent="applySearch">
         <label class="wi-search">
           <span>{{ words("Cerca in questa raccolta", "Search this collection") }}</span>
@@ -330,6 +321,10 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
         <button v-if="search || status" type="button" class="wi-button wi-quiet" @click="clearSearch">{{ words("Azzera filtri", "Clear filters") }}</button>
       </form>
 
+      </details>
+      <div class="wi-collection-heading">
+        <h4>{{ label(collection) }}</h4>
+      </div>
       <div class="wi-results" :aria-busy="loading">
         <p v-if="loading" class="wi-empty" role="status">{{ words("Caricamento delle informazioni…", "Loading information…") }}</p>
         <div v-else-if="error" class="wi-feedback error" role="alert">
@@ -347,6 +342,12 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
               </div>
               <span v-if="badgeFor(item)" class="wi-badge" :class="badgeTone(badgeFor(item))">{{ statusLabel(badgeFor(item)) }}</span>
             </header>
+            <p v-if="item.summary && item.summary !== titleFor(item)" class="wi-summary">{{ item.summary }}</p>
+            <p v-if="collection === 'goals' && item.comfortBenefit" class="wi-benefit">{{ item.comfortBenefit }}</p>
+            <div v-if="collection === 'entities'" class="wi-state-value"><ValueTree :value="item.value" field="value" /></div>
+            <a v-if="collection === 'knowledge' && safeUrl(item.url)" class="wi-link" :href="safeUrl(item.url)" target="_blank" rel="noopener noreferrer">{{ words("Apri la fonte: ", "Open source: ") }}{{ sourceHost(item.url) }} ↗</a>
+            <details class="memory-file-tools wi-card-details">
+              <summary>{{ words("Dettagli e fonti", "Details and references") }}</summary>
             <div class="wi-card-meta">
               <span v-if="item.source">{{ item.source }}</span>
               <span v-if="timeFor(item)">{{ formatDate(timeFor(item)) }}</span>
@@ -355,10 +356,8 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
             <div v-if="item.display?.entities?.length" class="wi-related-entities" :aria-label="words('Dispositivi collegati', 'Related devices')">
               <span v-for="entity in item.display.entities" :key="entity.id">{{ entity.label }}<small v-if="entity.area"> · {{ entity.area }}</small></span>
             </div>
-            <p v-if="item.summary && item.summary !== titleFor(item)" class="wi-summary">{{ item.summary }}</p>
 
             <template v-if="collection === 'goals'">
-              <p v-if="item.comfortBenefit" class="wi-benefit">{{ item.comfortBenefit }}</p>
               <dl class="wi-key-points">
                 <div v-if="item.plan"><dt>{{ label("plan") }}</dt><dd>{{ item.plan }}</dd></div>
                 <div v-if="item.assessment"><dt>{{ label("assessment") }}</dt><dd>{{ item.assessment }}</dd></div>
@@ -377,12 +376,10 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
               <p class="wi-note">{{ words("Campioni di variazioni ricevute; i periodi senza dati non provano inattività.", "Samples of received transitions; periods without data do not establish inactivity.") }}</p>
             </template>
             <template v-else-if="collection === 'knowledge'">
-              <a v-if="safeUrl(item.url)" class="wi-link" :href="safeUrl(item.url)" target="_blank" rel="noopener noreferrer">{{ words("Apri la fonte: ", "Open source: ") }}{{ sourceHost(item.url) }} ↗</a>
               <p class="wi-note">{{ item.excerptOnly ? words("Conservato un estratto del risultato di ricerca.", "A search result excerpt is retained.") : words("Conservato il testo estratto dalla pagina, entro i limiti della memoria.", "Text extracted from the page is retained within memory limits.") }}</p>
               <p v-if="item.expiresAt" class="wi-note">{{ words("Copia locale valida fino a: ", "Local copy valid until: ") }}{{ formatDate(item.expiresAt) }}</p>
             </template>
             <template v-else-if="collection === 'entities'">
-              <div class="wi-state-value"><ValueTree :value="item.value" field="value" /></div>
               <p v-if="item.verifiedAt" class="wi-note">{{ words("Ultimo riscontro dal dispositivo: ", "Last device feedback: ") }}{{ formatDate(item.verifiedAt) }}</p>
             </template>
             <template v-else-if="collection === 'expectations'">
@@ -404,12 +401,12 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
             </template>
             <p v-else-if="collection === 'situations' && item.dueAt" class="wi-note">{{ words("Prossima valutazione: ", "Next assessment: ") }}{{ formatDate(item.dueAt) }}</p>
 
-            <button type="button" class="wi-details-toggle" :aria-expanded="expanded.has(item.id || index)" :aria-controls="`wi-detail-${mode}-${index}`" @click="toggleDetails(item.id || index)">{{ expanded.has(item.id || index) ? words("Nascondi dettagli", "Hide details") : words("Tutti i dettagli e le fonti", "All details and references") }} <span aria-hidden="true">{{ expanded.has(item.id || index) ? "−" : "+" }}</span></button>
-            <div v-if="expanded.has(item.id || index)" :id="`wi-detail-${mode}-${index}`" class="wi-details">
+            <div class="wi-details">
               <dl class="wi-all-fields">
                 <div v-for="[field, value] in detailFields(item)" :key="field" :class="{ 'wi-wide-field': value && typeof value === 'object' || typeof value === 'string' && value.length > 220 }"><dt>{{ label(field) }}</dt><dd><ValueTree :value="value" :field="field" /></dd></div>
               </dl>
             </div>
+            </details>
           </article>
           <p v-if="page.limited" class="wi-note">{{ words("Questa pagina è stata ridotta per la dimensione dei dati. Prosegui per vedere gli altri elementi.", "This page was shortened because of data size. Continue to see the remaining records.") }}</p>
           <p v-if="blockedCount" class="wi-feedback warning">{{ words("Alcuni elementi superano il limite di consultazione: ", "Some records exceed the inspection limit: ") }}{{ blockedCount }}. {{ words("Non sono inclusi nelle schede mostrate.", "They are not included in the cards shown.") }}</p>
@@ -420,25 +417,31 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
           </nav>
         </template>
       </div>
+      <details class="memory-file-tools">
+        <summary>{{ words("Informazioni sulla memoria e aggiornamenti", "Memory information and updates") }}</summary>
       <footer class="wi-footer">
-        <p>{{ words("Stai consultando le informazioni conservate per il nodo selezionato. La memoria mantiene dati e sintesi entro limiti di spazio: non è uno storico infinito di tutto ciò che è avvenuto nella casa.", "You are viewing retained information for the selected node. Memory keeps data and summaries within storage limits; it is not an unlimited history of everything that happened in the house.") }}</p>
+        <p>{{ words("Questa vista mostra dati e sintesi della memoria di lavoro del nodo selezionato. Conversazioni e osservazioni complete restano nell’archivio comune su file.", "This view shows data and summaries from the selected node’s working memory. Complete conversations and observations remain in the shared file archive.") }}</p>
         <p v-if="retentionNote">{{ retentionNote }}</p>
         <p v-if="overview?.updatedAt">{{ words("Memoria aggiornata: ", "Memory updated: ") }}{{ formatDate(overview.updatedAt) }}</p>
       </footer>
+      </details>
     </template>
   </section>
 </template>
 
 <style scoped>
 .world-insights { --wi-line: var(--line, rgba(0, 0, 0, .125)); color: var(--text, #333); min-width: 0; }
+.wi-tools { margin: 0 0 20px; }
+.wi-card-details { margin-top: 14px; padding: 12px; }
+.wi-card-details > summary { font-size: .8rem; }
 .wi-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
 .wi-header h3 { font-size: 1.25rem; line-height: 1.35; margin: 0 0 8px; }
 .wi-eyebrow { color: var(--muted, #666); font-size: .76rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin: 0 0 6px; }
 .wi-intro, .wi-collection-heading p { color: var(--muted, #666); line-height: 1.55; margin: 0; max-width: 82ch; }
 .wi-button { background: var(--panel, #fff); border: 1px solid var(--wi-line); color: inherit; border-radius: 5px; padding: 9px 13px; cursor: pointer; line-height: 1.3; white-space: nowrap; }
-.wi-button:hover:not(:disabled), .wi-details-toggle:hover { border-color: var(--accent, #ff9800); background: var(--accent-soft, #fff3e0); }
+.wi-button:hover:not(:disabled) { border-color: var(--accent, #ff9800); background: var(--accent-soft, #fff3e0); }
 .wi-button:disabled { opacity: .55; cursor: default; }
-.wi-button:focus-visible, .wi-collection:focus-visible, .wi-details-toggle:focus-visible, .wi-filters input:focus-visible, .wi-filters select:focus-visible, .wi-link:focus-visible { outline: 2px solid var(--accent, #ff9800); outline-offset: 3px; }
+.wi-button:focus-visible, .wi-collection:focus-visible, .wi-filters input:focus-visible, .wi-filters select:focus-visible, .wi-link:focus-visible { outline: 2px solid var(--accent, #ff9800); outline-offset: 3px; }
 .wi-activity { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: .82rem; color: var(--muted, #666); margin-bottom: 16px; }
 .wi-collections { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 18px 0 24px; }
 .wi-collection { text-align: left; display: flex; flex-direction: column; gap: 5px; color: inherit; background: var(--panel, #fff); border: 1px solid var(--wi-line); border-radius: 7px; padding: 15px; cursor: pointer; min-width: 0; }
@@ -481,7 +484,6 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
 .wi-metrics strong { color: var(--text, #333); font-size: 1.12rem; font-variant-numeric: tabular-nums; }
 .wi-link { display: inline-block; color: inherit; text-decoration: underline; text-decoration-color: var(--accent, #ff9800); text-underline-offset: 3px; font-size: .84rem; overflow-wrap: anywhere; margin-top: 10px; }
 .wi-state-value { font-size: 1.3rem; font-weight: 650; margin: 14px 0; }
-.wi-details-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 10px; width: 100%; text-align: left; margin-top: 14px; font-size: .8rem; font-weight: 600; color: inherit; background: transparent; border: 1px solid var(--wi-line); border-radius: 4px; cursor: pointer; }
 .wi-details { border-top: 1px solid var(--wi-line); margin-top: 14px; padding-top: 14px; }
 .wi-all-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 15px 24px; margin: 0; }
 .wi-all-fields > div { min-width: 0; }
@@ -499,7 +501,7 @@ onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(searchTimer); });
 .wi-feedback p { margin: 0 0 10px; }
 .wi-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0; }
 .wi-pagination > span { font-size: .8rem; color: var(--muted, #666); }
-.wi-footer { border-top: 1px solid var(--wi-line); margin-top: 22px; padding-top: 12px; color: var(--muted, #666); font-size: .76rem; line-height: 1.6; }
+.wi-footer { color: var(--muted, #666); font-size: .76rem; line-height: 1.6; }
 .wi-footer p { margin: 4px 0; }
 @media (max-width: 640px) {
   .wi-header { flex-wrap: wrap; }

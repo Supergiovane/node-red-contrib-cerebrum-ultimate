@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.4 — 2026-09-07
+
+- Simplified the Web Learning screen to show learned instructions first, with conversations, observed behaviour and file tools in collapsed details. Memory, Goals, Web Research and Activity now keep primary information visible while filters, collection statistics and complete record details remain expandable.
+- Fixed GA selection loss during ZIP migration: preserve flow-based access on the first export, copy current file-backed selections/read-only permissions into portable flows, recover legacy access from the source flow, and refresh the ETS screen after restore. Saved selections survive destination node/gateway changes and restarts, including while the catalog is unavailable.
+- Added explicit current KNX capability diagnostics to every conversational pass and context fallback. Distinguishes missing gateways/catalogs, unconfigured or unmatched ETS selections, read-only objects and disabled commands from details awaiting retrieval; newly saved access supersedes older chat unavailability claims.
+
+- Added a shared, append-only household archive for complete Web/Telegram conversations, KNX/integration observations, tool results and context changes, with immediate flush, archive search, record retrieval and full ZIP backup/restore.
+- Shared recent conversation and durable memories across channels, migrated available V3 records, and updated the Learning views to native V4.
+- Enabled explicitly requested actuator snapshots, kept complete saved values in prompts and retained memory across context retries. Removed fixed ETS/shared-memory/history retrieval-round counts, preserved evidence across Web and routine phases, and merged shared device observations into conversational awareness. Local retrieval uses an iterative, cancellable controller with unchanged-cycle detection; semantic details and world context scale with the model window. Autonomous reasoning can follow multiple local recall/research steps, including pagination, and records full reasoning/recall evidence to the shared archive.
+
 ## 0.1.2 — 2026-09-07
 
 - Moved user-managed AI Education from the flow property to a per-node Markdown file, with automatic migration and file saving when pressing Done in the node editor. Cancel discards unsaved edits; save errors keep the editor open.

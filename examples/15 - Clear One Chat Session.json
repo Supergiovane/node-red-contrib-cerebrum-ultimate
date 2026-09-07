@@ -4,14 +4,14 @@
     "type": "tab",
     "label": "Cerebrum · Clear one chat session",
     "disabled": false,
-    "info": "Clear conversation data, persistent instructions, pending commands and active schedules for one session without affecting other sessions."
+    "info": "Clear notification routing, pending commands and active schedules for one session without affecting other sessions."
   },
   {
     "id": "ce15000000000002",
     "type": "comment",
     "z": "ce15000000000001",
     "name": "A session-scoped reset",
-    "info": "Both Inject nodes use session ID “example-to-clear”. The clear_chat command removes only that session's recent turns, persistent instructions, pending commands and schedules. Other sessions and the node's AI Education remain unchanged.",
+    "info": "Both Inject nodes use session ID “example-to-clear”. The clear_chat command removes that channel's camera watches, pending commands and schedules; shared memories, conversations and the complete archive are retained. Other sessions and the node's AI Education remain unchanged.",
     "x": 240,
     "y": 80,
     "wires": []
@@ -31,7 +31,7 @@
     "once": false,
     "onceDelay": 0.1,
     "topic": "ask",
-    "payload": "Remember that this is a temporary example session.",
+    "payload": "This is a temporary example conversation.",
     "payloadType": "str",
     "x": 180,
     "y": 170,

@@ -13,7 +13,7 @@ const { MAX_BACKUP_BYTES, mapBackupArchives, assertBackupSize, createBackupDirec
 
 const BACKUP_ENTRY = 'cerebrum-backup.json'
 const allowedEntries = new Set([BACKUP_ENTRY, 'cerebrum-flows.json', 'required-packages.json', 'README.txt'])
-const archiveEntryPattern = /^archives\/(history|adapterHistory|operations)\/\d{4}-\d{2}-\d{2}\.(?:knxctx|jsonl)$/
+const archiveEntryPattern = /^archives\/(?:(history|adapterHistory|operations)\/\d{4}-\d{2}-\d{2}\.(?:knxctx|jsonl)|sharedMemory\/cerebrum-memory\.jsonl)$/
 const MAX_ENTRIES = 1024
 const invalidBackup = message => Object.assign(new Error(message), { status: 400 })
 const tooLarge = () => Object.assign(new Error('Backup JSON metadata exceeds 256 MiB'), { status: 413 })

@@ -1,8 +1,10 @@
-const CHAT_CONTEXT_VERSION = 3
+const CHAT_CONTEXT_VERSION = 4
 const CHAT_CONTEXT_MAX_BYTES = 512 * 1024
 const CHAT_CONTEXT_MAX_SESSIONS = 50
 const CHAT_CONTEXT_MAX_TURNS_PER_SESSION = 8
+const CHAT_CONTEXT_MAX_RECENT_TURNS = 24
 const CHAT_CONTEXT_MAX_INSTRUCTIONS_PER_SESSION = 20
+const CHAT_CONTEXT_MAX_SHARED_INSTRUCTIONS = 1000
 const CHAT_CONTEXT_MAX_CAMERA_WATCHES_PER_SESSION = 20
 const CHAT_CONTEXT_MAX_QUESTION_CHARS = 4000
 const CHAT_CONTEXT_MAX_REPLY_CHARS = 8000
@@ -19,6 +21,8 @@ const createEmptyCerebrumChatContext = () => ({
   version: CHAT_CONTEXT_VERSION,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
+  instructions: [],
+  turns: [],
   sessions: []
 })
 
@@ -29,6 +33,7 @@ const normalizeTurn = (turn) => {
   if (!question && !reply) return null
   return {
     at: clampText(turn.at || new Date().toISOString(), 64),
+    channel: normalizeSessionId(turn.channel),
     question,
     reply
   }
@@ -95,16 +100,34 @@ const normalizeSession = (session) => {
 const normalizeCerebrumChatContext = (value = {}) => {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const byId = new Map()
+  // Migrate durable v3 memories before any session eviction. Conversation turns
+  // and notification recipients remain local to their original session.
+  const instructions = [...(Array.isArray(source.instructions) ? source.instructions : [])]
+  const turns = [...(Array.isArray(source.turns) ? source.turns : [])]
   ;(Array.isArray(source.sessions) ? source.sessions : []).forEach((item) => {
     const session = normalizeSession(item)
     if (!session) return
+    instructions.push(...session.instructions)
+    turns.push(...session.turns.map(turn => ({ ...turn, channel: session.id })))
+    session.instructions = []
+    session.turns = []
     byId.delete(session.id)
     byId.set(session.id, session)
   })
+  const byText = new Map()
+  instructions.map(normalizeInstruction).filter(Boolean)
+    .sort((left, right) => left.at.localeCompare(right.at))
+    .forEach(item => {
+      const key = item.text.toLocaleLowerCase()
+      byText.delete(key)
+      byText.set(key, item)
+    })
   return {
     version: CHAT_CONTEXT_VERSION,
     createdAt: clampText(source.createdAt || new Date().toISOString(), 64),
     updatedAt: clampText(source.updatedAt || new Date().toISOString(), 64),
+    instructions: Array.from(byText.values()),
+    turns: turns.map(normalizeTurn).filter(Boolean).sort((left, right) => left.at.localeCompare(right.at)).slice(-CHAT_CONTEXT_MAX_RECENT_TURNS),
     sessions: Array.from(byId.values()).slice(-CHAT_CONTEXT_MAX_SESSIONS)
   }
 }
@@ -128,34 +151,38 @@ const touchSession = (context, sessionId) => {
 }
 
 const addCerebrumChatTurn = (context, { sessionId, question, reply, at } = {}) => {
-  const { target, session } = touchSession(context, sessionId)
-  const turn = normalizeTurn({ at, question, reply })
-  if (turn) session.turns.push(turn)
-  session.turns = session.turns.slice(-CHAT_CONTEXT_MAX_TURNS_PER_SESSION)
+  const target = normalizeCerebrumChatContext(context)
+  const turn = normalizeTurn({ at, channel: sessionId, question, reply })
+  if (turn) target.turns.push(turn)
+  target.turns = target.turns.slice(-CHAT_CONTEXT_MAX_RECENT_TURNS)
+  target.updatedAt = new Date().toISOString()
   return target
 }
 
-const addCerebrumChatInstruction = (context, { sessionId, text, at } = {}) => {
+const addCerebrumChatInstruction = (context, { text, at } = {}) => {
+  if (String(text || '').trim().length > CHAT_CONTEXT_MAX_INSTRUCTION_CHARS) throw new Error('Memory entry exceeds 2000 characters; save complete smaller entries')
   const instruction = normalizeInstruction({ text, at })
   if (!instruction) return normalizeCerebrumChatContext(context)
-  const { target, session } = touchSession(context, sessionId)
+  const target = normalizeCerebrumChatContext(context)
   const normalizedText = instruction.text.toLocaleLowerCase()
-  session.instructions = session.instructions
+  target.instructions = target.instructions
     .filter(item => item.text.toLocaleLowerCase() !== normalizedText)
-  session.instructions.push(instruction)
-  session.instructions = session.instructions.slice(-CHAT_CONTEXT_MAX_INSTRUCTIONS_PER_SESSION)
+  if (target.instructions.length >= CHAT_CONTEXT_MAX_SHARED_INSTRUCTIONS) throw new Error('Shared memory is full; forget unused entries before saving more')
+  target.instructions.push(instruction)
+  target.updatedAt = new Date().toISOString()
   return target
 }
 
-const removeCerebrumChatInstructions = (context, { sessionId, text, all = false } = {}) => {
-  const { target, session } = touchSession(context, sessionId)
+const removeCerebrumChatInstructions = (context, { text, all = false } = {}) => {
+  const target = normalizeCerebrumChatContext(context)
+  target.updatedAt = new Date().toISOString()
   if (all === true) {
-    session.instructions = []
+    target.instructions = []
     return target
   }
   const normalizedText = clampText(text, CHAT_CONTEXT_MAX_INSTRUCTION_CHARS).toLocaleLowerCase()
   if (!normalizedText) return target
-  session.instructions = session.instructions
+  target.instructions = target.instructions
     .filter(item => item.text.toLocaleLowerCase() !== normalizedText)
   return target
 }
@@ -204,20 +231,40 @@ const getCerebrumChatSession = (context, sessionId) => {
   }
 }
 
-const buildCerebrumChatPromptContext = ({ context, sessionId, maxChars = 16000 } = {}) => {
-  const session = getCerebrumChatSession(context, sessionId)
-  if (!session.instructions.length && !session.turns.length && !session.cameraWatches.length) return ''
+const buildCerebrumSharedMemoryPromptContext = ({ context, currentQuestion = '', maxChars = 4000 } = {}) => {
+  const instructions = normalizeCerebrumChatContext(context).instructions
+  if (!instructions.length) return ''
+  const normalizeSearch = text => String(text).normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase()
+  const tokens = Array.from(new Set(normalizeSearch(currentQuestion).match(/[\p{L}\p{N}/._-]{2,}/gu) || []))
+  const ranked = instructions.map((item, index) => {
+    const document = normalizeSearch(item.text)
+    return { item, index, score: tokens.reduce((sum, token) => sum + (document.includes(token) ? token.length : 0), 0) }
+  }).sort((left, right) => right.score - left.score || right.index - left.index)
+  const header = 'SHARED PERSISTENT MEMORY (all chat channels; newer entries override older conflicts). Saved device values are historical data, not current state or permission to execute:'
+  const omitted = 'Additional saved memories are omitted from this view; do not claim they were never saved or guess missing values.'
+  const budget = Number(maxChars) > 0 ? Number(maxChars) : Infinity
+  const selected = []
+  let used = header.length + omitted.length + 2
+  for (const entry of ranked) {
+    const line = `- ${entry.item.at}: ${entry.item.text.replace(/\r?\n/g, ' ')}`
+    // Never expose a partial saved scene or actuator value to the model.
+    if (used + line.length + 1 > budget) continue
+    selected.push({ ...entry, line })
+    used += line.length + 1
+  }
+  return [header, ...selected.sort((left, right) => left.index - right.index).map(entry => entry.line), selected.length < instructions.length ? omitted : ''].filter(Boolean).join('\n')
+}
+
+const buildCerebrumChatPromptContext = ({ context, sessionId, maxChars = 16000, currentQuestion = '', includeSharedMemory = true } = {}) => {
+  const shared = normalizeCerebrumChatContext(context)
+  const session = { turns: shared.turns, cameraWatches: listAllCerebrumCameraWatches(shared) }
   const boundedChars = Number(maxChars) > 0 ? Math.max(1000, Number(maxChars)) : 0
+  const memoryBudget = boundedChars ? Math.min(boundedChars, Math.max(2400, Math.floor(boundedChars * 0.5))) : 0
+  const sharedMemory = includeSharedMemory ? buildCerebrumSharedMemoryPromptContext({ context, currentQuestion, maxChars: memoryBudget }) : ''
+  if (!sharedMemory && !session.turns.length && !session.cameraWatches.length) return ''
   if (boundedChars > 0) {
     const fixedBlocks = []
-    if (session.instructions.length) {
-      const instructionBudget = Math.min(1200, Math.max(400, Math.floor(boundedChars * 0.3)))
-      const instructionLines = [
-        'PERSISTENT USER FACTS AND INSTRUCTIONS:',
-        ...session.instructions.map(item => `- ${item.text.replace(/\r?\n/g, ' ')}`)
-      ]
-      fixedBlocks.push(instructionLines.join('\n').slice(0, instructionBudget))
-    }
+    if (sharedMemory) fixedBlocks.push(sharedMemory)
     if (session.cameraWatches.length) {
       const watchLines = [
         'ACTIVE CAMERA WATCHES:',
@@ -228,7 +275,7 @@ const buildCerebrumChatPromptContext = ({ context, sessionId, maxChars = 16000 }
           return `- ${watch.id}: ${camera}; event ${watch.eventType}${scope ? `; scope ${scope}` : ''}${objects}; cooldown ${watch.cooldownSeconds}s`
         })
       ]
-      fixedBlocks.push(watchLines.join('\n').slice(0, Math.min(800, Math.floor(boundedChars * 0.25))))
+      fixedBlocks.push(watchLines.join('\n').slice(0, Math.max(0, Math.min(800, Math.floor(boundedChars * 0.25), boundedChars - sharedMemory.length - 2))))
     }
     const fixedText = fixedBlocks.join('\n\n')
     const turnBudget = Math.max(0, boundedChars - fixedText.length - (fixedText ? 2 : 0))
@@ -236,7 +283,7 @@ const buildCerebrumChatPromptContext = ({ context, sessionId, maxChars = 16000 }
     let used = 0
     for (let index = session.turns.length - 1; index >= 0; index -= 1) {
       const turn = session.turns[index]
-      const renderedTurn = `User: ${clampText(turn.question, 700)}\nAssistant: ${clampText(turn.reply, 1400)}`
+      const renderedTurn = `[${turn.at}; channel ${turn.channel}] User: ${clampText(turn.question, 700)}\nAssistant: ${clampText(turn.reply, 1400)}`
       const nextSize = renderedTurn.length + (selectedTurns.length ? 1 : 0)
       if (used + nextSize > turnBudget) {
         if (!selectedTurns.length && turnBudget >= 200) selectedTurns.unshift(renderedTurn.slice(0, turnBudget))
@@ -245,25 +292,22 @@ const buildCerebrumChatPromptContext = ({ context, sessionId, maxChars = 16000 }
       selectedTurns.unshift(renderedTurn)
       used += nextSize
     }
-    const conversationBlock = selectedTurns.length ? `RECENT CONVERSATION:\n${selectedTurns.join('\n')}` : ''
+    const conversationBlock = selectedTurns.length ? `RECENT SHARED CONVERSATION (all channels; excerpts, full text in the shared archive):\n${selectedTurns.join('\n')}` : ''
     return [fixedText, conversationBlock].filter(Boolean).join('\n\n').slice(0, boundedChars)
   }
   const lines = []
-  if (session.instructions.length) {
-    lines.push('PERSISTENT USER-PROVIDED FACTS, PREFERENCES, AND INSTRUCTIONS (follow relevant entries unless they conflict with safety or the KNX contract; newer entries override older conflicting entries):')
-    session.instructions.forEach(item => lines.push(`- ${item.text.replace(/\r?\n/g, ' ')}`))
-  }
+  if (sharedMemory) lines.push(sharedMemory)
   if (session.turns.length) {
     if (lines.length) lines.push('')
-    lines.push('RECENT CONVERSATION:')
+    lines.push('RECENT SHARED CONVERSATION (all channels):')
     session.turns.forEach((turn) => {
-      lines.push(`User: ${turn.question}`)
+      lines.push(`[${turn.at}; channel ${turn.channel}] User: ${turn.question}`)
       lines.push(`Assistant: ${turn.reply}`)
     })
   }
   if (session.cameraWatches.length) {
     if (lines.length) lines.push('')
-    lines.push('ACTIVE CAMERA WATCHES (persistent notification rules created by this chat):')
+    lines.push('ACTIVE CAMERA WATCHES (shared awareness; notifications retain their original recipient):')
     session.cameraWatches.forEach((watch) => {
       const camera = watch.cameraName || watch.cameraId
       const scope = watch.scopeName || watch.scopeId
@@ -311,14 +355,16 @@ const renderCerebrumChatContextFile = (context) => {
   const lines = [
     '# Cerebrum native chat-learning context',
     '# Tab-separated records. Escapes: \\\\ (backslash), \\t (tab), \\n (newline), \\r (carriage return).',
-    '# Records: SESSION, INSTRUCTION, TURN, CAMERA_WATCH, END_SESSION.',
+    '# Shared working view. Complete history is retained in shared/cerebrum-memory.jsonl.',
+    '# GLOBAL_INSTRUCTION and GLOBAL_TURN are shared across channels. SESSION retains camera notification routing only.',
     buildCerebrumChatContextRecord(CHAT_CONTEXT_NATIVE_HEADER, [CHAT_CONTEXT_VERSION]),
     buildCerebrumChatContextRecord('CREATED_AT', [target.createdAt]),
     buildCerebrumChatContextRecord('UPDATED_AT', [target.updatedAt])
   ]
+  target.instructions.forEach(item => lines.push(buildCerebrumChatContextRecord('GLOBAL_INSTRUCTION', [item.at, item.text])))
+  target.turns.forEach(turn => lines.push(buildCerebrumChatContextRecord('GLOBAL_TURN', [turn.at, turn.channel, turn.question, turn.reply])))
   target.sessions.forEach((session) => {
     lines.push(buildCerebrumChatContextRecord('SESSION', [session.id, session.updatedAt]))
-    session.instructions.forEach(item => lines.push(buildCerebrumChatContextRecord('INSTRUCTION', [item.at, item.text])))
     session.turns.forEach(turn => lines.push(buildCerebrumChatContextRecord('TURN', [turn.at, turn.question, turn.reply])))
     session.cameraWatches.forEach((watch) => {
       lines.push(buildCerebrumChatContextRecord('CAMERA_WATCH', [
@@ -344,13 +390,10 @@ const buildCerebrumChatContextFile = ({ context, maxBytes = CHAT_CONTEXT_MAX_BYT
   let bounded = normalizeCerebrumChatContext(context)
   let rendered = renderCerebrumChatContextFile(bounded)
   while (Buffer.byteLength(rendered.content, 'utf8') > targetBytes) {
-    const sessionWithTurns = bounded.sessions.find(session => session.turns.length > 0)
-    if (sessionWithTurns) sessionWithTurns.turns.shift()
-    else if (bounded.sessions.length > 1) bounded.sessions.shift()
+    if (bounded.turns.length) bounded.turns.shift()
+    else if (bounded.sessions.length > 0) bounded.sessions.shift()
     else {
-      const sessionWithInstructions = bounded.sessions.find(session => session.instructions.length > 0)
-      if (!sessionWithInstructions) break
-      sessionWithInstructions.instructions.shift()
+      throw new Error('Shared memory exceeds the file limit; forget unused entries before saving more')
     }
     rendered = renderCerebrumChatContextFile(bounded)
     bounded = rendered.context
@@ -363,9 +406,9 @@ const buildCerebrumChatContextFile = ({ context, maxBytes = CHAT_CONTEXT_MAX_BYT
   }
 }
 
-const parseCerebrumChatContextFileStrict = (content) => {
+const parseCerebrumChatContextFileStrict = (content, { onTurn, onInstruction } = {}) => {
   const source = String(content || '')
-  const context = { version: CHAT_CONTEXT_VERSION, createdAt: '', updatedAt: '', sessions: [] }
+  const context = { version: CHAT_CONTEXT_VERSION, createdAt: '', updatedAt: '', instructions: [], turns: [], sessions: [] }
   let headerSeen = false
   let currentSession = null
 
@@ -376,9 +419,10 @@ const parseCerebrumChatContextFileStrict = (content) => {
     const fail = message => { throw new Error(`Invalid Cerebrum native chat-learning context at line ${lineIndex + 1}: ${message}`) }
 
     if (!headerSeen) {
-      if (record !== CHAT_CONTEXT_NATIVE_HEADER || String(fields[0] || '') !== String(CHAT_CONTEXT_VERSION)) {
+      if (record !== CHAT_CONTEXT_NATIVE_HEADER || !['3', String(CHAT_CONTEXT_VERSION)].includes(String(fields[0] || ''))) {
         fail(`expected ${CHAT_CONTEXT_NATIVE_HEADER} ${CHAT_CONTEXT_VERSION} header`)
       }
+      context.version = Number(fields[0])
       headerSeen = true
       return
     }
@@ -411,10 +455,26 @@ const parseCerebrumChatContextFileStrict = (content) => {
       currentSession = null
       return
     }
+    if (record === 'GLOBAL_INSTRUCTION') {
+      if (context.version < 4 || currentSession) fail('GLOBAL_INSTRUCTION requires a v4 record outside a session')
+      if (fields.length !== 2 || !String(fields[1] || '').trim()) fail('GLOBAL_INSTRUCTION requires timestamp and text')
+      if (fields[1].trim().length > CHAT_CONTEXT_MAX_INSTRUCTION_CHARS) fail('GLOBAL_INSTRUCTION exceeds 2000 characters')
+      context.instructions.push({ at: fields[0], text: fields[1] })
+      if (onInstruction) onInstruction({ at: fields[0], text: fields[1] })
+      return
+    }
+    if (record === 'GLOBAL_TURN') {
+      if (context.version < 4 || currentSession) fail('GLOBAL_TURN requires a v4 record outside a session')
+      if (fields.length !== 4) fail('GLOBAL_TURN requires timestamp, channel, question and reply')
+      context.turns.push({ at: fields[0], channel: fields[1], question: fields[2], reply: fields[3] })
+      if (onTurn) onTurn(context.turns[context.turns.length - 1])
+      return
+    }
     if (!currentSession) fail(`${record || 'empty record'} is not allowed outside a session`)
     if (record === 'INSTRUCTION') {
       if (fields.length < 2 || !String(fields[1] || '').trim()) fail('INSTRUCTION requires timestamp and text')
       currentSession.instructions.push({ at: fields[0], text: fields[1] })
+      if (onInstruction) onInstruction({ at: fields[0], channel: currentSession.id, text: fields[1] })
       return
     }
     if (record === 'TURN') {
@@ -422,6 +482,7 @@ const parseCerebrumChatContextFileStrict = (content) => {
         fail('TURN requires timestamp, question and reply')
       }
       currentSession.turns.push({ at: fields[0], question: fields[1], reply: fields[2] })
+      if (onTurn) onTurn({ at: fields[0], channel: currentSession.id, question: fields[1], reply: fields[2] })
       return
     }
     if (record === 'CAMERA_WATCH') {
@@ -461,12 +522,7 @@ const parseCerebrumChatContextFile = (content) => {
 
 const conversationMapFromCerebrumChatContext = (context) => {
   const result = new Map()
-  normalizeCerebrumChatContext(context).sessions.forEach((session) => {
-    result.set(session.id, session.turns.map(turn => ({
-      question: turn.question,
-      reply: turn.reply
-    })))
-  })
+  result.set('shared', normalizeCerebrumChatContext(context).turns.map(turn => ({ question: turn.question, reply: turn.reply })))
   return result
 }
 
@@ -475,12 +531,14 @@ module.exports = {
   CHAT_CONTEXT_MAX_BYTES,
   CHAT_CONTEXT_MAX_INSTRUCTIONS_PER_SESSION,
   CHAT_CONTEXT_MAX_SESSIONS,
+  CHAT_CONTEXT_MAX_SHARED_INSTRUCTIONS,
   CHAT_CONTEXT_MAX_TURNS_PER_SESSION,
   addCerebrumCameraWatch,
   addCerebrumChatInstruction,
   addCerebrumChatTurn,
   buildCerebrumChatContextFile,
   buildCerebrumChatPromptContext,
+  buildCerebrumSharedMemoryPromptContext,
   clearCerebrumChatSession,
   conversationMapFromCerebrumChatContext,
   createEmptyCerebrumChatContext,

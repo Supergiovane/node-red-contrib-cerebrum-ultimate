@@ -3087,6 +3087,8 @@
   margin: 28px 0 12px;
 }
 .memory-section-toolbar h4 { margin: 0; }
+.memory-primary-heading { margin-top: 0; }
+.memory-primary-heading h3 { margin: 0; font-size: 1.25rem; }
 .memory-file-tools {
   margin-top: 24px;
   padding: 16px;

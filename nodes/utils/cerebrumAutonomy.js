@@ -110,7 +110,7 @@ const isFresh = (entity, now) => {
 
 // This store contains bounded working knowledge. The original home/event archives
 // remain owned by their existing stores and are never trimmed by this engine.
-const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notify, research, researchEnabled = () => false, enabled = () => true, now = Date.now, log = () => {} }) => {
+const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notify, research, archiveSnapshot = () => {}, researchEnabled = () => false, enabled = () => true, now = Date.now, log = () => {} }) => {
   if (!filePath || typeof readSnapshot !== 'function' || typeof reason !== 'function') throw new Error('Autonomy requires filePath, readSnapshot and reason')
   let store
   try {
@@ -197,6 +197,7 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
     store.researchHistory = (store.researchHistory || []).slice(-60)
   }
   const persist = () => {
+    archiveSnapshot(store)
     trim()
     const content = JSON.stringify(store)
     if (Buffer.byteLength(content, 'utf8') > MAX_STORE_BYTES) throw new Error('Autonomy store exceeds its storage limit; effects aborted')

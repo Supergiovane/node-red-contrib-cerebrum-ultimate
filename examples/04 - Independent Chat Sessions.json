@@ -2,15 +2,15 @@
   {
     "id": "ce04000000000001",
     "type": "tab",
-    "label": "Cerebrum 04 - Independent Chat Sessions",
+    "label": "Cerebrum 04 - Shared Memory and Chat Routing",
     "disabled": false,
-    "info": "Two users keep separate recent conversations, pending confirmations and schedules."
+    "info": "Two chat channels share conversations and household knowledge. Pending command confirmations and reply recipients retain their own routing."
   },
   {
     "id": "ce04000000000002",
     "type": "comment",
     "z": "ce04000000000001",
-    "name": "Each msg.sessionId identifies one independent conversation",
+    "name": "Each msg.sessionId identifies a reply recipient; memory is shared",
     "info": "Click the questions in any order and inspect msg.cerebrum.sessionId in the replies.",
     "x": 330,
     "y": 80,

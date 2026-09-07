@@ -117,6 +117,224 @@ describe('Cerebrum portable backup', () => {
     return readSupplementalFiles(locations)
   }
 
+  it('persists Web conversations and retrieves their actuator context through Telegram after restart and ZIP restore', async function () {
+    this.timeout(15000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const prompts = []
+    const scene = 'Relax: Persiana soggiorno, stato 1/2/3 DPT 5.001 = 37; comando 1/2/4 DPT 5.001; osservato 2026-09-07T10:00:00Z'
+    const config = { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test-model', llmMaxTokens: 1000, llmContextLength: 32768 }
+    let phase = 'save'
+    let recordId
+    simpleGet.concat = (options, callback) => {
+      const body = JSON.parse(options.body)
+      prompts.push(JSON.stringify(body.messages))
+      const action = phase === 'save'
+        ? { operation: 'remember', text: scene, all: false, reason: 'Salvataggio richiesto' }
+        : phase === 'search'
+          ? { operation: 'search', text: 'Relax', kind: 'conversation', offset: 0, all: false, reason: 'Recupera dal web' }
+          : phase === 'get'
+            ? { operation: 'get', text: recordId, offset: 0, all: false, reason: 'Leggi record completo' }
+            : null
+      const response = { reply: phase === 'save' ? 'Ho salvato Relax al 37%.' : action ? '' : 'Relax è stato salvato dal web al 37%.', language: 'it', commands: [], cameraActions: [], speechActions: [], memoryActions: action ? [action] : [], catalogActions: [], webActions: [], scheduleActions: [], historyActions: [], codeActions: [] }
+      phase = phase === 'search' ? 'get' : 'answer'
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      let node = create('shared-conversation', config)
+      node.cerebrumAutonomyEnabled = false
+      const saved = await node.sidebarAsk('Salva la posizione della persiana soggiorno come Relax')
+      expect(saved.answer).to.include('salvato')
+      expect(node._chatContext.instructions.some(item => item.text === scene)).to.equal(true)
+      expect((await node.querySharedMemory({ text: 'Relax', kind: 'conversation' })).items.some(item => item.channel === 'sidebar')).to.equal(true)
+      const rawFile = path.join(storage(node), 'memory/shared/cerebrum-memory.jsonl')
+      expect(fs.readFileSync(rawFile, 'utf8')).to.include('Salva la posizione').and.include('Ho salvato Relax al 37%')
+      await close(node)
+      node = create('shared-conversation', config)
+      node.cerebrumAutonomyEnabled = false
+      const records = await node.querySharedMemory({ text: 'Relax', kind: 'conversation' })
+      recordId = records.items.find(item => item.data?.role === 'assistant' || item.excerpt?.includes('"role":"assistant"')).id
+      phase = 'search'
+      const reply = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Telegram response missing')), 5000)
+        node.send = outputs => {
+          if (outputs[2] && outputs[2].cerebrum?.type === 'llm') { clearTimeout(timer); resolve(outputs[2]) }
+        }
+        node.emit('input', { topic: 'ask', sessionId: 'telegram:42', payload: 'Richiama la posizione Relax salvata dal web' })
+      })
+      expect(JSON.stringify(reply.payload)).to.include('37%')
+      expect(prompts[1]).to.include(scene).and.include('Salva la posizione')
+      expect(prompts.at(-1)).to.include('SHARED ARCHIVE RESULTS').and.include('Ho salvato Relax al 37%')
+      const backup = await decodeBackupUpload(await createBackupZip(await node.exportAiConfig()))
+      const target = create('shared-restored')
+      await target.importAiConfig(backup)
+      expect((await target.querySharedMemory({ text: 'Relax', kind: 'conversation' })).items.some(item => item.channel === 'telegram:42')).to.equal(true)
+    } finally { simpleGet.concat = transport }
+  })
+
+  it('continues beyond four ETS passes, revisits earlier evidence and still requires write confirmation', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const prompts = []
+    const node = create('shared-ets', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test-model', llmMaxTokens: 1000, llmContextLength: 32768, llmAllowKnxCommands: true, llmRequireCommandConfirmation: true, etsExposeConfigured: true, etsExposedGAs: ['1/2/3', '1/2/4'], etsReadOnlyGAs: ['1/2/3'] })
+    node.cerebrumAutonomyEnabled = false
+    node.serverKNX = { id: 'gateway', csv: [{ ga: '1/2/3', dpt: '5.001', devicename: 'Persiana soggiorno posizione stato' }, { ga: '1/2/4', dpt: '5.001', devicename: 'Persiana soggiorno posizione comando' }], removeClient: noop }
+    const writes = []
+    node.send = outputs => {
+      const messages = Array.isArray(outputs[3]) ? outputs[3] : outputs[3] ? [outputs[3]] : []
+      writes.push(...messages.filter(message => message.event === 'GroupValue_Write'))
+    }
+    const actions = [
+      { operation: 'list_areas' },
+      { operation: 'search', query: 'Termine inesistente' },
+      { operation: 'search', query: 'Persiana soggiorno', purpose: 'inspect' },
+      { operation: 'related', destinations: ['1/2/3'], purpose: 'write' },
+      { operation: 'get', destinations: ['1/2/4'], purpose: 'write' },
+      { operation: 'get', destinations: ['1/2/3'], purpose: 'read' },
+      { operation: 'search', query: 'Persiana soggiorno', purpose: 'inspect' }
+    ]
+    simpleGet.concat = (options, callback) => {
+      prompts.push(JSON.stringify(JSON.parse(options.body).messages))
+      const action = actions.shift()
+      const response = { reply: action ? '' : 'Propongo di riportare la persiana soggiorno al 37%.', language: 'it', commands: action ? [] : [{ event: 'GroupValue_Write', destination: '1/2/4', dpt: '5.001', payload: 37 }], catalogActions: action ? [action] : [] }
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      const reply = await node.sidebarAsk('Riporta la persiana soggiorno al 37%')
+      expect(prompts).to.have.length(8)
+      expect(prompts.at(-1)).to.include('1/2/4').and.include('5.001')
+      expect(reply.metadata.awaitingConfirmation).to.equal(true)
+      expect(reply.metadata.rejectedCommands).to.deep.equal([])
+      expect(writes).to.deep.equal([])
+    } finally { simpleGet.concat = transport }
+  })
+
+  it('recognizes newly saved ETS access in the same chat and retrieves both actuators after earlier unavailability', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const node = create('ets-reconfigured', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test-model', llmMaxTokens: 1000, llmContextLength: 32768, llmAllowKnxCommands: true, llmRequireCommandConfirmation: true })
+    node.cerebrumAutonomyEnabled = false
+    node.serverKNX = { id: 'gateway', linkStatus: 'connected', csv: [{ ga: '1/2/4', dpt: '5.001', devicename: 'Tapparella grande soggiorno posizione' }, { ga: '1/2/5', dpt: '5.001', devicename: 'Tenda a rullo soggiorno posizione' }], removeClient: noop }
+    const prompts = []
+    const writes = []
+    node.send = outputs => writes.push(...(Array.isArray(outputs[3]) ? outputs[3] : outputs[3] ? [outputs[3]] : []).filter(message => message.event === 'GroupValue_Write'))
+    simpleGet.concat = (options, callback) => {
+      const prompt = JSON.parse(options.body).messages.map(message => message.content).join('\n')
+      prompts.push(prompt)
+      const response = prompts.length === 1
+        ? { reply: 'La selezione ETS non è configurata per questo nodo.', language: 'it' }
+        : prompts.length === 2
+          ? { catalogActions: [{ operation: 'get', destinations: ['1/2/4', '1/2/5'], purpose: 'write' }] }
+          : { reply: 'Propongo l’apertura di entrambe.', language: 'it', commands: ['1/2/4', '1/2/5'].map(destination => ({ event: 'GroupValue_Write', destination, dpt: '5.001', payload: 0 })) }
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      await node.sidebarAsk('Apri la tapparella grande e la tenda a rullo del soggiorno')
+      expect(prompts[0]).to.include('access_not_configured')
+      const saved = await node.saveEtsAccessConfiguration({ configured: true, exposedGAs: ['1/2/4', '1/2/5'], readOnlyGAs: [] })
+      expect(saved.etsAccess).to.include({ selectedCount: 2, requestedSelectionCount: 2 })
+      const reply = await node.sidebarAsk('Riprova, entrambe')
+      expect(prompts).to.have.length(3)
+      expect(prompts[1]).to.include('"catalogStatus":"available"')
+      expect(prompts[1]).to.include('supersede earlier chat claims').and.include('details still need retrieval')
+      expect(prompts.at(-1)).to.include('KNX-DETAILS/2').and.include('1/2/4').and.include('1/2/5')
+      expect(reply.metadata.awaitingConfirmation).to.equal(true)
+      expect(reply.metadata.rejectedCommands).to.deep.equal([])
+      expect(writes).to.deep.equal([])
+    } finally { simpleGet.concat = transport }
+  })
+
+  it('continues shared-memory and history queries across a Web continuation without fixed local round counts', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const node = create('progressive-memory', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test-model', llmMaxTokens: 1000, llmContextLength: 32768, historyStoreToDisk: true, webAccessEnabled: true, webMaxCallsPerHour: 1 })
+    node.cerebrumAutonomyEnabled = false
+    // Exercise Web orchestration with its configured quota exhausted: no network.
+    node._webRequestTimestamps = [Date.now()]
+    const records = Array.from({ length: 6 }, (_, index) => node._sharedMemoryArchive.append({ kind: 'conversation', channel: 'web', data: { text: `Scena ${index}: posizione ${30 + index}%` } }))
+    const steps = records.map(record => ({ memoryActions: [{ operation: 'get', text: record.id, offset: 0 }] }))
+    steps.splice(3, 0, { webActions: [{ operation: 'search', query: 'KNX documentation' }] })
+    for (let index = 0; index < 4; index++) steps.push({ historyActions: [{ operation: 'query', query: `stato ${index}`, limit: 2 }] })
+    const prompts = []
+    simpleGet.concat = (options, callback) => {
+      prompts.push(JSON.stringify(JSON.parse(options.body).messages))
+      const step = steps.shift()
+      const response = step || { reply: 'Ho consultato tutte le posizioni salvate.', language: 'it' }
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      const reply = await node.sidebarAsk('Consulta tutte le scene e verifica lo storico')
+      expect(reply.answer).to.include('tutte le posizioni')
+      expect(prompts).to.have.length(12)
+      expect(prompts[4]).to.include('Scena 0').and.include('Scena 2')
+      expect(prompts.at(-1)).to.include('Scena 5').and.include('stato 3')
+      const archived = fs.readFileSync(node._sharedMemoryArchive.filePath, 'utf8').trim().split('\n').map(JSON.parse)
+      expect(archived.filter(record => record.data.operation === 'memory_query')).to.have.length(6)
+      expect(archived.filter(record => record.data.operation === 'history_query')).to.have.length(4)
+    } finally { simpleGet.concat = transport }
+  })
+
+  it('ends repeated unchanged ETS queries with an uncertainty prompt', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const node = create('stalled-ets', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test-model', llmMaxTokens: 1000, llmContextLength: 32768, etsExposeConfigured: true, etsExposedGAs: ['1/2/3'] })
+    node.cerebrumAutonomyEnabled = false
+    node.serverKNX = { id: 'gateway', csv: [{ ga: '1/2/3', dpt: '5.001', devicename: 'Persiana soggiorno' }], removeClient: noop }
+    let calls = 0
+    simpleGet.concat = (options, callback) => {
+      calls++
+      const stalled = JSON.stringify(JSON.parse(options.body).messages).includes('Repeated ETS queries produced no new evidence')
+      const response = stalled ? { reply: 'Non ho trovato il dispositivo richiesto.', language: 'it' } : { catalogActions: [{ operation: 'search', query: 'dispositivo inesistente' }] }
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      const reply = await node.sidebarAsk('Cerca un dispositivo che non esiste')
+      expect(reply.answer).to.include('Non ho trovato')
+      expect(calls).to.equal(3)
+    } finally { simpleGet.concat = transport }
+  })
+
+  it('cancels superseded chat reasoning before executing its next tool or returning a stale reply', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const node = create('cancel-reasoning', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test-model', llmMaxTokens: 1000, llmContextLength: 32768 })
+    node.cerebrumAutonomyEnabled = false
+    let releaseFirst, markStarted, finishReply
+    const started = new Promise(resolve => { markStarted = resolve })
+    const completed = new Promise(resolve => { finishReply = resolve })
+    const answers = []
+    let calls = 0
+    simpleGet.concat = (options, callback) => {
+      calls++
+      const deliver = response => callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+      if (calls === 1) {
+        releaseFirst = () => deliver({ memoryActions: [{ operation: 'search', text: 'vecchia richiesta' }] })
+        markStarted()
+      } else deliver({ reply: 'Ciao!', language: 'it' })
+    }
+    node.send = outputs => {
+      if (outputs[2]?.cerebrum?.type === 'llm') { answers.push(outputs[2].payload); finishReply() }
+    }
+    try {
+      node.emit('input', { topic: 'ask', sessionId: 'telegram:42', payload: 'Consulta la vecchia richiesta' })
+      await started
+      node.emit('input', { topic: 'ask', sessionId: 'telegram:42', payload: 'Ora dimmi ciao' })
+      await completed
+      releaseFirst()
+      await new Promise(resolve => setImmediate(resolve))
+      expect(calls).to.equal(2)
+      expect(answers).to.have.length(1)
+      expect(JSON.stringify(answers[0])).to.include('Ciao!')
+      const archive = fs.readFileSync(node._sharedMemoryArchive.filePath, 'utf8')
+      expect(archive).not.to.include('"operation":"memory_query"')
+    } finally { simpleGet.concat = transport }
+  })
+
   it('migrates AI Education to a file, edits it independently of flows and keeps the saved file across restarts', async () => {
     const legacy = 'Rispetta il silenzio notturno.\nAvvisa solo quando serve 🏠.\n'
     let node = create('education', { aiEducation: legacy })
@@ -165,6 +383,118 @@ describe('Cerebrum portable backup', () => {
     backup.files.aiEducation = backupFile('aiEducation', 'ignored.md', '')
     await target.importAiConfig(backup)
     expect(target.aiEducation).to.equal('')
+  })
+
+  it('preserves the latest saved ETS selection and read-only permissions through ZIP migration and restart', async () => {
+    const stale = { etsExposeConfigured: false, etsExposedGAs: [], etsReadOnlyGAs: [] }
+    const access = { configured: true, exposedGAs: ['3/1/7', '3/1/8'], readOnlyGAs: ['3/1/8'] }
+    const gateway = id => ({
+      id,
+      removeClient: noop,
+      csv: [
+        { ga: '3/1/7', dpt: '5.001', devicename: 'Tapparella soggiorno comando' },
+        { ga: '3/1/8', dpt: '5.001', devicename: 'Tapparella soggiorno stato' },
+        { ga: '3/1/15', dpt: '5.001', devicename: 'Tenda non selezionata' }
+      ]
+    })
+    const source = create('ets-source', stale)
+    source.serverKNX = gateway('gateway')
+    await source.saveEtsAccessConfiguration(access)
+    const download = await request(source, 'export', { format: 'zip' })
+    expect(download.statusCode).to.equal(200)
+    const backup = await decodeBackupUpload(download.body)
+    expect(JSON.parse(backup.files.aiConfiguration.content).etsAccess).to.deep.equal(access)
+    const migrated = JSON.parse(backup.migration.flows.content).find(item => item.id === source.id)
+    expect(migrated).to.deep.include({ etsExposeConfigured: true, etsExposedGAs: access.exposedGAs, etsReadOnlyGAs: access.readOnlyGAs })
+    // The portable flow already has current access, before the data ZIP is restored.
+    let target = create('ets-target', { ...migrated, id: 'ets-target', server: 'new-gateway' })
+    target.serverKNX = gateway('new-gateway')
+    expect(await target.getEtsAccessSnapshot()).to.deep.include({ ...access, selectedCount: 2, readOnlyCount: 1 })
+    await target.saveEtsAccessConfiguration({ configured: true, exposedGAs: ['3/1/15'], readOnlyGAs: [] })
+    const upload = await request(target, 'import-chunk', { index: 0, total: 1, chunk: download.body.toString('base64') })
+    expect(upload.statusCode).to.equal(200)
+    const imported = await request(target, 'import', { uploadId: upload.body.uploadId })
+    expect(imported.statusCode).to.equal(200)
+    expect(imported.body.etsAccessRestored).to.equal(true)
+    expect(imported.body.etsAccess).to.deep.include({ ...access, selectedCount: 2, readOnlyCount: 1, catalogIncluded: true })
+    expect(imported.body.etsAccess.items.map(({ ga, selected, readOnly }) => ({ ga, selected, readOnly }))).to.have.deep.members([
+      { ga: '3/1/7', selected: true, readOnly: false },
+      { ga: '3/1/8', selected: true, readOnly: true },
+      { ga: '3/1/15', selected: false, readOnly: false }
+    ])
+    await close(target)
+    // Persisted selection survives stale editor properties and a missing gateway.
+    target = create('ets-target', stale)
+    expect(await target.getEtsAccessSnapshot()).to.deep.include({ ...access, selectedCount: 0, requestedSelectionCount: 2 })
+    target.serverKNX = gateway('new-gateway')
+    expect(await target.getEtsAccessSnapshot()).to.deep.include({ ...access, selectedCount: 2, readOnlyCount: 1 })
+    expect(JSON.parse((await target.exportAiConfig()).files.aiConfiguration.content).etsAccess).to.deep.equal(access)
+  })
+
+  it('recovers legacy ETS access only from the source flow and preserves destination access when absent', async () => {
+    const source = create('ets-legacy', { etsExposeConfigured: true, etsExposedGAs: ['1/2/3', '1/2/4'], etsReadOnlyGAs: ['1/2/3'] })
+    const backup = await source.exportAiConfig()
+    const configuration = JSON.parse(backup.files.aiConfiguration.content)
+    const expected = { configured: true, exposedGAs: ['1/2/3', '1/2/4'], readOnlyGAs: ['1/2/3'] }
+    expect(configuration.etsAccess).to.deep.equal(expected)
+    expect(await source.getEtsAccessSnapshot()).to.deep.include(expected)
+    delete configuration.etsAccess
+    const setConfiguration = () => { backup.files.aiConfiguration = backupFile('aiConfiguration', 'ignored.json', JSON.stringify(configuration)) }
+    setConfiguration()
+    const flows = JSON.parse(backup.migration.flows.content)
+    flows.unshift({ id: 'another-cerebrum', type: 'cerebrumUltimate', etsExposeConfigured: true, etsExposedGAs: ['9/9/9'], etsReadOnlyGAs: [] })
+    backup.migration.flows = backupFile('nodeRedFlows', 'cerebrum-flows.json', JSON.stringify(flows))
+    const target = create('ets-legacy-target', { etsExposeConfigured: true, etsExposedGAs: ['1/1/1'], etsReadOnlyGAs: [] })
+    expect((await target.importAiConfig(backup)).etsAccess).to.deep.include(expected)
+    configuration.etsAccess = null
+    setConfiguration()
+    expect((await target.importAiConfig(backup)).etsAccess).to.deep.include(expected)
+    // No matching source is not permission to copy access from another node.
+    backup.node.id = 'missing-source'
+    const preserved = await target.importAiConfig(backup)
+    expect(preserved.etsAccessRestored).to.equal(false)
+    expect(preserved.etsAccess).to.deep.include(expected)
+    delete backup.node.id
+    delete configuration.nodeId
+    setConfiguration()
+    expect((await target.importAiConfig(backup)).etsAccessRestored).to.equal(false)
+    // An explicit disabled/empty saved selection takes precedence over flows.
+    configuration.etsAccess = { configured: false, exposedGAs: [], readOnlyGAs: [] }
+    setConfiguration()
+    const disabled = await target.importAiConfig(backup)
+    expect(disabled.etsAccessRestored).to.equal(true)
+    expect(disabled.etsAccess).to.deep.include(configuration.etsAccess)
+  })
+
+  it('migrates a null file-backed ETS selection from flow properties without clearing it on export', async () => {
+    const config = { etsExposeConfigured: true, etsExposedGAs: ['1/2/3'], etsReadOnlyGAs: ['1/2/3'] }
+    let node = create('ets-null', config)
+    await close(node)
+    seed(node, 'config/cerebrum-config-ets-null.json', JSON.stringify({ version: 4, etsAccess: null }))
+    node = create('ets-null', config)
+    const expected = { configured: true, exposedGAs: ['1/2/3'], readOnlyGAs: ['1/2/3'] }
+    expect(await node.getEtsAccessSnapshot()).to.deep.include(expected)
+    const backup = await node.exportAiConfig()
+    expect(JSON.parse(backup.files.aiConfiguration.content).etsAccess).to.deep.equal(expected)
+    await close(node)
+    node = create('ets-null', { etsExposeConfigured: false, etsExposedGAs: [], etsReadOnlyGAs: [] })
+    expect(await node.getEtsAccessSnapshot()).to.deep.include(expected)
+  })
+
+  it('rejects malformed backup ETS access without replacing saved permissions', async () => {
+    const backup = await create('ets-invalid-source').exportAiConfig()
+    const configuration = JSON.parse(backup.files.aiConfiguration.content)
+    const target = create('ets-invalid-target', { etsExposeConfigured: true, etsExposedGAs: ['1/2/3'], etsReadOnlyGAs: ['1/2/3'] })
+    const expected = await target.getEtsAccessSnapshot()
+    for (const etsAccess of [
+      { configured: true, exposedGAs: '1/2/3', readOnlyGAs: [] },
+      { configured: true, exposedGAs: ['1/2/3'], readOnlyGAs: ['1/2/4'] },
+      { configured: 'true', exposedGAs: ['1/2/3'], readOnlyGAs: [] }
+    ]) {
+      backup.files.aiConfiguration = backupFile('aiConfiguration', 'ignored.json', JSON.stringify({ ...configuration, etsAccess }))
+      await rejects(target.importAiConfig(backup), error => error.status === 400 && /ETS/.test(error.message))
+      expect(await target.getEtsAccessSnapshot()).to.deep.equal(expected)
+    }
   })
 
   it('recovers AI Education from the source node in old backups and preserves it when absent', async () => {
@@ -324,7 +654,8 @@ describe('Cerebrum portable backup', () => {
     expect(fs.existsSync(path.join(storage(target), 'history/target/2000-01-01.knxctx'))).to.equal(false)
     expect(target.llmApiKey).to.equal('DESTINATION-KEY')
     expect(target.llmModel).to.equal('saved-model')
-    expect(target._chatContext.sessions[0].instructions[0].text).to.equal('Preferisco luce calda')
+    expect(target._chatContext.instructions[0].text).to.equal('Preferisco luce calda')
+    expect(target._chatContext.turns[0].question).to.equal('Accendi cucina')
     expect(target._chatContext.sessions[0].cameraWatches[0].cameraId).to.equal('camera-1')
     expect(target._scheduleStore.tasks[0]).to.include({ id: 'reminder', title: 'Controlla cucina', sessionId: 'chat-person' })
     expect(target._homeMemory.habits[0]).to.include({ id: 'learning-progress', samples: 2 })
@@ -483,7 +814,7 @@ describe('Cerebrum portable backup', () => {
       for await (const chunk of await zip.openReadStreamPromise(entry)) chunks.push(chunk)
       files[entry.fileName] = Buffer.concat(chunks).toString('utf8')
     }
-    expect(Object.keys(files)).to.have.members(['cerebrum-backup.json', 'cerebrum-flows.json', 'required-packages.json', 'README.txt'])
+    expect(Object.keys(files)).to.have.members(['cerebrum-backup.json', 'cerebrum-flows.json', 'required-packages.json', 'README.txt', 'archives/sharedMemory/cerebrum-memory.jsonl'])
     expect(JSON.parse(files['cerebrum-flows.json'])).to.deep.equal(JSON.parse(backup.migration.flows.content))
     expect(JSON.parse(files['required-packages.json'])).to.deep.equal(backup.migration.dependencies)
     expect(files['README.txt']).to.include('Ripristina ZIP')
@@ -548,6 +879,7 @@ describe('Cerebrum portable backup', () => {
     const source = create('zip-references')
     seed(source, 'history/zip-references/2026-09-07.knxctx', 'archive marker 🏠\n')
     const backup = await source.exportAiConfig()
+    delete backup.supplementalFiles.sharedMemory // Exercise a legacy archive manifest.
     const legacy = await zipEntries([['cerebrum-backup.json', JSON.stringify(backup)]])
     expect(await decodeBackupUpload(legacy)).to.deep.equal(backup)
     const manifest = copy(backup)

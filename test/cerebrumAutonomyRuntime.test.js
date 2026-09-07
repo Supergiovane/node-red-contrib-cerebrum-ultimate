@@ -62,7 +62,7 @@ describe('Cerebrum autonomous runtime integration', () => {
     expect(requests[0].systemPrompt).to.include('AI Education alone is user authority')
   })
 
-  it('retrieves bounded local evidence once and then returns a final decision', async () => {
+  it('retrieves local evidence and lets the model decide when it has enough', async () => {
     decide = situation => requests.length === 1
       ? decision(situation, { disposition: 'recall', queries: [{ operation: 'get', entityIds: ['knx:1/2/3'], query: '' }] })
       : decision(situation)
@@ -71,7 +71,62 @@ describe('Cerebrum autonomous runtime integration', () => {
     const recalled = JSON.parse(requests[1].staticContext.split('\n')[0])
     expect(recalled).to.include({ ok: true, operation: 'get', returned: 1 })
     expect(recalled.items[0]).to.include({ id: 'knx:1/2/3', value: 'true' })
-    expect(requests[1].userContent).to.include('Tool round closed')
+    expect(requests[1].userContent).to.include('Continue retrieving evidence when needed')
+    expect(commands).to.have.length(0)
+  })
+
+  it('follows six pages of local evidence before making an autonomous decision', async () => {
+    states = Array.from({ length: 40 }, (_, index) => ({ ...states[0], objectId: `1/2/${index}`, label: `Kitchen light ${index}` }))
+    decide = situation => requests.length <= 6
+      ? decision(situation, { disposition: 'recall', queries: [{ operation: 'search', entityIds: [], query: 'Kitchen', offset: (requests.length - 1) * 6 }] })
+      : decision(situation)
+    expect((await runtime.tick()).ok).to.equal(true)
+    expect(requests).to.have.length(7)
+    const lastPage = JSON.parse(requests.at(-1).staticContext.split('\n')[0])
+    expect(lastPage).to.include({ offset: 30, returned: 6, totalMatches: 40 })
+    expect(commands).to.have.length(0)
+  })
+
+  it('can recall, research and inspect a newly acquired source in one autonomous evaluation', async () => {
+    node.webAccessEnabled = true
+    runtime = make({
+      researchWeb: async actions => ({
+        results: actions.map(action => action.operation === 'search'
+          ? { ok: true, operation: 'search', results: [{ url: 'https://www.knx.org/lighting', title: 'Lighting reference', text: 'Consider actual lighting requirements.' }] }
+          : { ok: true, operation: 'open', url: action.url, title: 'Lighting reference', text: 'Assess glare and occupant preferences before adjusting lights.' })
+      })
+    })
+    decide = situation => {
+      if (requests.length === 1) return decision(situation, { disposition: 'recall', queries: [{ operation: 'get', entityIds: ['knx:1/2/3'], query: '', offset: 0 }] })
+      if (requests.length === 2) return decision(situation, { disposition: 'research', research: { topic: 'lighting_comfort', goalId: '' } })
+      if (requests.length === 3) return decision(situation, { disposition: 'recall', queries: [{ operation: 'knowledge', entityIds: [runtime.snapshot().knowledge[0].id], query: '', offset: 0 }] })
+      return decision(situation)
+    }
+    expect((await runtime.tick()).ok).to.equal(true)
+    expect(requests).to.have.length(4)
+    const recalled = JSON.parse(requests.at(-1).staticContext.split('\n')[0])
+    expect(recalled).to.include({ operation: 'knowledge', returned: 1 })
+    expect(recalled.items[0].text).to.include('Assess glare')
+    expect(commands).to.have.length(0)
+  })
+
+  it('stops an unchanged recall cycle and asks for a decision with uncertainty', async () => {
+    decide = (situation, request) => request.userContent.includes('Repeated tool queries')
+      ? decision(situation, { summary: 'Insufficient evidence; continue observing.' })
+      : decision(situation, { disposition: 'recall', queries: [{ operation: 'get', entityIds: ['knx:1/2/3'], query: '', offset: 0 }] })
+    expect((await runtime.tick()).ok).to.equal(true)
+    expect(requests).to.have.length(3)
+    expect(requests.at(-1).userContent).to.include('no new evidence')
+    expect(commands).to.have.length(0)
+  })
+
+  it('does not continue tool reasoning after autonomy is disabled during a model call', async () => {
+    decide = situation => {
+      node.cerebrumAutonomyEnabled = false
+      return decision(situation, { disposition: 'recall', queries: [{ operation: 'get', entityIds: ['knx:1/2/3'], query: '', offset: 0 }] })
+    }
+    await runtime.tick()
+    expect(requests).to.have.length(1)
     expect(commands).to.have.length(0)
   })
 
