@@ -13,6 +13,7 @@ import CerebrumSharedInsights from "./components/CerebrumSharedInsights.vue";
 import CerebrumBrain from "./components/CerebrumBrain.vue";
 import CerebrumNavigation from "./components/CerebrumNavigation.vue";
 import CerebrumIcon from "./components/CerebrumIcon.vue";
+import CerebrumAutomationEditor from "./components/CerebrumAutomationEditor.vue";
 import { CEREBRUM_WEB_I18N } from "./cerebrumWebI18n";
 import {
   formatChatLearningSimpleText,
@@ -25,6 +26,15 @@ import {
 } from "./cerebrumMemoryView.mjs";
 
 const tabKey = "cerebrumUltimate:activeTab";
+const automationEditorDrafts = reactive(Object.create(null));
+function warnUnsavedAutomationFiles(event) {
+  if (Object.values(automationEditorDrafts).some(draft => draft.content !== draft.baseline || draft.selected?.origin === 'new')) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
+}
+onMounted(() => window.addEventListener('beforeunload', warnUnsavedAutomationFiles));
+onBeforeUnmount(() => window.removeEventListener('beforeunload', warnUnsavedAutomationFiles));
 const chatLearningViewKey = "cerebrumUltimate:chatLearningView";
 const cerebrumMemoryViewKey = "cerebrumUltimate:cerebrumMemoryView";
 const flowPrefsKey = "cerebrumUltimate:flowPreview";
@@ -88,6 +98,7 @@ const CEREBRUM_SECTIONS = [
   { id: "goals", label: "Goals", description: "Follow the improvements Cerebrum is working towards.", color: "#ffc782" },
   { id: "research", label: "Web Research", description: "Explore discoveries and ideas from the Web.", color: "#edabdc" },
   { id: "operations", label: "Cerebrum Operations", description: "See the actions taken and their outcomes.", color: "#a8cbff" },
+  { id: "automations", label: "JavaScript automations", description: "Functions created by Cerebrum. Inspect their code and manage when they run.", color: "#e7d686" },
 ];
 const CEREBRUM_TAB_IDS = new Set(["brain", ...CEREBRUM_SECTIONS.map(section => section.id)]);
 
@@ -1118,6 +1129,10 @@ function requestWorldInsight(tail) {
   return requestJson(apiUrl(`../${tail}`), { cache: "no-store" });
 }
 
+function requestAutomationFiles(tail, options) {
+  return requestJson(apiUrl(tail), { cache: "no-store", ...options });
+}
+
 function setStatus(text) {
   state.status = localizeUiText(String(text || ""));
 }
@@ -1152,7 +1167,7 @@ async function requestJson(url, options) {
         `Authentication required or insufficient permissions (${response.status}).`,
       );
     }
-    throw new Error(baseMessage);
+    throw Object.assign(new Error(baseMessage), { status: response.status });
   }
   return json;
 }
@@ -9980,6 +9995,15 @@ onBeforeUnmount(() => {
                 Unzip the archive, install the packages in required-packages.json and import cerebrum-flows.json in the Node-RED editor. Review connections and deploy, then open the imported Cerebrum node and restore the original ZIP. Re-enter your AI provider API key.
               </p>
             </details>
+          </article>
+          <article v-else-if="state.cerebrumTab === 'automations'" class="area-detail settings-panel">
+            <CerebrumAutomationEditor
+              :key="state.selectedNodeId"
+              :node-id="state.selectedNodeId"
+              :request="requestAutomationFiles"
+              :translate="localizeUiText"
+              :drafts="automationEditorDrafts"
+            />
           </article>
           <article
             v-else-if="state.cerebrumTab === 'learning'"

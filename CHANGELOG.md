@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 — 2026-09-08
+
+- Added persistent **JavaScript automations** authored by Cerebrum from chat or explicit AI Education instructions. The Web UI displays actual functions with editable/downloadable `.js` source, active/paused/error status, last execution, pause/resume and deletion; no bundled sample files.
+- Fixed missing `.js` generation after saving AI Education: compilation now runs on save and reconciles existing instructions after startup, with persistent progress/errors and explicit retry in the Web UI. Revision tracking avoids repeated model calls for unchanged instructions.
+- Added a bounded QuickJS WebAssembly worker for local schedules and plugin event handlers without LLM calls, with durable memory/timers and existing device permission checks. Local `speak` delivers prepared TTS; scheduled `assistant.run` retrieves fresh weather/research summaries and calls the model only when triggered, using existing sensor reads, Web limits and cancellation checks.
+- Archived source revisions and operations, and included JavaScript sources and runtime metadata in ZIP backups; restored functions start paused. Preserved manual edits, user pauses/deletions, revision conflict checks and cancellation of pending work.
+
 ## 0.1.5 — 2026-09-07
 
 - Recognize the full 1,050,000-token GPT-5.5/GPT-5.5 Pro context window instead of falling back to 8,192 tokens. Added a free **Maximum managed context (KB)** editor field: zero follows the model maximum automatically, while positive values cap all conversational and autonomous requests without exceeding known or detected physical limits.

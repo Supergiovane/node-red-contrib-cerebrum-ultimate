@@ -10,10 +10,11 @@ const { Readable, Transform, Writable } = require('stream')
 const { pipeline } = require('stream/promises')
 const { StringDecoder } = require('string_decoder')
 const { MAX_BACKUP_BYTES, mapBackupArchives, assertBackupSize, createBackupDirectory, registerBackupCleanup, disposeBackup, registerBackupArchive, backupArchiveSource, validateFile } = require('./cerebrumBackup')
+const { validAutomationName } = require('./cerebrumAutomationFiles')
 
 const BACKUP_ENTRY = 'cerebrum-backup.json'
 const allowedEntries = new Set([BACKUP_ENTRY, 'cerebrum-flows.json', 'required-packages.json', 'README.txt'])
-const archiveEntryPattern = /^archives\/(?:(history|adapterHistory|operations)\/\d{4}-\d{2}-\d{2}\.(?:knxctx|jsonl)|sharedMemory\/cerebrum-memory\.jsonl)$/
+const validArchiveEntry = name => /^archives\/(?:(history|adapterHistory|operations)\/\d{4}-\d{2}-\d{2}\.(?:knxctx|jsonl)|sharedMemory\/cerebrum-memory\.jsonl)$/.test(name) || (name.startsWith('archives/automationSources/') && validAutomationName(name.slice('archives/automationSources/'.length)))
 const MAX_ENTRIES = 1024
 const invalidBackup = message => Object.assign(new Error(message), { status: 400 })
 const tooLarge = () => Object.assign(new Error('Backup JSON metadata exceeds 256 MiB'), { status: 413 })
@@ -47,7 +48,7 @@ function createBackupZipStream (backup) {
   const manifest = backup.version === 2
     ? mapBackupArchives(backup, (file, group) => {
       const zipEntry = `archives/${group}/${file.name}`
-      if (!archiveEntryPattern.test(zipEntry) || archives.has(zipEntry)) throw invalidBackup('Invalid or duplicate backup archive')
+      if (!validArchiveEntry(zipEntry) || archives.has(zipEntry)) throw invalidBackup('Invalid or duplicate backup archive')
       archives.set(zipEntry, file)
       const { content, ...info } = file
       return { ...info, zipEntry }
@@ -136,7 +137,7 @@ async function decodeZip (zip) {
     const archives = new Map()
     let backupContent
     for await (const entry of zip.eachEntry()) {
-      const isArchive = archiveEntryPattern.test(entry.fileName)
+      const isArchive = validArchiveEntry(entry.fileName)
       if ((!allowedEntries.has(entry.fileName) && !isArchive) || seen.has(entry.fileName)) throw invalidBackup('Unexpected or duplicate file in backup ZIP')
       seen.add(entry.fileName)
       const fileType = (entry.externalFileAttributes >>> 16) & 0o170000

@@ -117,6 +117,125 @@ describe('Cerebrum portable backup', () => {
     return readSupplementalFiles(locations)
   }
 
+  it('round trips editable JavaScript source through ZIP, node migration and restart', async function () {
+    this.timeout(10000)
+    const source = create('javascript-source')
+    const saved = await source.saveAutomationFile({ name: 'promemoria.js', origin: 'new', revision: '', content: 'module.exports = c => { c.describe("Promemoria"); c.schedule.every("check", 60000, () => c.notify("Controllo")) }' })
+    await source.manageAutomationFile({ ...saved, operation: 'resume' })
+    expect(source.getAutomationFile({ name: saved.name }).status).to.equal('active')
+    const backup = await decodeBackupUpload(await createBackupZip(await source.exportAiConfig()))
+    expect(backup.supplementalFiles.automationSources.map(file => file.name)).to.deep.equal(['promemoria.js'])
+    const target = create('javascript-target')
+    await target.importAiConfig(backup)
+    expect(target.getAutomationFile({ name: saved.name })).to.include({ content: saved.content, revision: saved.revision, status: 'paused', runtimeAvailable: true })
+    await close(target)
+    const restarted = create('javascript-target')
+    expect(restarted.getAutomationFile({ name: saved.name }).content).to.equal(saved.content)
+    const oldBackup = await source.exportAiConfig()
+    delete oldBackup.supplementalFiles.automationSources
+    delete oldBackup.supplementalFiles.automationRuntime
+    await restarted.importAiConfig(oldBackup)
+    expect(restarted.getAutomationFile({ name: saved.name }).content).to.equal(saved.content)
+    expect(backup.supplementalFiles.automationRuntime).to.be.an('object')
+    const traversal = await source.exportAiConfig()
+    traversal.supplementalFiles.automationSources[0].name = '../outside.js'
+    await rejects(restarted.importAiConfig(traversal), /automationSources filename/)
+    expect(restarted.getAutomationFile({ name: saved.name }).content).to.equal(saved.content)
+    const damaged = await source.exportAiConfig()
+    damaged.supplementalFiles.automationRuntime = backupFile('automationRuntime', 'runtime.json', JSON.stringify({ version: 1, entries: { 'promemoria.js': { status: 'active', generation: 0, revision: 'invalid', authority: 'user' } } }))
+    await rejects(restarted.importAiConfig(damaged), /Invalid automation runtime checkpoint/)
+    expect(restarted.getAutomationFile({ name: saved.name }).content).to.equal(saved.content)
+  })
+
+  it('compiles the saved 08:40 weather/TTS education into real JavaScript without executing the task now', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const education = 'Alle 08:40 di ogni giorno, annuncia via TTS il riassunto delle previsioni meteo del giorno, facendo attenzione a pronunciare correttamente le unità di misura e le date/ora; il sensore KNX locale di pioggia è 2/3/0, mentre quello di temperatura locale è 2/3/1.'
+    const code = `module.exports = c => { c.describe("Meteo delle 08:40"); c.schedule.daily("meteo", {at:"08:40",timeZone:"Europe/Rome"}, () => c.assistant.run(${JSON.stringify(education)})) }`
+    let calls = 0
+    const outputs = []
+    const originalNow = Date.now
+    let time = Date.parse('2026-09-08T06:39:00Z')
+    Date.now = () => time
+    simpleGet.concat = (options, callback) => {
+      calls++
+      const prompt = JSON.stringify(JSON.parse(options.body).messages)
+      if (calls <= 3) expect(prompt).to.include('EDUCATION COMPILATION').and.include('2/3/0').and.include('2/3/1')
+      else expect(prompt).to.include('LOCAL AUTOMATION EXECUTION').and.include('2/3/0').and.include('2/3/1')
+      const action = calls === 1
+        ? { operation: 'api', name: '', revision: '', code: '', offset: 0 }
+        : calls === 2 ? { operation: 'create', name: 'meteo-mattino.js', revision: '', code, offset: 0 } : null
+      const response = { reply: action ? '' : 'Ho creato meteo-mattino.js alle 08:40.', language: 'it', automationActions: action ? [action] : [], commands: [], cameraActions: [], speechActions: [], memoryActions: [], catalogActions: [], webActions: [], scheduleActions: [], historyActions: [], codeActions: [] }
+      if (calls === 4) response.speechActions = [{ text: 'Martedì otto settembre, ore otto e quaranta. La previsione meteo non è disponibile.', reason: 'Annuncio programmato' }]
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      const node = create('education-weather', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test', llmMaxTokens: 2400, llmContextLength: 32768 })
+      node.send = output => outputs.push(output)
+      await node.updateAiEducationFile({ ...(await node.getAiEducationFile()), content: education })
+      await node._educationCompiler.check()
+      expect(calls).to.equal(3)
+      const file = node.getAutomationFile({ name: 'meteo-mattino.js' })
+      expect(file).to.include({ content: code, status: 'active', author: 'cerebrum' })
+      expect(node.listAutomationFiles().compilation.status).to.equal('ready')
+      expect(outputs.some(output => output[3] || output[4])).to.equal(false)
+      await node._educationCompiler.check()
+      expect(calls).to.equal(3)
+      time += 60000
+      await node._automationRuntime.tick(); await node._automationRuntime.drain()
+      expect(calls).to.equal(4)
+      const speech = outputs.find(output => output[4])
+      expect(speech[4][0].payload).to.include('ore otto e quaranta')
+      const backup = await node.exportAiConfig()
+      expect(JSON.parse(backup.supplementalFiles.automationRuntime.content).compilation.status).to.equal('ready')
+      await close(node)
+      const restarted = create('education-weather', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test' })
+      await restarted._educationCompiler.check()
+      expect(calls).to.equal(4)
+      expect(restarted.getAutomationFile({ name: file.name }).status).to.equal('active')
+    } finally { simpleGet.concat = transport; Date.now = originalNow }
+  })
+
+  it('lets the conversational model create a visible local function that the user can pause, edit and delete', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const prompts = []
+    const source = 'module.exports = c => { c.describe("Promemoria creato da Cerebrum"); c.schedule.every("reminder", 60000, () => c.notify("Controlla la finestra")) }'
+    simpleGet.concat = (options, callback) => {
+      const body = JSON.parse(options.body)
+      prompts.push(JSON.stringify(body.messages))
+      const action = prompts.length === 1
+        ? { operation: 'api', name: '', revision: '', code: '', offset: 0 }
+        : prompts.length === 2 ? { operation: 'create', name: 'promemoria.js', revision: '', code: source, offset: 0 } : null
+      const response = { reply: action ? '' : 'Ho creato il promemoria locale.', language: 'it', automationActions: action ? [action] : [], commands: [], cameraActions: [], speechActions: [], memoryActions: [], catalogActions: [], webActions: [], scheduleActions: [], historyActions: [], codeActions: [] }
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      const node = create('chat-automation', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test', llmMaxTokens: 1600, llmContextLength: 32768 })
+      node.cerebrumAutonomyEnabled = false
+      const answer = await node.sidebarAsk('Ricordami ogni minuto di controllare la finestra, usando una funzione locale.')
+      expect(answer.answer).to.include('promemoria locale')
+      expect(prompts).to.have.length(3)
+      expect(prompts[0]).not.to.include('cerebrum.timers.define')
+      expect(prompts[1]).to.include('cerebrum.timers.define')
+      expect(prompts[2]).to.include('LOCAL AUTOMATION TOOL RESULTS').and.include('active')
+      const file = node.getAutomationFile({ name: 'promemoria.js' })
+      expect(file).to.include({ content: source, status: 'active', author: 'cerebrum' })
+      expect(node.listAutomationFiles().files).to.have.length(1)
+      await node.manageAutomationFile({ ...file, operation: 'pause' })
+      node.llmEnabled = false
+      const edited = await node.saveAutomationFile({ ...file, content: source.replace('60000', '120000') })
+      expect(edited.status).to.equal('paused')
+      await node.manageAutomationFile({ ...edited, operation: 'resume' })
+      expect(node.getAutomationFile({ name: file.name }).status).to.equal('active')
+      await node.manageAutomationFile({ ...edited, operation: 'delete' })
+      expect(node.listAutomationFiles().files).to.have.length(0)
+      expect(prompts).to.have.length(3)
+    } finally { simpleGet.concat = transport }
+  })
+
   it('persists Web conversations and retrieves their actuator context through Telegram after restart and ZIP restore', async function () {
     this.timeout(15000)
     const simpleGet = require('simple-get')

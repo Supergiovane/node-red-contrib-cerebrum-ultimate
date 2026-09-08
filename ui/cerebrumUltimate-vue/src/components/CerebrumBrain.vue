@@ -39,6 +39,7 @@ const positions = {
   goals: { x: 580, y: 166 },
   research: { x: 650, y: 314 },
   operations: { x: 560, y: 456 },
+  automations: { x: 450, y: 314 },
 };
 const fallbackPositions = Object.values(positions);
 const neurons = computed(() => props.sections.map((section, index) => ({

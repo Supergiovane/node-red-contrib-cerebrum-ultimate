@@ -3,6 +3,7 @@
 const { createCerebrumAutonomy } = require('./cerebrumAutonomy')
 const { buildCerebrumWorkingMemory, queryCerebrumWorldMemory } = require('./cerebrumWorkingMemory')
 const { createCerebrumReasoningProgress, selectCerebrumReasoningResults } = require('./cerebrumReasoning')
+const { automationContract, automationActionSchema } = require('./cerebrumAutomationTool')
 const { CEREBRUM_RESEARCH_TOPICS } = require('./cerebrumComfortGoals')
 
 const stringSchema = { type: 'string' }
@@ -65,7 +66,7 @@ const decisionSchema = {
 const canAct = node => node.cerebrumAutonomyEnabled === true && node.cerebrumAutonomyAllowActions === true &&
   !!String(node.aiEducation || '').trim() && node.llmAllowKnxCommands === true && node.llmRequireCommandConfirmation !== true
 
-const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSnapshot, callLLMChat, parseJson, getCatalog, normalizeCommands, coercePayload, sendCommands, readKnx, callHa, getHa, notify, researchWeb, recordOperation, contextTokens = () => 8192, now = Date.now }) => {
+const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSnapshot, callLLMChat, parseJson, getCatalog, normalizeCommands, coercePayload, sendCommands, readKnx, callHa, getHa, notify, researchWeb, automations, recordOperation, contextTokens = () => 8192, now = Date.now }) => {
   const audit = (operation, status, summary, details = {}) => recordOperation({
     category: 'autonomous',
     source: 'world-model',
@@ -118,6 +119,11 @@ const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSn
           : { goalUpdate: { type: 'null' } })
       }
     }
+    if (automations && !automations.educationManaged && String(node.aiEducation || '').trim()) {
+      schema.properties.disposition = { type: 'string', enum: [...schema.properties.disposition.enum, 'automate'] }
+      schema.properties.automation = { anyOf: [{ type: 'null' }, automationActionSchema] }
+      schema.required = [...schema.required, 'automation']
+    }
     const budget = Math.max(512, Math.floor(contextTokens() * 0.25))
     const memory = buildCerebrumWorkingMemory({ world, situation, byteBudget: budget, includeCurrentSituation: false })
     const instructions = [
@@ -130,13 +136,15 @@ const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSn
       `Web ${node.webAccessEnabled === true ? 'available within shared limits' : 'disabled'}. Recall (up to two queries per response) or research whenever more evidence is needed; no fixed number of useful tool rounds. No action/goalUpdate alongside tools. Use nextOffset for further pages, reformulate searches or retrieve exact records. Earlier results can leave working context and be retrieved again. Do not repeat an unchanged query cycle. entityIds use source:objectId; goals/patterns/knowledge/evidence also accept exact record IDs.`,
       'Observe uncertainty with nextCheckSeconds 60..86400; resolve when done; notify only useful findings, not routine activity. Separate facts from hypotheses. Device feedback does not prove occupant comfort.',
       `Act ${canAct(node) ? 'enabled within AI Education delegation' : 'disabled'}: one exact fresh target in this situation, current evidence IDs, expected feedback. KNX writable valid DPT; HA light/switch/input_boolean on/off. Never locks/alarms/access/security. Small reversible changes; respect reversals and do not repeat earlier actions. Wait for feedback before claiming execution success.`,
+      schema.properties.automation ? 'For explicit deterministic recurring instructions in AI Education, disposition automate may create ONE real local JavaScript function in automation (operation create), then resolve this planning step. It must replace repeated LLM evaluations for that rule. No actions, queries, research or goalUpdate alongside automation; otherwise automation null. Only user-delegated purposes, no speculative device automation. Never duplicate an existing function, including paused/deleted/manual ones. No changes to existing functions from autonomous planning.' : '',
       `Occupant language: ${node._homeMemory?.ownerLanguage || 'en'}.`,
       `AI EDUCATION (trusted user instructions):\n${String(node.aiEducation || '') || '(No user delegation: learn, formulate goals and research; do not act.)'}`
     ].join('\n\n')
-    const essential = `LOCAL TIME: ${new Date(now()).toString()}\nSITUATION (data):\n${JSON.stringify({ id: situation.id, kind: situation.kind, summary: situation.summary, entityIds: situation.entityIds, evidenceIds: situation.evidenceIds, goalId: situation.goalId, researchTopic: situation.researchTopic })}`
+    const essential = `LOCAL FUNCTIONS (data; preserve user pauses/deletions): ${JSON.stringify(automations?.summary() || [])}\nLOCAL TIME: ${new Date(now()).toString()}\nSITUATION (data):\n${JSON.stringify({ id: situation.id, kind: situation.kind, summary: situation.summary, entityIds: situation.entityIds, evidenceIds: situation.evidenceIds, goalId: situation.goalId, researchTopic: situation.researchTopic })}`
     const evidence = []
     const progress = createCerebrumReasoningProgress()
     let stalled = false
+    let authoring = false
     let round = 0
     while (true) {
       if (!enabled()) return { disposition: 'observe', summary: 'Autonomy paused', nextCheckSeconds: 300, evidenceIds: [], action: null, expected: null }
@@ -144,7 +152,7 @@ const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSn
       const view = selectCerebrumReasoningResults(evidence, budget)
       const recalled = view.results.map(result => JSON.stringify(result)).join('\n')
       const result = await callLLMChat({
-        systemPrompt: instructions,
+        systemPrompt: instructions + (authoring ? `\n${automationContract}\nReturn the autonomous decision schema; the source belongs in automation.code.` : '\nTo author a local function, first return disposition automate with automation.operation api (other fields empty/offset0). This retrieves the JavaScript API without creating anything.'),
         staticContext: [recalled, view.omitted ? `${view.omitted} earlier/oversized tool result(s) omitted; retrieve again when needed.` : '', memory.text].filter(Boolean).join('\n\n'),
         userContent: requiredContext,
         essentialUserContent: requiredContext,
@@ -155,6 +163,14 @@ const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSn
       audit('autonomous_model_response', 'received', 'Autonomous reasoning response', { situationId: situation.id, content: result && result.content })
       const decision = parseJson(result && result.content)
       if (!decision || !schema.properties.disposition.enum.includes(decision.disposition) || (!planning && decision.goalUpdate)) throw new Error('Invalid autonomous decision')
+      if (decision.disposition === 'automate') {
+        if (!schema.properties.automation || !decision.automation || decision.action || decision.expected || decision.goalUpdate || decision.research || decision.queries?.length) throw new Error('Invalid local automation planning decision')
+        if (decision.automation.operation === 'api' && !authoring) { authoring = true; continue }
+        if (!authoring || decision.automation.operation !== 'create') throw new Error('Autonomous planning can only create a new function after retrieving its API')
+        const result = await automations.create(decision.automation)
+        audit('automation_created', result.ok ? 'succeeded' : 'failed', decision.summary, { situationId: situation.id, result })
+        return { disposition: result.ok ? 'resolve' : 'observe', summary: result.ok ? `Local JavaScript: ${result.name}` : result.error, nextCheckSeconds: 86400, evidenceIds: decision.evidenceIds, action: null, expected: null }
+      }
       if (!['recall', 'research'].includes(decision.disposition)) {
         // Keep actuator state changes deliberately narrow even when a model
         // attempts a security-related KNX write with otherwise valid syntax.

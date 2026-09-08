@@ -62,6 +62,20 @@ describe('Cerebrum autonomous runtime integration', () => {
     expect(requests[0].systemPrompt).to.include('AI Education alone is user authority')
   })
 
+  it('authors a persistent function from AI Education after retrieving its API', async () => {
+    await runtime.close()
+    const created = []
+    runtime = make({ automations: { summary: () => [], create: async action => { created.push(action); return { ok: true, name: action.name, status: 'active' } } } })
+    decide = situation => decision(situation, { disposition: 'automate', automation: { operation: requests.length === 1 ? 'api' : 'create', name: 'comfort.js', revision: '', code: 'module.exports = c => c.schedule.every("review", 60000, () => c.notify("Comfort"))', offset: 0 } })
+    expect((await runtime.tick()).ok).to.equal(true)
+    expect(created).to.have.length(1)
+    expect(created[0].code).to.include('module.exports')
+    expect(requests).to.have.length(2)
+    expect(requests[0].systemPrompt).not.to.include('cerebrum.timers.define')
+    expect(requests[1].systemPrompt).to.include('cerebrum.timers.define')
+    expect(commands).to.have.length(0)
+  })
+
   it('retrieves local evidence and lets the model decide when it has enough', async () => {
     decide = situation => requests.length === 1
       ? decision(situation, { disposition: 'recall', queries: [{ operation: 'get', entityIds: ['knx:1/2/3'], query: '' }] })

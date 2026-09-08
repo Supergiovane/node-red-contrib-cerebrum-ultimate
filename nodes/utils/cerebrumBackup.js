@@ -71,11 +71,14 @@ function validateArchiveFile (file, id) {
 }
 
 // These logical names are resolved locally. A backup can never choose a disk path.
-const archiveNames = ['history', 'adapterHistory', 'operations', 'sharedMemory']
-const singleNames = ['habitLearning', 'worldModel', 'worldObservations', 'runtimeState', 'lastChatPrompt', 'legacyAreas']
-const optionalSingleNames = new Set(['worldModel', 'worldObservations', 'runtimeState'])
+const { validAutomationName } = require('./cerebrumAutomationFiles')
+const { parseAutomationCheckpoint } = require('./cerebrumAutomationRuntime')
+const archiveNames = ['history', 'adapterHistory', 'operations', 'sharedMemory', 'automationSources']
+const optionalArchiveNames = new Set(['sharedMemory', 'automationSources'])
+const singleNames = ['habitLearning', 'worldModel', 'worldObservations', 'runtimeState', 'automationRuntime', 'lastChatPrompt', 'legacyAreas']
+const optionalSingleNames = new Set(['worldModel', 'worldObservations', 'runtimeState', 'automationRuntime'])
 const archivePattern = /^\d{4}-\d{2}-\d{2}\.(?:knxctx|jsonl)$/
-const validArchiveName = (group, name) => group === 'sharedMemory' ? name === 'cerebrum-memory.jsonl' : archivePattern.test(name)
+const validArchiveName = (group, name) => group === 'sharedMemory' ? name === 'cerebrum-memory.jsonl' : group === 'automationSources' ? validAutomationName(name) : archivePattern.test(name)
 
 function mapBackupArchives (backup, visit) {
   if (!backup.supplementalFiles) return { ...backup }
@@ -113,7 +116,7 @@ function readSupplementalFiles (locations, { archiveDirectory } = {}) {
   const result = {}
   for (const group of archiveNames) {
     const dir = locations[group]
-    if (group === 'sharedMemory' && !dir) continue
+    if (optionalArchiveNames.has(group) && !dir) continue
     assertRegularPath(dir, true)
     result[group] = fs.existsSync(dir)
       ? fs.readdirSync(dir).sort().filter(name => validArchiveName(group, name)).map(name => {
@@ -138,7 +141,7 @@ function readSupplementalFiles (locations, { archiveDirectory } = {}) {
 function validateSupplementalFiles (files) {
   if (!files || typeof files !== 'object') throw backupError('Missing supplemental backup files')
   for (const group of archiveNames) {
-    if (group === 'sharedMemory' && !Object.hasOwn(files, group)) continue
+    if (optionalArchiveNames.has(group) && !Object.hasOwn(files, group)) continue
     if (!Array.isArray(files[group])) throw backupError(`Missing backup archive: ${group}`)
     const names = new Set()
     for (const file of files[group]) {
@@ -153,6 +156,7 @@ function validateSupplementalFiles (files) {
     if (!Object.hasOwn(files, id)) throw backupError(`Missing backup entry: ${id}`)
     if (files[id] !== null) validateFile(files[id], id)
   }
+  if (files.automationRuntime) parseAutomationCheckpoint(files.automationRuntime.content)
   if (!files.habitLearning) throw backupError('Missing habit learning checkpoint')
   const checkpoint = JSON.parse(files.habitLearning.content)
   if (checkpoint.version !== 1 || !Array.isArray(checkpoint.habits)) throw backupError('Invalid habit learning checkpoint')
@@ -162,7 +166,7 @@ function replaceSupplementalFiles (files, locations, writeFile) {
   validateSupplementalFiles(files)
   for (const group of archiveNames) {
     const dir = locations[group]
-    if (group === 'sharedMemory' && (!dir || !Object.hasOwn(files, group))) continue
+    if (optionalArchiveNames.has(group) && (!dir || !Object.hasOwn(files, group))) continue
     assertRegularPath(dir, true)
     const names = new Set(files[group].map(file => file.name))
     for (const file of files[group]) {
