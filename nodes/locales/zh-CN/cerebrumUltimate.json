@@ -41,7 +41,8 @@
       "chatOutputCode": "输出映射（Cerebrum → 消息）",
       "aiEducation": "AI 教育（由用户管理）",
       "llmBackgroundMode": "History updates to LLM",
-      "llmBackgroundIntervalMinutes": "Interval (minutes)"
+      "llmBackgroundIntervalMinutes": "Interval (minutes)",
+      "historyRetentionDays": "历史保留天数"
     },
     "outputs": {
       "summary": "摘要/统计",
@@ -174,7 +175,7 @@
       "chatContextFileAiEducation": "用户管理的 AI 教育，从独立文件读取并包含在备份中。",
       "llmModeChat": "Only during user chat (default)",
       "llmModeInterval": "During chat and at an interval",
-      "llmPolicyHint": "Full history remains archived locally. The LLM receives summaries and selected evidence during a Web/Telegram chat request or at the configured interval (1–10080 minutes; 1440 = 1 day, 10080 = 7 days). Startup and events do not trigger calls. AI Education compilation also waits for chat or the interval. Explicit assistant.run calls in .js remain authorized. An analysis may require multiple calls; this is not a spending cap."
+      "llmPolicyHint": "History remains archived locally within the configured retention window. The LLM receives summaries and selected evidence during a Web/Telegram chat request or at the configured interval (1–10080 minutes; 1440 = 1 day, 10080 = 7 days). Startup and events do not trigger calls. AI Education compilation also waits for chat or the interval. Explicit assistant.run calls in .js remain authorized. An analysis may require multiple calls; this is not a spending cap."
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/chat/completions (or your compatible endpoint)",

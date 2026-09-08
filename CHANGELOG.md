@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-09-08
+
+- Added configurable history retention under **AI Assistant**, defaulting to **30 days**, with no explanatory panel. Shared memory and daily KNX, adapter and operation archives are cleaned periodically; retained record references, saved instructions, learned habits and backup compatibility are preserved.
 
 - Replaced Learning, Memory, Goals, Web Research and Operations detail cards with read-only textareas: one complete record per line with date/time and text. Removed expandable JSON/details, explanatory panels and list filters; world-model pages load into a single list. File editing and backups remain available.
 

@@ -329,7 +329,7 @@ describe('Cerebrum Ultimate standalone package', () => {
       title: 'Standalone operation audit test'
     })).to.include({ category: 'autonomous', operation: 'self_check' })
     const operationSnapshot = node.getCerebrumOperationsSnapshot({ limit: 20 })
-    expect(operationSnapshot).to.include({ ok: true, retentionDays: 3 })
+    expect(operationSnapshot).to.include({ ok: true, retentionDays: 30 })
     expect(operationSnapshot.counts).to.include({ total: 1, autonomous: 1, knx: 0 })
     expect(operationSnapshot.items[0]).to.include({ source: 'standalone-test', operation: 'self_check' })
     expect(fs.existsSync(path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'operations', 'standalone-test'))).to.equal(true)

@@ -117,6 +117,58 @@ describe('Cerebrum portable backup', () => {
     return readSupplementalFiles(locations)
   }
 
+  it('applies default and custom history retention to disk archives while the AI is disabled, including after restart and restore', async function () {
+    this.timeout(10000)
+    const { serializeCerebrumCompactHistoryRecord } = require('../nodes/utils/cerebrumEventHistory')
+    const { addCerebrumChatInstruction } = require('../nodes/utils/cerebrumChatContext')
+    const source = create('history-retention')
+    await source.applyHistoryRetention()
+    expect(source.historyRetentionDays).to.equal(30)
+    expect(source.llmEnabled).to.equal(false)
+    const now = Date.now()
+    const oldTs = now - 32 * 86400000
+    const recentTs = now - 20 * 86400000
+    const oldDay = new Date(oldTs).toISOString().slice(0, 10)
+    const recentDay = new Date(recentTs).toISOString().slice(0, 10)
+    for (const group of ['history', 'adapter-history', 'operations']) {
+      const extension = group === 'operations' ? 'jsonl' : 'knxctx'
+      seed(source, `${group}/${source.id}/${oldDay}.${extension}`, '')
+      seed(source, `${group}/${source.id}/${recentDay}.${extension}`, '')
+      seed(source, `${group}/${source.id}/notes.txt`, 'unrelated')
+    }
+    seed(source, `history/${source.id}/${recentDay}.knxctx`, serializeCerebrumCompactHistoryRecord({ ts: recentTs, at: new Date(recentTs).toISOString(), destination: '1/2/3', source: '1.1.1', event: 'GroupValue_Write', payload: 37 }, 'knx') + '\n')
+    source._chatContext = addCerebrumChatInstruction(source._chatContext, { text: 'Keep Relax at 37%', at: new Date(oldTs).toISOString() })
+    source._sharedMemoryArchive.append({ kind: 'conversation', at: new Date(oldTs).toISOString(), data: { text: 'expired marker' } })
+    const retained = source._sharedMemoryArchive.append({ kind: 'conversation', at: new Date(recentTs).toISOString(), data: { text: 'retained marker' } })
+    await source.applyHistoryRetention()
+    for (const group of ['history', 'adapter-history', 'operations']) {
+      const extension = group === 'operations' ? 'jsonl' : 'knxctx'
+      expect(fs.existsSync(path.join(storage(source), group, source.id, `${oldDay}.${extension}`))).to.equal(false)
+      expect(fs.existsSync(path.join(storage(source), group, source.id, `${recentDay}.${extension}`))).to.equal(true)
+      expect(fs.existsSync(path.join(storage(source), group, source.id, 'notes.txt'))).to.equal(true)
+    }
+    expect((await source.querySharedMemory({ text: 'expired', kind: 'conversation' })).totalMatches).to.equal(0)
+    expect((await source.querySharedMemory({ operation: 'get', text: retained.id })).ok).to.equal(true)
+    const snapshot = source.getCerebrumOperationsSnapshot()
+    expect(snapshot.retentionDays).to.equal(30)
+    expect(snapshot.items.some(item => item.category === 'knx' && item.details.destination === '1/2/3')).to.equal(true)
+    const backup = await decodeBackupUpload(await createBackupZip(await source.exportAiConfig()))
+    const target = create('short-history-retention', { historyRetentionDays: '7' })
+    await target.importAiConfig(backup)
+    expect(target.historyStoreRetentionDays).to.equal(7)
+    expect(target._chatContext.instructions.some(item => item.text === 'Keep Relax at 37%')).to.equal(true)
+    expect((await target.querySharedMemory({ operation: 'get', text: retained.id })).ok).to.equal(false)
+    expect(target.getCerebrumOperationsSnapshot().retentionDays).to.equal(7)
+    const dayFile = path.join(storage(target), 'history', target.id, `${recentDay}.knxctx`)
+    expect(fs.existsSync(dayFile)).to.equal(false)
+    const expired = target._sharedMemoryArchive.append({ kind: 'conversation', at: new Date(recentTs).toISOString(), data: { text: 'restart marker' } })
+    await close(target)
+    const restarted = create('short-history-retention', { historyRetentionDays: 7 })
+    await restarted._historyRetentionPromise
+    expect((await restarted.querySharedMemory({ operation: 'get', text: expired.id })).ok).to.equal(false)
+    expect(restarted._chatContext.instructions.some(item => item.text === 'Keep Relax at 37%')).to.equal(true)
+  })
+
   it('round trips editable JavaScript source through ZIP, node migration and restart', async function () {
     this.timeout(10000)
     const source = create('javascript-source')

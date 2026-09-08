@@ -2,7 +2,8 @@
 
 const crypto = require('crypto')
 
-const CEREBRUM_OPERATIONS_RETENTION_DAYS = 3
+const { CEREBRUM_HISTORY_RETENTION_DEFAULT_DAYS } = require('./cerebrumHistoryRetention')
+const CEREBRUM_OPERATIONS_RETENTION_DAYS = CEREBRUM_HISTORY_RETENTION_DEFAULT_DAYS
 const CEREBRUM_OPERATIONS_DEFAULT_LIMIT = 1200
 const CEREBRUM_OPERATIONS_MAX_LIMIT = 5000
 const CEREBRUM_OPERATION_DETAILS_MAX_CHARS = 12000
@@ -178,6 +179,7 @@ const buildCerebrumOperationsSnapshot = ({
   operations = [],
   telegrams = [],
   knxTotal = 0,
+  retentionDays = CEREBRUM_OPERATIONS_RETENTION_DAYS,
   fromTs,
   toTs,
   limit = CEREBRUM_OPERATIONS_DEFAULT_LIMIT
@@ -214,8 +216,8 @@ const buildCerebrumOperationsSnapshot = ({
   return {
     ok: true,
     generatedAt: new Date().toISOString(),
-    retentionDays: CEREBRUM_OPERATIONS_RETENTION_DAYS,
-    from: new Date(Number(fromTs || (Date.now() - (CEREBRUM_OPERATIONS_RETENTION_DAYS * 86400000)))).toISOString(),
+    retentionDays,
+    from: new Date(Number(fromTs || (Date.now() - (retentionDays * 86400000)))).toISOString(),
     to: new Date(Number(toTs || Date.now())).toISOString(),
     counts,
     returnedItems: items.length,

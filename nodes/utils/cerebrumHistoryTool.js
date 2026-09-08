@@ -1,3 +1,4 @@
+const { CEREBRUM_HISTORY_RETENTION_DEFAULT_DAYS, normalizeCerebrumHistoryRetentionDays } = require('./cerebrumHistoryRetention')
 const { sanitizeHistoryValue } = require('./cerebrumEventHistory')
 const { selectCerebrumReasoningResults } = require('./cerebrumReasoning')
 
@@ -57,7 +58,7 @@ const normalizeCerebrumHistoryActions = (value, { maxActions = CEREBRUM_HISTORY_
   return { accepted, rejected }
 }
 
-const resolveCerebrumHistoryRange = ({ action, nowTs = Date.now(), retentionDays = 10 } = {}) => {
+const resolveCerebrumHistoryRange = ({ action, nowTs = Date.now(), retentionDays = CEREBRUM_HISTORY_RETENTION_DEFAULT_DAYS } = {}) => {
   const source = action && typeof action === 'object' ? action : {}
   const now = Number(nowTs)
   const safeNow = Number.isFinite(now) && now > 0 ? now : Date.now()
@@ -76,7 +77,7 @@ const resolveCerebrumHistoryRange = ({ action, nowTs = Date.now(), retentionDays
     'from'
   )
   if (requestedFromTs > requestedToTs) throw new Error('history from timestamp must not be after to timestamp')
-  const days = Math.max(1, Math.round(Number(retentionDays) || 10))
+  const days = normalizeCerebrumHistoryRetentionDays(retentionDays)
   const earliestTs = safeNow - (days * 24 * 60 * 60 * 1000)
   const fromTs = Math.max(earliestTs, requestedFromTs)
   const toTs = Math.min(safeNow, requestedToTs)
@@ -146,7 +147,7 @@ const executeCerebrumHistoryAction = ({
   action,
   queryArchive,
   nowTs = Date.now(),
-  retentionDays = 10
+  retentionDays = CEREBRUM_HISTORY_RETENTION_DEFAULT_DAYS
 } = {}) => {
   const normalized = normalizeCerebrumHistoryActions([action], { maxActions: 1 })
   if (!normalized.accepted.length) {

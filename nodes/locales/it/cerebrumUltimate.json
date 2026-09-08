@@ -41,7 +41,8 @@
       "chatOutputCode": "Mappatura uscita (Cerebrum → messaggio)",
       "aiEducation": "Educazione AI (gestita dall'utente)",
       "llmBackgroundMode": "Invio dello storico all’LLM",
-      "llmBackgroundIntervalMinutes": "Intervallo (minuti)"
+      "llmBackgroundIntervalMinutes": "Intervallo (minuti)",
+      "historyRetentionDays": "Conservazione storico (giorni)"
     },
     "outputs": {
       "summary": "Summary/Statistiche",
@@ -189,7 +190,7 @@
       "chatContextFileAiEducation": "Educazione AI gestita dall’utente, letta dal proprio file e inclusa nei backup.",
       "llmModeChat": "Solo durante la chat (predefinito)",
       "llmModeInterval": "Durante la chat e a intervallo",
-      "llmPolicyHint": "Lo storico completo resta archiviato in locale. L’LLM riceve riepiloghi e dati selezionati durante una richiesta in chat Web/Telegram oppure alla scadenza (1–10080 minuti; 1440 = 1 giorno, 10080 = 7 giorni). Avvio ed eventi non avviano chiamate. Anche la compilazione dell’Educazione AI attende una chat o la scadenza. Le chiamate assistant.run esplicite nei .js restano autorizzate. Un’analisi può richiedere più chiamate; nessun limite di costo è garantito."
+      "llmPolicyHint": "Lo storico resta archiviato in locale entro il periodo di conservazione configurato. L’LLM riceve riepiloghi e dati selezionati durante una richiesta in chat Web/Telegram oppure alla scadenza (1–10080 minuti; 1440 = 1 giorno, 10080 = 7 giorni). Avvio ed eventi non avviano chiamate. Anche la compilazione dell’Educazione AI attende una chat o la scadenza. Le chiamate assistant.run esplicite nei .js restano autorizzate. Un’analisi può richiedere più chiamate; nessun limite di costo è garantito."
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/responses (o endpoint compatibile)",

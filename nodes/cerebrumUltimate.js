@@ -140,7 +140,6 @@ const {
 const {
   CEREBRUM_OPERATIONS_DEFAULT_LIMIT,
   CEREBRUM_OPERATIONS_MAX_LIMIT,
-  CEREBRUM_OPERATIONS_RETENTION_DAYS,
   buildCerebrumOperationsSnapshot,
   normalizeCerebrumOperation,
   parseCerebrumOperationRecord,
@@ -179,13 +178,15 @@ try {
   googleTranslateTTS = null
 }
 
+const { normalizeCerebrumHistoryRetentionDays, CEREBRUM_HISTORY_RETENTION_DEFAULT_DAYS } = require('./utils/cerebrumHistoryRetention')
+
 const coerceBoolean = (value) => (value === true || value === 'true')
 
 const CEREBRUM_TRAFFIC_DEFAULTS = Object.freeze({
   analysisWindowSec: 120,
   historyWindowSec: 600,
   historyStoreToDisk: true,
-  historyStoreRetentionDays: 10,
+  historyStoreRetentionDays: CEREBRUM_HISTORY_RETENTION_DEFAULT_DAYS,
   emitIntervalSec: 0,
   maxEvents: 5000,
   topN: 12
@@ -7197,13 +7198,14 @@ module.exports = function (RED) {
     node.inputRBE = 'false'
     node.currentPayload = ''
 
-    // Traffic analysis is intentionally fixed and hidden from the editor.
+    // Traffic analysis is fixed; disk history retention is user-configurable.
     // Ignore values persisted by earlier node versions; there is no legacy
     // configuration fallback for these settings.
     node.analysisWindowSec = CEREBRUM_TRAFFIC_DEFAULTS.analysisWindowSec
     node.historyWindowSec = CEREBRUM_TRAFFIC_DEFAULTS.historyWindowSec
     node.historyStoreToDisk = CEREBRUM_TRAFFIC_DEFAULTS.historyStoreToDisk
-    node.historyStoreRetentionDays = CEREBRUM_TRAFFIC_DEFAULTS.historyStoreRetentionDays
+    node.historyRetentionDays = normalizeCerebrumHistoryRetentionDays(config.historyRetentionDays)
+    node.historyStoreRetentionDays = node.historyRetentionDays
     node.emitIntervalSec = CEREBRUM_TRAFFIC_DEFAULTS.emitIntervalSec
     node.topN = CEREBRUM_TRAFFIC_DEFAULTS.topN
 
@@ -8666,7 +8668,7 @@ module.exports = function (RED) {
         recentLines.join('\n'),
         '',
         adapterArchiveScopeLine,
-        `Adapter history retention: ${CEREBRUM_ADAPTER_HISTORY_RETENTION_DAYS} day(s), with a guaranteed minimum query window of ${CEREBRUM_ADAPTER_HISTORY_MIN_HOURS} hours.`,
+        `Adapter history retention: ${node.historyRetentionDays} day(s).`,
         adapterHistoryCoverageLine,
         'Adapter full-interval aggregates (resource lists are ranked subsets):',
         formatCerebrumHistorySummaryForPrompt(adapterPromptEvents.summary),
@@ -9439,6 +9441,7 @@ module.exports = function (RED) {
         content,
         bytes: Buffer.byteLength(content, 'utf8'),
         archivePath: getSharedMemoryArchiveFile(),
+        retentionDays: node.historyRetentionDays,
         maxBytes: CHAT_CONTEXT_MAX_BYTES,
         revision: buildCerebrumChatLearningRevision(liveContext),
         updatedAt: liveContext.updatedAt || '',
@@ -9585,6 +9588,7 @@ module.exports = function (RED) {
       try { fs.appendFile(filePath, content, { encoding: 'utf8', mode: 0o600, flush: true }, complete) } catch (error) { complete(error) }
     }
     const flushBackupArchiveWrites = async () => {
+      await node._historyRetentionPromise
       while (backupArchiveWrites.size) await Promise.all(Array.from(backupArchiveWrites))
       if (backupArchiveWriteError) throw new Error(`Archive write failed; persisted history may be incomplete: ${backupArchiveWriteError.message}`)
     }
@@ -9688,7 +9692,7 @@ module.exports = function (RED) {
       const dirPath = getOperationsArchiveDir()
       try {
         if (!fs.existsSync(dirPath)) return
-        const cutoffDayKey = formatArchiveDayKey(now - (CEREBRUM_OPERATIONS_RETENTION_DAYS * 24 * 60 * 60 * 1000))
+        const cutoffDayKey = formatArchiveDayKey(now - (node.historyRetentionDays * 24 * 60 * 60 * 1000))
         fs.readdirSync(dirPath, { withFileTypes: true }).forEach(entry => {
           if (!entry || !entry.isFile()) return
           const match = String(entry.name || '').match(/^(\d{4}-\d{2}-\d{2})\.jsonl$/)
@@ -9748,7 +9752,7 @@ module.exports = function (RED) {
     node.getCerebrumOperationsSnapshot = ({ limit = CEREBRUM_OPERATIONS_DEFAULT_LIMIT } = {}) => {
       pruneCerebrumOperationFiles()
       const toTs = nowMs()
-      const fromTs = toTs - (CEREBRUM_OPERATIONS_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+      const fromTs = toTs - (node.historyRetentionDays * 24 * 60 * 60 * 1000)
       const requestedLimit = Math.max(1, Math.min(CEREBRUM_OPERATIONS_MAX_LIMIT, Math.round(Number(limit) || CEREBRUM_OPERATIONS_DEFAULT_LIMIT)))
       const operations = loadCerebrumOperationsFromDisk({ fromTs, toTs })
       const history = loadHistoryQueryFromDisk({ fromTs, toTs, limit: requestedLimit, question: '' })
@@ -9756,6 +9760,7 @@ module.exports = function (RED) {
         operations,
         telegrams: history.events,
         knxTotal: history.summary && history.summary.totalEvents,
+        retentionDays: node.historyRetentionDays,
         fromTs,
         toTs,
         limit: requestedLimit
@@ -9828,7 +9833,7 @@ module.exports = function (RED) {
       try {
         if (!fs.existsSync(dirPath)) return
         const entries = fs.readdirSync(dirPath, { withFileTypes: true })
-        const retentionDays = Math.max(1, CEREBRUM_ADAPTER_HISTORY_RETENTION_DAYS)
+        const retentionDays = node.historyRetentionDays
         const cutoffDayKey = formatArchiveDayKey(now - (retentionDays * 24 * 60 * 60 * 1000))
         entries.forEach(entry => {
           if (!entry || !entry.isFile()) return
@@ -9902,7 +9907,7 @@ module.exports = function (RED) {
           label: `last ${CEREBRUM_DEFAULT_PROMPT_HISTORY_MINUTES} minutes`,
           explicit: false
         },
-        retentionDays: CEREBRUM_ADAPTER_HISTORY_RETENTION_DAYS
+        retentionDays: node.historyRetentionDays
       })
       const query = loadAdapterHistoryQueryFromDisk({
         fromTs: effectiveRange.fromTs,
@@ -9916,6 +9921,22 @@ module.exports = function (RED) {
         source: 'daily compact adapter context archive',
         range: effectiveRange
       }
+    }
+
+    node.applyHistoryRetention = () => {
+      if (node._historyRetentionPromise) return node._historyRetentionPromise
+      const pending = (async () => {
+        while (backupArchiveWrites.size) await Promise.all(Array.from(backupArchiveWrites))
+        pruneHistoryArchiveFiles({ force: true })
+        pruneAdapterHistoryArchiveFiles({ force: true })
+        pruneCerebrumOperationFiles({ force: true })
+        return await node._sharedMemoryArchive?.prune({ retentionDays: node.historyRetentionDays })
+      })().catch(error => {
+        node.warn(`Cerebrum history retention: ${error.message || error}`)
+        return { ok: false, error: error.message || String(error) }
+      }).finally(() => { node._historyRetentionPromise = null })
+      node._historyRetentionPromise = pending
+      return pending
     }
 
     const loadPersistedAiConfig = () => {
@@ -11986,6 +12007,7 @@ module.exports = function (RED) {
         initializeAutonomyRuntime()
       }
       if (p.version === 2) {
+        await node.applyHistoryRetention()
         node._history = []
         loadRecentHistoryFromDisk()
       }
@@ -12970,7 +12992,8 @@ module.exports = function (RED) {
       if (reasoningState.educationCompilation) systemPrompt += '\nEDUCATION COMPILATION: Turn explicit scheduled/event instructions in the current AI Education into real .js functions now. Do not execute their work now, fetch forecasts now or send speech. General preferences need no file. List existing functions first; preserve ALL active/paused/deleted/manual ones and never duplicate their purpose under another name. Only create new functions that are missing. For future Web/TTS tasks create a local schedule calling assistant.run with the full user instruction and exact sensor addresses. Never write placeholders; explain missing details or tool failures in reply. Return no device, speech, camera, memory-write or legacy schedule actions.'
       if (reasoningState.localAutomation) systemPrompt += '\nLOCAL AUTOMATION EXECUTION: Perform the scheduled instruction NOW. Only read-only retrieval, current public Web research, validated sensor reads and a reply/TTS announcement are available. No device writes, privileged code, memory modifications, camera watches or schedule/automation changes. When local sensors are needed, retrieve exact catalog records and use routine inspect with GroupValue_Read, then prepare the final speech from the observations. For forecasts use fresh dated sources and the household location from trusted memory; clarify if unavailable. Distinguish current local readings from forecasts. For TTS spell out measurement units and dates/times in the user language; never invent readings or claim playback. Use speechActions for requested announcements.'
       if (automationToolEnabled && reasoningState.automationResults?.some(result => result.operation === 'api')) systemPrompt += `\n${automationContract}`
-      systemPrompt += '\nShared memory archive: ALL conversations, observations, operations and context are persisted across channels. For missing past context, search BEFORE saying you cannot remember. memoryActions also supports {"operation":"search|get","text":"search words or exact record id","kind":"any|conversation|instruction|knx|adapter|operation|context","offset":0,"all":false,"reason":""}. search offset paginates matches; get offset paginates the full JSON text of a record. Results with complete=false are excerpts: get the full record before using saved actuator values. Search/get is read-only and intermediate: empty reply and every other action empty. Historical replies/plans do not prove commands were executed; compare observations and outcomes. Forgotten instructions in historical records must not be reinstated. '
+      systemPrompt += `\nShared memory archive retention: ${node.historyRetentionDays} days. Older archived records are deleted; saved instructions and learned knowledge are maintained separately.`
+      systemPrompt += '\nShared memory archive: Conversations, observations, operations and context are persisted across channels within the retention window. For missing past context, search BEFORE saying you cannot remember. memoryActions also supports {"operation":"search|get","text":"search words or exact record id","kind":"any|conversation|instruction|knx|adapter|operation|context","offset":0,"all":false,"reason":""}. search offset paginates matches; get offset paginates the full JSON text of a record. Results with complete=false are excerpts: get the full record before using saved actuator values. Search/get is read-only and intermediate: empty reply and every other action empty. Historical replies/plans do not prove commands were executed; compare observations and outcomes. Forgotten instructions in historical records must not be reinstated. '
       if (memoryFinalPass) systemPrompt += 'Repeated memory queries produced no new evidence. Stop this cycle: no further search/get this pass; explain any remaining uncertainty. '
       systemPrompt += 'Local ETS and memory retrieval have no fixed round count. Continue with useful queries, pagination or exact record lookups as needed; earlier details may be omitted from the working context and can be retrieved again. Stop when evidence is sufficient. Never repeat an unchanged query cycle. '
       systemPrompt += 'For remember/forget set kind="any" and offset=0. Memory is household-wide; channel identifiers only route replies. '
@@ -13427,7 +13450,8 @@ module.exports = function (RED) {
       if (memoryQueries.length && !memoryFinalPass) {
         const results = []
         for (const action of memoryQueries.slice(0, 2)) {
-          const result = await node.querySharedMemory({ ...action, snapshotBytes: reasoningState.archiveSnapshotBytes, maxChars: Math.max(256, Math.floor(evidenceByteBudget / 12)), limit: 2 })
+          const result = await node.querySharedMemory({ ...action, snapshot: reasoningState.archiveSnapshot, maxChars: Math.max(256, Math.floor(evidenceByteBudget / 12)), limit: 2 })
+          if (result.snapshotExpired) reasoningState.archiveSnapshot = node._sharedMemoryArchive.snapshot()
           results.push({ action, ...result })
           archiveCerebrumData('operation', { operation: 'memory_query', action, result }, sessionId)
         }
@@ -13767,7 +13791,7 @@ module.exports = function (RED) {
         educationCompilation: options.educationCompilation === true,
         localAutomation: options.localAutomation === true,
         startedAt: nowMs(),
-        archiveSnapshotBytes: node._sharedMemoryArchive?.snapshotBytes(),
+        archiveSnapshot: node._sharedMemoryArchive?.snapshot(),
         isCancelled: options.isCancelled || (() => false)
       }
       let current = { ...options, reasoningState }
@@ -17994,6 +18018,7 @@ module.exports = function (RED) {
             gatewayName: (node.serverKNX && node.serverKNX.name) ? node.serverKNX.name : '',
             unifiProtectConfigId: node.unifiProtectConfigId || '',
             unifiProtectConfigName: (node.unifiProtectConfig && (node.unifiProtectConfig.name || node.unifiProtectConfig.host)) || '',
+            historyRetentionDays: node.historyRetentionDays,
             llmPolicy: llmPolicy.snapshot(),
             llmEnabled: !!node.llmEnabled,
             llmProvider: node.llmProvider || '',
@@ -18287,6 +18312,7 @@ module.exports = function (RED) {
         node.serverKNX.removeClient(node)
       }
       try { aiRuntimeNodes.delete(node.id) } catch (e) { }
+      clearInterval(node._historyRetentionTimer)
       autonomyClosed.then(async () => {
         // A final checkpoint includes results completed while autonomy closed.
         const failures = []
@@ -18356,6 +18382,9 @@ module.exports = function (RED) {
         try { node.sysLogger?.warn(`Cerebrum ${label} startup error: ${error.message || error}`) } catch (logError) { /* ignore */ }
       }
     })
+
+    node.applyHistoryRetention()
+    node._historyRetentionTimer = setInterval(() => node.applyHistoryRetention(), 60 * 60 * 1000)
 
     try {
       const cameraRegistry = getCerebrumCameraAdapterRegistry()
@@ -18529,7 +18558,7 @@ module.exports = function (RED) {
         historyContext: () => {
           const tokens = resolveCerebrumOperationalContextLimit({ provider: node.llmProvider, model: node.llmModel, contextLength: node.llmContextLength, localContextTokens: node.llmLocalContextTokens, maxContextKb: node.llmMaxContextKb }).tokens
           return buildLLMPrompt({
-            question: 'Periodic review of locally collected history: review events, episodes, habits, pending situations and comfort goals. Distinguish facts, hypotheses and missing evidence. Events are a bounded selection; aggregates cover the supplied interval. Full raw history remains archived locally.',
+            question: 'Periodic review of locally collected history: review events, episodes, habits, pending situations and comfort goals. Distinguish facts, hypotheses and missing evidence. Events are a bounded selection; aggregates cover the supplied interval. Raw history remains archived locally within the configured retention window.',
             summary: rebuildCachedSummaryNow(),
             limits: { knxEvents: Math.max(1, Math.floor(tokens / 200)), adapterEvents: Math.max(1, Math.floor(tokens / 300)), homeMemoryChars: Math.max(512, Math.floor(tokens * 0.08)), analysisSummaryChars: Math.max(512, Math.floor(tokens * 0.08)) }
           })
