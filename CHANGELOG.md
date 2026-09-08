@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Replaced Learning, Memory, Goals, Web Research and Operations detail cards with read-only textareas: one complete record per line with date/time and text. Removed expandable JSON/details, explanatory panels and list filters; world-model pages load into a single list. File editing and backups remain available.
+
+- Simplified the JavaScript automations page: the title now leads directly to the toolbar, with explanatory text and compilation/review summaries removed. File controls and the source editor remain available.
+
+- Added **History updates to LLM** in the node editor: **Only during user chat** is the default, including existing flows without the setting; **During chat and at an interval** additionally permits history and comfort reviews every **1–10080 minutes (up to seven days)**. Explicit `assistant.run` calls in active JavaScript functions remain independently authorized.
+- Restricted model access to the authorized request and its tool follow-ups. An open Web page or saved Telegram session does not authorize background calls, and concurrent background work cannot borrow a chat's permission. Local observation, raw archives, learning and deterministic JavaScript functions continue without model calls.
+- Made periodic reviews wait for their first interval and persist each attempt across restarts. Due reviews wait during active chat; missed intervals are not replayed and failures do not trigger immediate retries.
+- Added full-period aggregate counts and bounded historical evidence to chat/review context while retaining the complete local archive. The interval controls when analysis starts; useful tool follow-ups may require multiple model calls, so it is not a token or spending cap.
+- Deferred AI Education generation and Web UI retries to the next authorized chat or periodic review, with persisted waiting status. Startup notifications are generated locally without testing the model.
+- Suspended legacy semantic schedules while retaining them for inspection and cancellation; new scheduled work must use real `.js` functions. Preserved existing device permissions, backup compatibility and pending user-requested camera analysis.
+
 ## 0.2.0 — 2026-09-08
 
 - Added persistent **JavaScript automations** authored by Cerebrum from chat or explicit AI Education instructions. The Web UI displays actual functions with editable/downloadable `.js` source, active/paused/error status, last execution, pause/resume and deletion; no bundled sample files.

@@ -348,6 +348,8 @@
             topic: { value: "", required: false },
 
             llmEnabled: { value: false },
+            llmBackgroundMode: { value: "chat" },
+            llmBackgroundIntervalMinutes: { value: 1440, validate: function(v) { return Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 10080; } },
             llmProvider: { value: "openai_compat" },
             llmBaseUrl: { value: "https://api.openai.com/v1/responses" },
             llmModel: { value: "gpt-5.4" },
@@ -419,6 +421,9 @@
                 $("#cerebrum-llm-advanced-settings").toggle(enabled);
             };
             $("#node-input-llmEnabled").on("change", toggleLLM);
+            const toggleLlmInterval = () => $("#cerebrum-llm-interval-row").toggle($("#node-input-llmBackgroundMode").val() === "interval");
+            $("#node-input-llmBackgroundMode").on("change", toggleLlmInterval);
+            toggleLlmInterval();
 
             const toggleCommandConfirmation = () => {
                 const enabled = $("#node-input-llmAllowKnxCommands").is(":checked");
@@ -1662,6 +1667,19 @@
                     <input style="width:100px" type="number" id="node-input-llmMaxContextKb" min="0" step="1">
                     <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.maxContextKbHint"></div>
                 </div>
+                <div class="form-row">
+                    <label for="node-input-llmBackgroundMode"><i class="fa fa-clock-o"></i> <span data-i18n="cerebrumUltimate.properties.llmBackgroundMode"></span></label>
+                    <select id="node-input-llmBackgroundMode" style="width:65%">
+                        <option value="chat" data-i18n="cerebrumUltimate.messages.llmModeChat"></option>
+                        <option value="interval" data-i18n="cerebrumUltimate.messages.llmModeInterval"></option>
+                    </select>
+                </div>
+                <div class="form-row" id="cerebrum-llm-interval-row">
+                    <label for="node-input-llmBackgroundIntervalMinutes"><i class="fa fa-clock-o"></i> <span data-i18n="cerebrumUltimate.properties.llmBackgroundIntervalMinutes"></span></label>
+                    <input id="node-input-llmBackgroundIntervalMinutes" type="number" min="1" max="10080" step="1" list="cerebrum-llm-intervals" style="width:120px">
+                    <datalist id="cerebrum-llm-intervals"><option value="60">1 h</option><option value="360">6 h</option><option value="1440">1 d</option><option value="10080">7 d</option></datalist>
+                </div>
+                <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.llmPolicyHint"></div>
                 <input type="hidden" id="node-input-llmContextLength">
                 <div id="cerebrum-local-context-status" style="display:none;"></div>
                 <div class="form-row" id="cerebrum-local-context-row" style="display:none;">

@@ -2,7 +2,7 @@
 
 // Reconcile a saved instruction revision once, independently of world-model
 // situations. The local poll reads a hash; it does not call an LLM repeatedly.
-function createCerebrumEducationCompiler ({ snapshot, runtime, enabled, compile, now = Date.now, intervalMs = 10000 }) {
+function createCerebrumEducationCompiler ({ snapshot, runtime, enabled, compile, now = Date.now, intervalMs = 10000, waitingMessage = 'Enable the AI to generate functions from saved education.' }) {
   let closed = false
   let pending = null
   let rerun = false
@@ -16,7 +16,7 @@ function createCerebrumEducationCompiler ({ snapshot, runtime, enabled, compile,
     const saveStatus = (state, message = '') => runtime().setCompilationStatus({ revision: education.revision, status: state, message, updatedAt: new Date(now()).toISOString() })
     if (!education.content.trim()) return Promise.resolve(saveStatus('empty'))
     if (!enabled() && previous.revision === education.revision && previous.status === 'waiting') return Promise.resolve(previous)
-    if (!enabled()) return Promise.resolve(saveStatus('waiting', 'Enable the AI to generate functions from saved education.'))
+    if (!enabled()) return Promise.resolve(saveStatus('waiting', waitingMessage))
     saveStatus('generating')
     const cancelled = () => closed || !enabled() || snapshot().revision !== education.revision
     pending = Promise.resolve().then(async () => {

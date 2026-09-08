@@ -39,7 +39,9 @@
       "chatAdapterPreset": "Adapter für Ein-/Ausgangsnachrichten",
       "chatInputCode": "Eingangszuordnung (Nachricht → Cerebrum)",
       "chatOutputCode": "Ausgangszuordnung (Cerebrum → Nachricht)",
-      "aiEducation": "KI-Erziehung (vom Benutzer verwaltet)"
+      "aiEducation": "KI-Erziehung (vom Benutzer verwaltet)",
+      "llmBackgroundMode": "History updates to LLM",
+      "llmBackgroundIntervalMinutes": "Interval (minutes)"
     },
     "outputs": {
       "summary": "Zusammenfassung/Statistik",
@@ -176,7 +178,10 @@
       "aiEducationConflict": "Die Datei wurde geändert. Kopiere deine Änderungen, brich ab und öffne den Editor erneut, um die aktuelle Version zu laden.",
       "aiEducationError": "KI-Erziehung konnte nicht gelesen oder gespeichert werden.",
       "aiEducationUnsaved": "Mit Fertig werden die Änderungen gespeichert.",
-      "chatContextFileAiEducation": "Benutzerverwaltete KI-Erziehung aus einer eigenen Datei, in Backups enthalten."
+      "chatContextFileAiEducation": "Benutzerverwaltete KI-Erziehung aus einer eigenen Datei, in Backups enthalten.",
+      "llmModeChat": "Only during user chat (default)",
+      "llmModeInterval": "During chat and at an interval",
+      "llmPolicyHint": "Full history remains archived locally. The LLM receives summaries and selected evidence during a Web/Telegram chat request or at the configured interval (1–10080 minutes; 1440 = 1 day, 10080 = 7 days). Startup and events do not trigger calls. AI Education compilation also waits for chat or the interval. Explicit assistant.run calls in .js remain authorized. An analysis may require multiple calls; this is not a spending cap."
     },
     "sidebar": {
       "ui": {

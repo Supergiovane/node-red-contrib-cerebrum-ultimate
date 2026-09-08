@@ -1,4 +1,5 @@
 'use strict'
+const { normalizeLlmPolicyState } = require('./cerebrumLlmPolicy')
 
 const CEREBRUM_RUNTIME_STATE_MAX_BYTES = 512 * 1024
 const HOUR_MS = 60 * 60 * 1000
@@ -30,6 +31,7 @@ const createEmptyCerebrumRuntimeState = ({ now = Date.now() } = {}) => ({
   webAccessLastError: '',
   cameraWatchLastTriggered: [],
   learnedContextLimits: [],
+  llmPolicy: normalizeLlmPolicyState(),
   proactiveStates: []
 })
 
@@ -37,6 +39,7 @@ const normalizeCerebrumRuntimeState = (value, { now = Date.now() } = {}) => {
   const currentTime = validNow(now)
   const source = isRecord(value) ? value : {}
   const target = createEmptyCerebrumRuntimeState({ now: currentTime })
+  target.llmPolicy = normalizeLlmPolicyState(source.llmPolicy)
   const updatedAt = typeof source.updatedAt === 'string' ? Date.parse(source.updatedAt) : NaN
   if (Number.isFinite(updatedAt)) target.updatedAt = new Date(updatedAt).toISOString()
   target.webRequestTimestamps = (Array.isArray(source.webRequestTimestamps) ? source.webRequestTimestamps : [])

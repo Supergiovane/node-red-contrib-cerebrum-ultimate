@@ -4,6 +4,12 @@
 export const CEREBRUM_WEB_I18N = {
   en: {},
   it: {
+    'AI Education is waiting for an authorized LLM session.': 'Educazione AI in attesa di una sessione LLM autorizzata.',
+    'Saved instructions will be compiled during the next user chat or configured periodic review.': 'Le istruzioni salvate saranno compilate durante la prossima chat con l’utente o alla scadenza dell’analisi periodica configurata.',
+    'History review: during chat and at the configured interval.': 'Analisi dello storico: durante la chat e all’intervallo configurato.',
+    'History review: only during user chat.': 'Analisi dello storico: soltanto durante la chat con l’utente.',
+    'Explicit assistant.run calls in JavaScript remain enabled. Configure the interval in the Node-RED node editor.': 'Le chiamate assistant.run esplicite nei JavaScript restano abilitate. Configura l’intervallo nell’editor del nodo Node-RED.',
+    'Next review:': 'Prossima analisi:',
     "Describe automations in chat or AI Education. Schedules run locally; tasks requiring fresh research or summaries call the AI only when triggered.": "Descrivi le automazioni in chat o in Educazione AI. Gli orari sono gestiti localmente; le attività che richiedono ricerche o riepiloghi aggiornati chiamano l’AI soltanto quando scattano.",
     "Checking saved AI Education...": "Controllo delle istruzioni salvate in Educazione AI…",
     "Cerebrum is creating functions from AI Education...": "Cerebrum sta creando le funzioni dalle istruzioni di Educazione AI…",

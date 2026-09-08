@@ -39,7 +39,9 @@
       "chatAdapterPreset": "Adaptateur des messages d’entrée/sortie",
       "chatInputCode": "Mappage d’entrée (message → Cerebrum)",
       "chatOutputCode": "Mappage de sortie (Cerebrum → message)",
-      "aiEducation": "Éducation IA (gérée par l'utilisateur)"
+      "aiEducation": "Éducation IA (gérée par l'utilisateur)",
+      "llmBackgroundMode": "History updates to LLM",
+      "llmBackgroundIntervalMinutes": "Interval (minutes)"
     },
     "outputs": {
       "summary": "Résumé/Stats",
@@ -169,7 +171,10 @@
       "aiEducationConflict": "Le fichier a changé. Copiez vos modifications, annulez et rouvrez l’éditeur pour charger la dernière version.",
       "aiEducationError": "Impossible de lire ou d’enregistrer l’Éducation IA.",
       "aiEducationUnsaved": "Cliquez sur Terminé pour enregistrer les modifications.",
-      "chatContextFileAiEducation": "Éducation IA gérée par l’utilisateur, lue dans son propre fichier et incluse dans les sauvegardes."
+      "chatContextFileAiEducation": "Éducation IA gérée par l’utilisateur, lue dans son propre fichier et incluse dans les sauvegardes.",
+      "llmModeChat": "Only during user chat (default)",
+      "llmModeInterval": "During chat and at an interval",
+      "llmPolicyHint": "Full history remains archived locally. The LLM receives summaries and selected evidence during a Web/Telegram chat request or at the configured interval (1–10080 minutes; 1440 = 1 day, 10080 = 7 days). Startup and events do not trigger calls. AI Education compilation also waits for chat or the interval. Explicit assistant.run calls in .js remain authorized. An analysis may require multiple calls; this is not a spending cap."
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/chat/completions (or your compatible endpoint)",

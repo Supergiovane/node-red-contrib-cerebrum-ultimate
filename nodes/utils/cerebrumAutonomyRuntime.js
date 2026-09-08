@@ -66,7 +66,7 @@ const decisionSchema = {
 const canAct = node => node.cerebrumAutonomyEnabled === true && node.cerebrumAutonomyAllowActions === true &&
   !!String(node.aiEducation || '').trim() && node.llmAllowKnxCommands === true && node.llmRequireCommandConfirmation !== true
 
-const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSnapshot, callLLMChat, parseJson, getCatalog, normalizeCommands, coercePayload, sendCommands, readKnx, callHa, getHa, notify, researchWeb, automations, recordOperation, contextTokens = () => 8192, now = Date.now }) => {
+const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSnapshot, callLLMChat, parseJson, getCatalog, normalizeCommands, coercePayload, sendCommands, readKnx, callHa, getHa, notify, researchWeb, automations, recordOperation, canReason = () => true, historyContext = () => '', contextTokens = () => 8192, now = Date.now }) => {
   const audit = (operation, status, summary, details = {}) => recordOperation({
     category: 'autonomous',
     source: 'world-model',
@@ -76,7 +76,7 @@ const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSn
     summary,
     details
   })
-  const enabled = () => node._closing !== true && node.cerebrumAutonomyEnabled === true && node.llmEnabled === true
+  const enabled = () => canReason() && node._closing !== true && node.cerebrumAutonomyEnabled === true && node.llmEnabled === true
   const rejected = message => Object.assign(new Error(message), { noEffect: true })
   const execute = async ({ decision, situation }) => {
     if (!enabled() || !canAct(node)) throw rejected('Autonomous actions require instructions in AI Education and command authorization without per-command confirmation')
@@ -125,6 +125,7 @@ const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSn
       schema.required = [...schema.required, 'automation']
     }
     const budget = Math.max(512, Math.floor(contextTokens() * 0.25))
+    const history = historyContext()
     const memory = buildCerebrumWorkingMemory({ world, situation, byteBudget: budget, includeCurrentSituation: false })
     const instructions = [
       'You are Cerebrum, a proactive home intelligence. Develop evidence-based goals for occupant comfort and ease of living without waiting for questions. Energy savings are secondary.',
@@ -153,7 +154,7 @@ const createCerebrumAutonomyRuntime = ({ node, filePath, readSnapshot, archiveSn
       const recalled = view.results.map(result => JSON.stringify(result)).join('\n')
       const result = await callLLMChat({
         systemPrompt: instructions + (authoring ? `\n${automationContract}\nReturn the autonomous decision schema; the source belongs in automation.code.` : '\nTo author a local function, first return disposition automate with automation.operation api (other fields empty/offset0). This retrieves the JavaScript API without creating anything.'),
-        staticContext: [recalled, view.omitted ? `${view.omitted} earlier/oversized tool result(s) omitted; retrieve again when needed.` : '', memory.text].filter(Boolean).join('\n\n'),
+        staticContext: [history, recalled, view.omitted ? `${view.omitted} earlier/oversized tool result(s) omitted; retrieve again when needed.` : '', memory.text].filter(Boolean).join('\n\n'),
         userContent: requiredContext,
         essentialUserContent: requiredContext,
         jsonSchema: { name: 'cerebrum_autonomous_decision', strict: true, schema },

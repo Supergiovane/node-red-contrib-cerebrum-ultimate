@@ -10,6 +10,7 @@ import {
 } from "vue";
 import CerebrumWorldInsights from "./components/CerebrumWorldInsights.vue";
 import CerebrumSharedInsights from "./components/CerebrumSharedInsights.vue";
+import CerebrumRecordLog from "./components/CerebrumRecordLog.vue";
 import CerebrumBrain from "./components/CerebrumBrain.vue";
 import CerebrumNavigation from "./components/CerebrumNavigation.vue";
 import CerebrumIcon from "./components/CerebrumIcon.vue";
@@ -10027,8 +10028,7 @@ onBeforeUnmount(() => {
               :loading="state.chatLearningLoading"
               :error="state.chatLearningError"
             />
-            <details class="memory-file-tools">
-              <summary>Conversations, observed behaviour and details</summary>
+
             <CerebrumWorldInsights
               :key="`${state.selectedNodeId}:learning`"
               :node-id="state.selectedNodeId"
@@ -10037,19 +10037,7 @@ onBeforeUnmount(() => {
               :request="requestWorldInsight"
             />
             <div class="memory-section-toolbar">
-              <div class="memory-section-heading"><h4>From your conversations</h4>
-<div class="chat-learning-meta">
-                <span class="meta-chip"
-                  >{{ state.chatLearningSessionCount }}
-                  <span>channels</span></span
-                >
-                <span
-                  v-if="chatLearningDirty"
-                  class="meta-chip chat-learning-dirty"
-                  >Unsaved changes</span
-                >
-              </div>
-              </div>
+              <h4>From your conversations</h4>
               <button class="secondary-button" type="button"
                 :disabled="!state.selectedNodeId || chatLearningDirty || state.chatLearningLoading || state.chatLearningSaving || state.chatLearningResetting"
                 :title="chatLearningDirty ? localizeUiText('Unsaved changes') : ''"
@@ -10065,7 +10053,6 @@ onBeforeUnmount(() => {
               :loading="state.chatLearningLoading"
               :error="state.chatLearningError"
             />
-            </details>
             <details class="memory-file-tools" :open="chatLearningDirty">
               <summary>Advanced files and backups</summary>
               <p class="area-detail-subhead">Full conversations, observations and operations from every channel are retained in the shared archive and included in the full Cerebrum backup. The editor below shows the shared working memory.</p>
@@ -10255,33 +10242,9 @@ onBeforeUnmount(() => {
               mode="memory"
               :request="requestWorldInsight"
             />
-            <details class="memory-file-tools">
-              <summary>Habits, decisions and shared memory</summary>
+
             <div class="memory-section-toolbar">
-              <div class="memory-section-heading"><h4>Shared household learning</h4>
-<div class="chat-learning-meta">
-                <span class="meta-chip"
-                  >{{ state.cerebrumMemoryHabitCount }} habits</span
-                >
-                <span class="meta-chip"
-                  >{{ state.cerebrumMemoryConfirmedHabitCount }} confirmed</span
-                >
-                <span
-                  v-if="state.cerebrumMemoryPendingHabitCount"
-                  class="meta-chip chat-learning-dirty"
-                  >{{ state.cerebrumMemoryPendingHabitCount }} awaiting
-                  reply</span
-                >
-                <span class="meta-chip"
-                  >{{ state.cerebrumMemoryStateCount }} states</span
-                >
-                <span
-                  v-if="cerebrumMemoryDirty"
-                  class="meta-chip chat-learning-dirty"
-                  >Unsaved changes</span
-                >
-              </div>
-              </div>
+              <h4>Shared household learning</h4>
               <button class="secondary-button" type="button"
                 :disabled="!state.selectedNodeId || cerebrumMemoryDirty || state.cerebrumMemoryLoading || state.cerebrumMemorySaving || state.cerebrumMemoryResetting"
                 :title="cerebrumMemoryDirty ? localizeUiText('Unsaved changes') : ''"
@@ -10297,7 +10260,6 @@ onBeforeUnmount(() => {
               :loading="state.cerebrumMemoryLoading"
               :error="state.cerebrumMemoryError"
             />
-            </details>
             <details class="memory-file-tools" :open="cerebrumMemoryDirty">
               <summary>Advanced files and backups</summary>
               <p class="area-detail-subhead" :class="{ 'chat-learning-size-over': cerebrumMemoryTooLarge }">
@@ -10497,157 +10459,16 @@ onBeforeUnmount(() => {
               mode="operations"
               :request="requestWorldInsight"
             />
-            <details class="memory-file-tools">
-              <summary>Technical activity log · last three days</summary>
-            <div class="card-head settings-panel-head operations-panel-head">
-              <div>
-                <h3>
-                  Cerebrum Operations <span class="beta-badge">LAST 3 DAYS</span>
-                </h3>
-                <p class="area-detail-subhead">
-                  Audit of KNX telegrams, LLM requests, node tools and autonomous
-                  Cerebrum activities such as habit learning and state refreshes.
-                </p>
-              </div>
-              <button
-                class="secondary-button"
-                type="button"
-                :disabled="
-                  !state.selectedNodeId || state.cerebrumOperationsLoading
-                "
-                @click="loadCerebrumOperations({ force: true })"
-              >
-                {{ state.cerebrumOperationsLoading ? "Loading..." : "Refresh" }}
-              </button>
+            <div class="memory-section-toolbar">
+              <h4>Technical activity log · last three days <span v-if="state.cerebrumOperationsTruncated">({{ state.cerebrumOperationsItems.length }}/{{ state.cerebrumOperationsCounts.total }})</span></h4>
+              <button class="secondary-button" type="button" :disabled="!state.selectedNodeId || state.cerebrumOperationsLoading" @click="loadCerebrumOperations({ force: true })">{{ state.cerebrumOperationsLoading ? 'Loading...' : 'Refresh' }}</button>
             </div>
-
-            <div class="operations-counts" aria-label="Operation totals">
-              <span class="meta-chip"
-                >{{ state.cerebrumOperationsCounts.total }} total</span
-              >
-              <span class="meta-chip operation-count-knx"
-                >{{ state.cerebrumOperationsCounts.knx }} KNX</span
-              >
-              <span class="meta-chip operation-count-llm"
-                >{{ state.cerebrumOperationsCounts.llm }} LLM</span
-              >
-              <span class="meta-chip operation-count-tool"
-                >{{ state.cerebrumOperationsCounts.tool }} tools</span
-              >
-              <span class="meta-chip operation-count-autonomous"
-                >{{ state.cerebrumOperationsCounts.autonomous }} autonomous</span
-              >
-            </div>
-
-            <div class="operations-toolbar">
-              <label class="flow-field operations-filter-field">
-                <span>Category</span>
-                <select v-model="state.cerebrumOperationsFilter">
-                  <option value="all">All operations</option>
-                  <option value="knx">KNX telegrams</option>
-                  <option value="llm">LLM requests</option>
-                  <option value="tool">Node tools</option>
-                  <option value="autonomous">Autonomous activities</option>
-                  <option value="system">System</option>
-                </select>
-              </label>
-              <label class="flow-field operations-filter-field">
-                <span>Status</span>
-                <select v-model="state.cerebrumOperationsStatusFilter">
-                  <option value="all">All statuses</option>
-                  <option
-                    v-for="status in cerebrumOperationStatusOptions"
-                    :key="status"
-                    :value="status"
-                  >
-                    {{ operationStatusLabel(status) }}
-                  </option>
-                </select>
-              </label>
-              <label class="flow-field operations-search-field">
-                <span>Search operations</span>
-                <input
-                  v-model="state.cerebrumOperationsSearch"
-                  type="search"
-                  placeholder="Address, tool, device, operation..."
-                />
-              </label>
-            </div>
-
-            <p
-              v-if="state.cerebrumOperationsFrom"
-              class="area-detail-subhead operations-range"
-            >
-              {{ formatOperationsRangeSummary() }}
-            </p>
-            <p
-              v-if="state.cerebrumOperationsError"
-              class="error-banner chat-learning-error"
-              role="alert"
-            >
-              {{ state.cerebrumOperationsError }}
-            </p>
-            <div
-              v-if="state.cerebrumOperationsLoading && !state.cerebrumOperationsItems.length"
-              class="operations-loading"
-              role="status"
-            >
-              <span class="chat-pending-spinner" aria-hidden="true"></span>
-              <span>Loading the last three days...</span>
-            </div>
-            <div v-else-if="filteredCerebrumOperations.length" class="operations-list">
-              <article
-                v-for="item in filteredCerebrumOperations"
-                :key="item.id"
-                class="operation-entry"
-                :class="`operation-entry-${item.category}`"
-              >
-                <div class="operation-entry-marker" aria-hidden="true"></div>
-                <div class="operation-entry-body">
-                  <div class="operation-entry-meta">
-                    <span
-                      class="operation-category"
-                      :class="`operation-category-${item.category}`"
-                      >{{ operationCategoryLabel(item.category) }}</span
-                    >
-                    <strong>{{ item.source }}</strong>
-                    <span>{{ item.operation }}</span>
-                    <span
-                      v-if="operationFlowLabel(item)"
-                      class="operation-flow"
-                      :class="operationFlowClasses(item)"
-                      >{{ operationFlowLabel(item) }}</span
-                    >
-                    <span
-                      class="operation-status"
-                      :class="`operation-status-${item.status}`"
-                      ><span class="operation-status-prefix">Outcome:</span>
-                      {{ operationStatusLabel(item.status) }}</span
-                    >
-                    <time :datetime="item.at">{{ formatDateTime(item.at) }}</time>
-                    <span v-if="item.durationMs">{{ formatOperationDuration(item.durationMs) }}</span>
-                  </div>
-                  <h4>{{ item.title }}</h4>
-                  <p v-if="item.summary">{{ item.summary }}</p>
-                  <details v-if="formatOperationDetails(item.details)" class="operation-details">
-                    <summary>Technical details</summary>
-                    <pre>{{ formatOperationDetails(item.details) }}</pre>
-                  </details>
-                </div>
-              </article>
-            </div>
-            <p v-else-if="!state.cerebrumOperationsLoading" class="empty-state">
-              No matching operations in the last three days.
-            </p>
-            <div class="operations-paths">
-              <span v-if="state.cerebrumOperationsArchivePath">
-                Node operations: <code>{{ state.cerebrumOperationsArchivePath }}</code>
-              </span>
-              <span v-if="state.cerebrumOperationsKnxArchivePath">
-                KNX traffic: <code>{{ state.cerebrumOperationsKnxArchivePath }}</code>
-              </span>
-            </div>
-            </details>
+            <p v-if="state.cerebrumOperationsError" role="alert">{{ state.cerebrumOperationsError }}</p>
+            <CerebrumRecordLog
+              :items="state.cerebrumOperationsItems"
+              :language="uiLanguage"
+              :label="localizeUiText('Cerebrum Operations')"
+            />
           </article>
           <input
             ref="configImportRef"

@@ -147,6 +147,53 @@ describe('Cerebrum portable backup', () => {
     expect(restarted.getAutomationFile({ name: saved.name }).content).to.equal(saved.content)
   })
 
+  it('keeps startup, education polling and local world observation off the LLM until a seven-day review is due', async function () {
+    this.timeout(12000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const originalNow = Date.now
+    let time = Date.parse('2026-09-08T08:00:00Z')
+    Date.now = () => time
+    let calls = 0
+    const prompts = []
+    simpleGet.concat = (options, callback) => {
+      calls++
+      prompts.push(JSON.stringify(JSON.parse(options.body)))
+      const response = { disposition: 'observe', summary: 'Local observations reviewed; comfort remains a hypothesis.', nextCheckSeconds: 86400, evidenceIds: [], action: null, expected: null, queries: [], goalUpdate: null, research: null }
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      const config = { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test', llmContextLength: 32768, llmMaxTokens: 2400, llmBackgroundMode: 'interval', llmBackgroundIntervalMinutes: 10080 }
+      const node = create('policy-week', config)
+      const output = []
+      node.send = messages => output.push(messages)
+      node.handleSend({ knx: { event: 'GroupValue_Write', source: '1.1.1', destination: '1/2/3', dpt: '1.001' }, payload: true, devicename: 'Weekly archive marker' })
+      await node._educationCompiler.check()
+      await node._autonomyRuntime.tick()
+      await new Promise(resolve => setTimeout(resolve, 2700))
+      expect(calls).to.equal(0)
+      expect(output.some(messages => messages[2]?.cerebrum?.llmTest === 'skipped_by_policy')).to.equal(true)
+      time += 10080 * 60000 - 1
+      await node.runLlmPolicyTick()
+      expect(calls).to.equal(0)
+      time++
+      await node.runLlmPolicyTick()
+      expect(calls).to.equal(1)
+      expect(prompts[0]).to.include('Weekly archive marker').and.include('full-interval aggregates')
+      expect(node.getLlmPolicyStatus().lastContextAt).to.equal(time)
+      await node._autonomyRuntime.tick()
+      await node.runLlmPolicyTick()
+      expect(calls).to.equal(1)
+      const saved = await node.exportAiConfig()
+      expect(JSON.parse(saved.supplementalFiles.runtimeState.content).llmPolicy.lastAttemptAt).to.equal(time)
+      await close(node)
+      const restarted = create('policy-week', config)
+      await restarted.runLlmPolicyTick()
+      await restarted._autonomyRuntime.tick()
+      expect(calls).to.equal(1)
+    } finally { simpleGet.concat = transport; Date.now = originalNow }
+  })
+
   it('compiles the saved 08:40 weather/TTS education into real JavaScript without executing the task now', async function () {
     this.timeout(10000)
     const simpleGet = require('simple-get')
@@ -162,12 +209,12 @@ describe('Cerebrum portable backup', () => {
       calls++
       const prompt = JSON.stringify(JSON.parse(options.body).messages)
       if (calls <= 3) expect(prompt).to.include('EDUCATION COMPILATION').and.include('2/3/0').and.include('2/3/1')
-      else expect(prompt).to.include('LOCAL AUTOMATION EXECUTION').and.include('2/3/0').and.include('2/3/1')
+      else if (calls > 4) expect(prompt).to.include('LOCAL AUTOMATION EXECUTION').and.include('2/3/0').and.include('2/3/1')
       const action = calls === 1
         ? { operation: 'api', name: '', revision: '', code: '', offset: 0 }
         : calls === 2 ? { operation: 'create', name: 'meteo-mattino.js', revision: '', code, offset: 0 } : null
       const response = { reply: action ? '' : 'Ho creato meteo-mattino.js alle 08:40.', language: 'it', automationActions: action ? [action] : [], commands: [], cameraActions: [], speechActions: [], memoryActions: [], catalogActions: [], webActions: [], scheduleActions: [], historyActions: [], codeActions: [] }
-      if (calls === 4) response.speechActions = [{ text: 'Martedì otto settembre, ore otto e quaranta. La previsione meteo non è disponibile.', reason: 'Annuncio programmato' }]
+      if (calls === 5) response.speechActions = [{ text: 'Martedì otto settembre, ore otto e quaranta. La previsione meteo non è disponibile.', reason: 'Annuncio programmato' }]
       callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
     }
     try {
@@ -175,16 +222,21 @@ describe('Cerebrum portable backup', () => {
       node.send = output => outputs.push(output)
       await node.updateAiEducationFile({ ...(await node.getAiEducationFile()), content: education })
       await node._educationCompiler.check()
-      expect(calls).to.equal(3)
+      expect(calls).to.equal(0)
+      expect(node.listAutomationFiles().compilation.status).to.equal('waiting')
+      await node.compileEducationAutomations()
+      expect(calls).to.equal(0)
+      await node.sidebarAsk('Genera le funzioni richieste in Educazione AI.')
+      expect(calls).to.equal(4)
       const file = node.getAutomationFile({ name: 'meteo-mattino.js' })
       expect(file).to.include({ content: code, status: 'active', author: 'cerebrum' })
       expect(node.listAutomationFiles().compilation.status).to.equal('ready')
       expect(outputs.some(output => output[3] || output[4])).to.equal(false)
       await node._educationCompiler.check()
-      expect(calls).to.equal(3)
+      expect(calls).to.equal(4)
       time += 60000
       await node._automationRuntime.tick(); await node._automationRuntime.drain()
-      expect(calls).to.equal(4)
+      expect(calls).to.equal(5)
       const speech = outputs.find(output => output[4])
       expect(speech[4][0].payload).to.include('ore otto e quaranta')
       const backup = await node.exportAiConfig()
@@ -192,7 +244,7 @@ describe('Cerebrum portable backup', () => {
       await close(node)
       const restarted = create('education-weather', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test' })
       await restarted._educationCompiler.check()
-      expect(calls).to.equal(4)
+      expect(calls).to.equal(5)
       expect(restarted.getAutomationFile({ name: file.name }).status).to.equal('active')
     } finally { simpleGet.concat = transport; Date.now = originalNow }
   })

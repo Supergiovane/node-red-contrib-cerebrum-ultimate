@@ -82,12 +82,6 @@ async function compileEducation() {
   } catch (error) { state.error = error.message; }
   finally { state.busy = false; }
 }
-const compilationText = computed(() => props.translate({
-  pending: 'Checking saved AI Education...', generating: 'Cerebrum is creating functions from AI Education...',
-  waiting: 'Enable the AI to generate functions from saved education.',
-  ready: 'AI Education has been processed.', attention: 'AI Education needs attention.',
-  error: 'Functions could not be generated from AI Education.',
-}[state.compilation?.status] || ''));
 async function manage(operation) {
   if (state.busy || !state.selected) return;
   state.busy = true;
@@ -161,14 +155,9 @@ const statusText = status => props.translate({ active: 'Automation active', paus
 <template>
   <section class="automation-editor" data-cerebrum-localized>
     <div class="automation-heading">
-      <div><h3>{{ translate('JavaScript automations') }}</h3><p>{{ translate('Functions created by Cerebrum. Inspect their code and manage when they run.') }}</p></div>
-
+      <h3>{{ translate('JavaScript automations') }}</h3>
     </div>
-    <p class="runtime-note">{{ translate('Describe automations in chat or AI Education. Schedules run locally; tasks requiring fresh research or summaries call the AI only when triggered.') }}</p>
-    <p v-if="!nodeId" class="empty-state">{{ translate('Select a deployed Cerebrum node to open JavaScript files.') }}</p>
-    <template v-else>
-      <p v-if="compilationText" role="status" class="source-note">{{ compilationText }}</p>
-      <p v-if="state.compilation?.message" class="source-note">{{ translate(state.compilation.message) }}</p>
+    <template v-if="nodeId">
       <div class="automation-toolbar">
         <button class="secondary-button" type="button" :disabled="state.busy || dirty" @click="refresh()">{{ translate(state.busy ? 'Loading...' : 'Refresh') }}</button>
         <button class="secondary-button" type="button" :disabled="state.busy || state.compilation?.status === 'generating'" @click="compileEducation">{{ translate('Check AI Education') }}</button>
@@ -232,9 +221,8 @@ const statusText = status => props.translate({ active: 'Automation active', paus
 .automation-heading, .source-heading, .automation-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .automation-heading { justify-content: space-between; }
 .automation-heading h3 { margin: 0 0 8px; }
-.automation-heading p, .source-note, .source-path, .source-list p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.source-note, .source-path, .source-list p { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .draft-badge { padding: 6px 10px; border: 1px solid var(--line); border-radius: 20px; color: var(--text); font-size: 11px; }
-.runtime-note { padding: 12px 14px; border-left: 3px solid var(--accent); background: var(--accent-soft); font-size: 13px; line-height: 1.6; }
 .automation-toolbar { margin: 14px 0; }
 .automation-toolbar button { min-height: 36px; }
 .automation-layout { display: grid; grid-template-columns: minmax(180px, 235px) minmax(0, 1fr); gap: 20px; margin-top: 20px; }
