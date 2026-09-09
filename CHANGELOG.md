@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2 — 2026-09-09
+
+- Added **Cerebrum Function (BETA)**, based on the official Node-RED Function editor and runtime, preserving lifecycle code, outputs, contexts, timers, async messaging, timeouts, the Function library and external modules. Included upstream attribution and Apache-2.0 license.
+- Added prompt-based JavaScript generation and revision using the Cerebrum selected in **Setup**, with automatic selection and authorized ETS catalog inclusion. Show an animated wait icon while hiding the request/example fields; preview only proposed code and use light green/red apply/discard buttons. Applying opens the corresponding code tab. Protect edits made during generation and archive complete authoring turns.
+- Added the read-only `cerebrum` API and Monaco/Ace completion for authorized KNX addresses, DPTs, observed integration states and saved automation metadata/source, including expanded editors. Local data reads require no model calls and follow current access configuration and redeployments.
+- Added usage instructions, an importable example, generation/data/editor regression checks and Function runtime compatibility coverage for Node-RED 3 and 5.
+
 ## 0.2.1 — 2026-09-08
 
 - Added configurable history retention under **AI Assistant**, defaulting to **30 days**, with no explanatory panel. Shared memory and daily KNX, adapter and operation archives are cleaned periodically; retained record references, saved instructions, learned habits and backup compatibility are preserved.

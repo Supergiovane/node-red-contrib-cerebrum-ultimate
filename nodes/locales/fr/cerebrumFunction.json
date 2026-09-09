@@ -1,0 +1,79 @@
+{
+    "function": {
+        "function": "fonction",
+        "label": {
+            "setup": "Configurations",
+            "function": "Message reçu",
+            "initialize": "Au démarrage",
+            "finalize": "À l'arrêt",
+            "outputs": "Sorties",
+            "modules": "Modules",
+            "timeout": "Délai d'attente"
+        },
+        "text": {
+            "initialize": "// Le code ajouté ici sera exécuté une fois\n// à chaque démarrage du noeud.\n",
+            "finalize": "// Le code ajouté ici sera exécuté lorsque le\n// noeud sera arrêté ou redéployé.\n"
+        },
+        "require": {
+            "var": "variable",
+            "module": "module",
+            "moduleName": "Nom du module",
+            "importAs": "Importé comme"
+        },
+        "error": {
+            "externalModuleNotAllowed": "Le noeud de fonction n'est pas autorisé à charger des modules externes",
+            "moduleNotAllowed": "Module __module__ non autorisé",
+            "externalModuleLoadError": "Le noeud de fonction n'a pas réussi à charger les modules externes",
+            "moduleLoadError": "Échec du chargement du module __module__ : __error__",
+            "moduleNameError": "Nom de la variable du module invalide : __name__",
+            "moduleNameReserved": "Nom de la variable réservée : __name__",
+            "inputListener": "Impossible d'ajouter un écouteur à l'événement 'input' dans la fonction",
+            "non-message-returned": "La fonction a tenté d'envoyer un message de type __type__",
+            "invalid-js": "Erreur dans le code JavaScript",
+            "missing-module": "Module __module__ manquant",
+            "linkcallTargetInvalid": "Le paramètre cible de l'appel de lien n'est pas valide, une chaîne était attendue",
+            "linkcallMsgInvalid": "Le paramètre msg de l'appel de lien n'est pas valide, un objet était attendu",
+            "linkcallTargetNotFound": "Le noeud cible 'link in' est introuvable"
+        }
+    },
+    "cerebrumFunction": {
+        "node": "Cerebrum",
+        "selectNode": "Select a deployed Cerebrum node",
+        "prompt": "Request",
+        "promptPlaceholder": "Describe the Function or the changes you want…",
+        "example": "Example msg",
+        "includeCatalog": "Include the ETS objects selected in Cerebrum",
+        "hint": "Generate a proposal and apply it to the editors. Done and Deploy activate the saved code. Normal messages do not call the AI.",
+        "generate": "Generate proposal",
+        "cancel": "Cancel generation",
+        "section": "Code section",
+        "current": "Current code",
+        "proposed": "Proposed code",
+        "apply": "Apply to editors",
+        "discard": "Discard proposal",
+        "empty": "(empty)",
+        "discarded": "Proposal discarded.",
+        "cancelled": "Generation cancelled in this editor. An in-flight model request may still finish.",
+        "disabled": "AI disabled",
+        "unavailable": "not deployed",
+        "noNodes": "Deploy a Cerebrum node with its AI assistant enabled to generate code.",
+        "loadError": "Unable to load the deployed Cerebrum nodes.",
+        "noSelection": "Select a deployed Cerebrum node.",
+        "noPrompt": "Describe the Function you want to create or change.",
+        "invalidExample": "The example msg must be a JSON object.",
+        "generating": "Cerebrum is preparing the proposal… You can continue editing the Function.",
+        "invalidResponse": "The server did not return a valid proposal.",
+        "outputs": "Outputs",
+        "checkWires": "Check the wiring before Deploy; reducing outputs can remove wires.",
+        "ready": "Proposal ready. Syntax checked; the code has not been executed.",
+        "generationError": "Unable to generate the proposal.",
+        "conflict": "The Function or its modules changed after generation started. Generate a new proposal to preserve your edits.",
+        "applied": "Proposal applied to the editors. Review the code, then use Done and Deploy.",
+        "dataLoading": "cerebrum. · Loading catalog…",
+        "dataSelect": "cerebrum. · Select a Cerebrum node in Setup",
+        "dataUnavailable": "cerebrum. · Catalog unavailable. Check the selected Cerebrum node.",
+        "dataAddresses": "group addresses",
+        "dataFunctions": "saved functions",
+        "dataRefresh": "Refresh Cerebrum catalog"
+    }
+}

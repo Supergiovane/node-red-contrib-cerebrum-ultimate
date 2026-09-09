@@ -20,6 +20,8 @@ const { automationActionSchema, automationContract, executeAutomationAction } = 
 const { createCerebrumLlmPolicy, normalizeLlmIntervalMinutes } = require('./utils/cerebrumLlmPolicy')
 const { createCerebrumEducationCompiler } = require('./utils/cerebrumEducationCompiler')
 const { runCerebrumAutomationAssistant } = require('./utils/cerebrumAutomationAssistant')
+const { createCerebrumFunctionGenerator, registerCerebrumFunctionRoutes } = require('./utils/cerebrumFunctionAssistant')
+const { createCerebrumFunctionDataSource, registerCerebrumFunctionDataRoute } = require('./utils/cerebrumFunctionContext')
 const { pipeline } = require('stream/promises')
 const { spawn } = require('child_process')
 const simpleGet = require('simple-get')
@@ -5842,7 +5844,7 @@ module.exports = function (RED) {
 
       RED.nodes.eachNode((n) => {
         if (!n || typeof n !== 'object') return
-        if (String(n.type || '') !== 'function') return
+        if (!['function', 'cerebrum-function'].includes(String(n.type || ''))) return
 
         const func = normalizeCodeBlockText(n.func)
         const initialize = normalizeCodeBlockText(n.initialize)
@@ -6182,6 +6184,8 @@ module.exports = function (RED) {
     })
 
     registerCerebrumAutomationRoutes(RED, nodeId => aiRuntimeNodes.get(nodeId) || RED.nodes.getNode(nodeId))
+    registerCerebrumFunctionRoutes(RED, nodeId => aiRuntimeNodes.get(nodeId) || RED.nodes.getNode(nodeId))
+    registerCerebrumFunctionDataRoute(RED, nodeId => aiRuntimeNodes.get(nodeId) || RED.nodes.getNode(nodeId))
 
     RED.httpAdmin.get('/cerebrumUltimate/sidebar/ai-education', RED.auth.needsPermission('flows.read'), async (req, res) => {
       try {
@@ -11232,6 +11236,15 @@ module.exports = function (RED) {
       }
     }
 
+    node.functionData = createCerebrumFunctionDataSource({
+      info: () => ({ id: node.id, name: node.name || '', llmEnabled: node.llmEnabled }),
+      catalog: getGaCatalogSnapshot,
+      states: () => node._homeMemory?.states || [],
+      functions: () => node._automationRuntime?.list().files || [],
+      readFunction: name => requireAutomationRuntime().read({ name, origin: 'local' }),
+      now: nowMs
+    })
+
     node.saveGaRoleOverride = async ({ ga, role } = {}) => {
       const targetGa = normalizeAreaText(ga)
       if (!targetGa) throw new Error('Missing ga')
@@ -12548,6 +12561,18 @@ module.exports = function (RED) {
         testPlans: buildAiTestPlansSnapshot()
       }
     }
+
+    const generateAiFunction = createCerebrumFunctionGenerator({
+      request: options => callLLMChat(options),
+      archive: archiveCerebrumData,
+      isClosing: () => node._closing,
+      supportsLinkcall: !!RED.nodes.linkcallTargets,
+      getContext: () => [
+        'SELECTED ETS OBJECTS (catalog metadata only; not live state):',
+        ...getGaCatalogSnapshot().map(item => JSON.stringify({ ga: item.ga, dpt: item.dpt, label: item.label, etsName: item.etsName, access: item.readOnly === true ? 'read-only' : 'read-write' }))
+      ].join('\n')
+    })
+    node.generateAiFunction = (input, options) => llmPolicy.run('chat', () => generateAiFunction(input, options))
 
     node.generateAiFlow = async ({ prompt, language } = {}) => {
       const question = String(prompt || '').trim()

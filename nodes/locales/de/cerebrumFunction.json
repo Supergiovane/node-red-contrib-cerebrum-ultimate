@@ -1,0 +1,70 @@
+{
+    "function": {
+        "function": "",
+        "label": {
+            "setup": "Setup",
+            "function": "Funktion",
+            "initialize": "Start",
+            "finalize": "Stopp",
+            "outputs": "Ausgänge",
+            "modules": "Module",
+            "timeout": "Timeout"
+        },
+        "text": {
+            "initialize": "// Der Code hier wird ausgeführt,\n// wenn der Node gestartet wird\n",
+            "finalize": "// Der Code hier wird ausgeführt,\n// wenn der Node gestoppt wird\n"
+        },
+        "require": {
+            "var": "Variable",
+            "module": "Modul"
+        },
+        "error": {
+            "moduleNotAllowed": "Modul __module__ nicht erlaubt",
+            "moduleLoadError": "Fehler beim Laden des Moduls __module__: __error__",
+            "moduleNameError": "Ungültiger Modul-Variablenname: __name__",
+            "moduleNameReserved": "Reservierter Variablenname: __name__",
+            "inputListener": "Es kann keine Überwachung (listener) von 'input'-Ereignissen innerhalb der Funktion hinzugefügt werden",
+            "non-message-returned": "Function hat versucht, eine Nachricht vom Typ __type__ zu senden"
+        }
+    },
+    "cerebrumFunction": {
+        "node": "Cerebrum",
+        "selectNode": "Select a deployed Cerebrum node",
+        "prompt": "Request",
+        "promptPlaceholder": "Describe the Function or the changes you want…",
+        "example": "Example msg",
+        "includeCatalog": "Include the ETS objects selected in Cerebrum",
+        "hint": "Generate a proposal and apply it to the editors. Done and Deploy activate the saved code. Normal messages do not call the AI.",
+        "generate": "Generate proposal",
+        "cancel": "Cancel generation",
+        "section": "Code section",
+        "current": "Current code",
+        "proposed": "Proposed code",
+        "apply": "Apply to editors",
+        "discard": "Discard proposal",
+        "empty": "(empty)",
+        "discarded": "Proposal discarded.",
+        "cancelled": "Generation cancelled in this editor. An in-flight model request may still finish.",
+        "disabled": "AI disabled",
+        "unavailable": "not deployed",
+        "noNodes": "Deploy a Cerebrum node with its AI assistant enabled to generate code.",
+        "loadError": "Unable to load the deployed Cerebrum nodes.",
+        "noSelection": "Select a deployed Cerebrum node.",
+        "noPrompt": "Describe the Function you want to create or change.",
+        "invalidExample": "The example msg must be a JSON object.",
+        "generating": "Cerebrum is preparing the proposal… You can continue editing the Function.",
+        "invalidResponse": "The server did not return a valid proposal.",
+        "outputs": "Outputs",
+        "checkWires": "Check the wiring before Deploy; reducing outputs can remove wires.",
+        "ready": "Proposal ready. Syntax checked; the code has not been executed.",
+        "generationError": "Unable to generate the proposal.",
+        "conflict": "The Function or its modules changed after generation started. Generate a new proposal to preserve your edits.",
+        "applied": "Proposal applied to the editors. Review the code, then use Done and Deploy.",
+        "dataLoading": "cerebrum. · Loading catalog…",
+        "dataSelect": "cerebrum. · Select a Cerebrum node in Setup",
+        "dataUnavailable": "cerebrum. · Catalog unavailable. Check the selected Cerebrum node.",
+        "dataAddresses": "group addresses",
+        "dataFunctions": "saved functions",
+        "dataRefresh": "Refresh Cerebrum catalog"
+    }
+}

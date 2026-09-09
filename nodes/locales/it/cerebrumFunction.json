@@ -1,0 +1,79 @@
+{
+    "function": {
+        "function": "",
+        "label": {
+            "setup": "Setup",
+            "function": "On Message",
+            "initialize": "On Start",
+            "finalize": "On Stop",
+            "outputs": "Outputs",
+            "modules": "Modules",
+            "timeout": "Timeout"
+        },
+        "text": {
+            "initialize": "// Code added here will be run once\n// whenever the node is started.\n",
+            "finalize": "// Code added here will be run when the\n// node is being stopped or re-deployed.\n"
+        },
+        "require": {
+            "var": "variable",
+            "module": "module",
+            "moduleName": "Module name",
+            "importAs": "Import as"
+        },
+        "error": {
+            "externalModuleNotAllowed": "Function node not allowed to load external modules",
+            "moduleNotAllowed": "Module __module__ not allowed",
+            "externalModuleLoadError": "Function node failed to load external modules",
+            "moduleLoadError": "Failed to load module __module__: __error__",
+            "moduleNameError": "Invalid module variable name: __name__",
+            "moduleNameReserved": "Reserved variable name: __name__",
+            "inputListener": "Cannot add listener to 'input' event within Function",
+            "non-message-returned": "Function tried to send a message of type __type__",
+            "invalid-js": "Error in JavaScript code",
+            "missing-module": "Module __module__ missing",
+            "linkcallTargetInvalid": "Error link call target parameter is not valid, expected a string",
+            "linkcallMsgInvalid": "Error link call msg parameter is not valid, expected an object",
+            "linkcallTargetNotFound": "Error target 'link in' node not found"
+        }
+    },
+    "cerebrumFunction": {
+        "node": "Cerebrum",
+        "selectNode": "Seleziona un nodo Cerebrum già distribuito",
+        "prompt": "Richiesta",
+        "promptPlaceholder": "Descrivi la funzione o le modifiche che desideri…",
+        "example": "Esempio msg",
+        "includeCatalog": "Includi gli oggetti ETS selezionati in Cerebrum",
+        "hint": "Genera una proposta e applicala agli editor. Fine e Deploy attivano il codice salvato. I messaggi normali non chiamano l’AI.",
+        "generate": "Genera proposta",
+        "cancel": "Annulla generazione",
+        "section": "Sezione del codice",
+        "current": "Codice attuale",
+        "proposed": "Codice proposto",
+        "apply": "Applica agli editor",
+        "discard": "Scarta proposta",
+        "empty": "(vuoto)",
+        "discarded": "Proposta scartata.",
+        "cancelled": "Generazione annullata in questo editor. Una richiesta già inviata al modello potrebbe comunque terminare.",
+        "disabled": "AI disabilitata",
+        "unavailable": "non distribuito",
+        "noNodes": "Esegui il Deploy di un nodo Cerebrum con l’assistente AI abilitato per generare codice.",
+        "loadError": "Impossibile caricare i nodi Cerebrum distribuiti.",
+        "noSelection": "Seleziona un nodo Cerebrum già distribuito.",
+        "noPrompt": "Descrivi la funzione che vuoi creare o modificare.",
+        "invalidExample": "L’esempio msg deve essere un oggetto JSON.",
+        "generating": "Cerebrum sta preparando la proposta… Puoi continuare a modificare la funzione.",
+        "invalidResponse": "Il server non ha restituito una proposta valida.",
+        "outputs": "Uscite",
+        "checkWires": "Controlla i collegamenti prima del Deploy: ridurre le uscite può rimuovere i fili.",
+        "ready": "Proposta pronta. Sintassi verificata; il codice non è stato eseguito.",
+        "generationError": "Impossibile generare la proposta.",
+        "conflict": "La funzione o i suoi moduli sono cambiati durante la generazione. Genera una nuova proposta per conservare le tue modifiche.",
+        "applied": "Proposta applicata agli editor. Controlla il codice, poi usa Fine e Deploy.",
+        "dataLoading": "cerebrum. · Caricamento catalogo…",
+        "dataSelect": "cerebrum. · Seleziona un nodo Cerebrum in Setup",
+        "dataUnavailable": "cerebrum. · Catalogo non disponibile. Controlla il nodo Cerebrum selezionato.",
+        "dataAddresses": "indirizzi di gruppo",
+        "dataFunctions": "funzioni salvate",
+        "dataRefresh": "Aggiorna catalogo Cerebrum"
+    }
+}

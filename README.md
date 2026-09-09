@@ -45,7 +45,49 @@ Cerebrum Ultimate observes your Node-RED smart home, learns from events and eval
 - Create reminders and scheduled checks.
 - Use cameras and voice when compatible nodes are available.
 - Generate reviewable Node-RED flows with the **Node-RED Flow Builder**.
+- Write and revise JavaScript from a prompt in **Cerebrum Function**, based on the native Node-RED Function.
 - Back up and restore the Cerebrum configuration from the Web interface.
+
+## Cerebrum Function (BETA)
+
+**Cerebrum Function** combines the native Node-RED Function editor and runtime with prompt-based JavaScript authoring. It preserves **On Start**, **On Message**, **On Stop**, outputs, context, timers, async messaging, timeout, the Function library and configured external modules. The original Function node remains available.
+
+1. Configure and deploy a **Cerebrum** node with its AI provider and model enabled.
+2. Drag **cerebrum function (BETA)** from the **function** palette category. In **Setup**, check the selected Cerebrum and configure outputs, timeout or modules as needed. The first deployed Cerebrum with AI enabled is selected automatically; saved selections are preserved.
+3. Open the **Cerebrum** tab, enter your request and optionally add an example `msg` JSON object. For example: “Double the numeric payload, preserving the other message fields,” with `{"payload": 21}`. The selected Cerebrum supplies its AI configuration and authorized ETS catalog automatically.
+4. Click **Generate proposal**. An animated icon shows progress; the request and example fields are hidden until generation finishes or is cancelled. Review the proposed code using the code-section selector. Only the proposal is displayed, initially showing the first changed section.
+5. Click the light green **Apply to editors** button to insert the proposal and open the corresponding code tab. The light red **Discard proposal** button removes the proposal. Use **Done** and **Deploy** to activate accepted code.
+
+To revise a Function, reopen it and describe the change in the **Cerebrum** tab. Existing code is supplied to the model, including the lifecycle sections. Proposals are syntax-checked without execution and cannot overwrite code, outputs or module selections changed during generation. Check wiring if the proposed output count changes. **Cancel generation** stops waiting for a proposal; a model request already sent may still finish. **Cancel** in the node dialog discards editor changes.
+
+Incoming messages execute the saved JavaScript locally with **no AI call**. You can also write code manually without an AI-enabled Cerebrum. Data access through `cerebrum` requires the selected Cerebrum to be deployed, but does not require its model to be enabled. Device operations use the downstream nodes wired into the flow. Prompts and example messages are saved with the flow; complete authoring requests and model responses are retained in Cerebrum's common archive.
+
+In **On Message**, type `cerebrum.` to discover the read-only API. Inside `cerebrum.knx.get("…")` or `cerebrum.knx.state("…")`, completion shows authorized group addresses with names, DPTs and read-only flags. Search by address or name. State keys and saved automation names are suggested in their respective `get` calls. Completion works in Monaco and Ace, including the expanded editor. Use the refresh icon next to the expand button to reload the catalog after imports or configuration changes.
+
+| API | Returned data |
+| --- | --- |
+| `cerebrum.available`, `cerebrum.info()` | Availability and identity of the selected Cerebrum |
+| `cerebrum.knx.list()`, `.find(query)`, `.get(address)` | Authorized group addresses with name, DPT, area, aliases, read-only flag and observed state |
+| `cerebrum.knx.state(address)` | Latest observed state for an authorized KNX address, or `null` |
+| `cerebrum.states.list()`, `.get(key)` | Observed integration states, including keys such as `knx:1/2/3` |
+| `cerebrum.functions.list()`, `.get(name)` | Managed JavaScript automation metadata; `get` also includes its `code` |
+
+Choose an address from your catalog and use its observed value:
+
+```javascript
+if (!cerebrum.available) return null;
+const sensor = cerebrum.knx.get("1/2/3"); // Replace using your catalog suggestions.
+if (!sensor?.state?.fresh) return null;
+msg.payload = sensor.state.value;
+msg.topic = sensor.name;
+return msg;
+```
+
+The API is synchronous, returns independent copies and is also available in **On Start** and **On Stop**. It follows the selected Cerebrum across redeployments and access changes. Methods throw when Cerebrum is unavailable; unknown or unauthorized objects return `null`. Observed states include `verifiedAt`, `ageMs` and `fresh`: reading does not query the bus or guarantee the current physical state. `cerebrum.functions` inspects saved automations without running them.
+
+For a working Inject → Function → Debug flow, import [16 - Cerebrum Function](examples/16%20-%20Cerebrum%20Function.json). It doubles a payload of `21` to `42` without requiring AI at runtime.
+
+Based on the official [Node-RED 5.0.7 Function](https://github.com/node-red/node-red/tree/5.0.7/packages/node_modules/@node-red/nodes/core/function), with [upstream attribution and license](nodes/vendor/node-red-function/README.md). Supported Node-RED versions start at 3.1.1; `node.linkcall` requires Node-RED 5 or later.
 
 ## Autonomous thinking and working memory
 

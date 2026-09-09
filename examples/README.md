@@ -21,6 +21,7 @@ Start with **01 - First Conversation**. Open the Cerebrum node, configure an AI 
 13. Daily summary
 14. Learning a preference
 15. Clear one chat session
+16. Cerebrum Function: native JavaScript execution with optional prompt-based authoring
 
 ## Optional packages
 

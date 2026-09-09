@@ -1,0 +1,86 @@
+[
+  {
+    "id": "cerebrum-example16-tab",
+    "type": "tab",
+    "label": "16 - Cerebrum Function",
+    "info": "Click Inject to run the saved JavaScript without an AI call. Open Cerebrum Function > Cerebrum and select your deployed Cerebrum node to generate or revise code. Review, apply, Done and Deploy."
+  },
+  {
+    "id": "cerebrum-example16-comment",
+    "type": "comment",
+    "z": "cerebrum-example16-tab",
+    "name": "Saved code runs locally. Select an existing Cerebrum in the assistant tab to generate changes.",
+    "info": "The example needs no AI configuration to execute. Generation needs a deployed Cerebrum with its AI assistant enabled. No devices are operated.",
+    "x": 420,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "cerebrum-example16-inject",
+    "type": "inject",
+    "z": "cerebrum-example16-tab",
+    "name": "Temperature: 21",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "temperature",
+    "payload": "21",
+    "payloadType": "num",
+    "x": 180,
+    "y": 160,
+    "wires": [
+      [
+        "cerebrum-example16-function"
+      ]
+    ]
+  },
+  {
+    "id": "cerebrum-example16-function",
+    "type": "cerebrum-function",
+    "z": "cerebrum-example16-tab",
+    "name": "Double the payload",
+    "func": "const value = Number(msg.payload);\nif (!Number.isFinite(value)) {\n    node.error(\"Expected a numeric payload\", msg);\n    return null;\n}\nmsg.payload = value * 2;\nreturn msg;",
+    "initialize": "",
+    "finalize": "",
+    "outputs": 1,
+    "timeout": 0,
+    "libs": [],
+    "noerr": 0,
+    "cerebrumNode": "",
+    "aiPrompt": "Multiply the numeric payload by two, preserving the other message fields. Report invalid input with node.error and do not send it.",
+    "aiExample": "{\"payload\":21,\"topic\":\"temperature\"}",
+    "aiIncludeCatalog": true,
+    "x": 400,
+    "y": 160,
+    "wires": [
+      [
+        "cerebrum-example16-debug"
+      ]
+    ]
+  },
+  {
+    "id": "cerebrum-example16-debug",
+    "type": "debug",
+    "z": "cerebrum-example16-tab",
+    "name": "Result: 42",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 620,
+    "y": 160,
+    "wires": []
+  }
+]

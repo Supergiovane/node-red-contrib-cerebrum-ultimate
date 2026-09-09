@@ -33,7 +33,8 @@ describe('Cerebrum Ultimate standalone package', () => {
   it('publishes only the new standalone node types', () => {
     expect(manifest.name).to.equal('node-red-contrib-cerebrum-ultimate')
     expect(manifest['node-red'].nodes).to.deep.equal({
-      cerebrumUltimate: '/nodes/cerebrumUltimate.js'
+      cerebrumUltimate: '/nodes/cerebrumUltimate.js',
+      cerebrumFunction: '/nodes/cerebrumFunction.js'
     })
     expect(manifest.dependencies).not.to.have.property('knxultimate')
     expect(manifest.dependencies).not.to.have.property('node-red-contrib-knx-ultimate')
