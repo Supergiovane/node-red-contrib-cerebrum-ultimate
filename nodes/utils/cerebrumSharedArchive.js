@@ -106,24 +106,60 @@ function createCerebrumSharedArchive (filePath) {
     } finally { fs.closeSync(fd) }
   }
 
-  function append ({ kind, nodeId = '', channel = '', at = new Date().toISOString(), data }) {
+  function appendMany (entries) {
+    if (!Array.isArray(entries)) throw new TypeError('Shared memory archive batch must be an array')
+    if (!entries.length) return []
+    // Prepare caller data before touching the archive. A malformed value (for
+    // example circular JSON) must not leave a prefix of the batch on disk.
+    const prepared = entries.map(({ kind, nodeId = '', channel = '', at = new Date().toISOString(), data }) => ({
+      version: 2,
+      id: `m${crypto.randomUUID()}`,
+      at,
+      kind,
+      nodeId,
+      channel,
+      data
+    }))
     const fd = fs.openSync(filePath, 'a', 0o600)
     try {
       const position = fs.fstatSync(fd).size
-      // IDs no longer depend on the current physical offset: compaction must not
-      // redirect saved evidence references or reuse IDs of deleted records.
-      const record = { version: 2, id: `m${crypto.randomUUID()}`, offset: position, at, kind, nodeId, channel, data }
-      const bytes = Buffer.from(`${stringify(record)}\n`)
+      let nextPosition = position
+      const records = []
+      const chunks = prepared.map(entry => {
+        // IDs no longer depend on the current physical offset: compaction must
+        // not redirect saved evidence references or reuse IDs of deleted records.
+        const record = { version: 2, id: entry.id, offset: nextPosition, at: entry.at, kind: entry.kind, nodeId: entry.nodeId, channel: entry.channel, data: entry.data }
+        const bytes = Buffer.from(`${stringify(record)}\n`)
+        records.push(record)
+        nextPosition += bytes.length
+        return bytes
+      })
+      const bytes = Buffer.concat(chunks, nextPosition - position)
       let written = 0
       try {
-        while (written < bytes.length) written += fs.writeSync(fd, bytes, written, bytes.length - written)
+        while (written < bytes.length) {
+          const length = fs.writeSync(fd, bytes, written, bytes.length - written)
+          if (!Number.isInteger(length) || length <= 0) throw new Error('Unable to append shared memory archive batch')
+          written += length
+        }
         fs.fsyncSync(fd)
       } catch (error) {
-        fs.ftruncateSync(fd, position)
+        try {
+          fs.ftruncateSync(fd, position)
+          fs.fsyncSync(fd)
+        } catch (rollbackError) {
+          throw new AggregateError([error, rollbackError], 'Unable to append or roll back shared memory archive batch')
+        }
         throw error
       }
-      return record
+      return records
     } finally { fs.closeSync(fd) }
+  }
+
+  // Keep the original single-record contract while sharing the durable batch
+  // path, so every successful call still returns exactly one archive record.
+  function append (entry) {
+    return appendMany([entry])[0]
   }
 
   const snapshotBytes = () => fs.existsSync(filePath) ? fs.statSync(filePath).size : 0
@@ -287,7 +323,7 @@ function createCerebrumSharedArchive (filePath) {
     return { ok: true, items, totalMatches: matches, offset: start, nextOffset: start + items.length < matches ? start + items.length : null }
   }
 
-  return { filePath, recoveredBytes, append, query, snapshotBytes, snapshot, prune }
+  return { filePath, recoveredBytes, append, appendMany, query, snapshotBytes, snapshot, prune }
 }
 
 module.exports = { createCerebrumSharedArchive, validateCerebrumSharedArchive }

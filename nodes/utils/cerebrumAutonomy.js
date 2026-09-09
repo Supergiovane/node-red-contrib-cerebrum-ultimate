@@ -36,6 +36,8 @@ const iso = value => new Date(value).toISOString()
 const stamp = value => typeof value === 'number' ? value : Date.parse(value || '')
 const valueOf = value => typeof value === 'object' && value !== null ? clip(JSON.stringify(value)) : clip(value)
 const entityKey = value => `${clip(value.source, 80)}:${clip(value.objectId, 240)}`
+const persistenceRevision = value => JSON.stringify({ ...value, updatedAt: '', lastTickAt: '' })
+const sameOrderedList = (left, right) => left.length === right.length && left.every((item, index) => item === right[index])
 const normalizeObservation = state => ({
   source: clip(state.source, 80),
   objectId: clip(state.objectId, 240),
@@ -118,9 +120,13 @@ const isFresh = (entity, now) => {
 const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notify, research, archiveSnapshot = () => {}, researchEnabled = () => false, enabled = () => true, now = Date.now, log = () => {} }) => {
   if (!filePath || typeof readSnapshot !== 'function' || typeof reason !== 'function') throw new Error('Autonomy requires filePath, readSnapshot and reason')
   let store
+  let checkpointPresent = false
+  let loadedPersistenceRevision = ''
   try {
     if (fs.statSync(filePath).size > MAX_STORE_BYTES) throw new Error('Autonomy store exceeds its storage limit')
     store = validateCerebrumAutonomyStore(JSON.parse(fs.readFileSync(filePath, 'utf8')))
+    checkpointPresent = true
+    loadedPersistenceRevision = persistenceRevision(store)
   } catch (error) {
     if (error.code !== 'ENOENT') throw new Error(`Cannot safely read autonomy store: ${error.message}`)
     store = { version: 1, sequence: 0, createdAt: iso(now()), updatedAt: iso(now()), lastTickAt: '', lastReasonAt: '', lastDailyAt: '', lastError: '', entities: [], situations: [], evidence: [], episodes: [], habits: [], expectations: [], actionHistory: [], reasonHistory: [] }
@@ -129,7 +135,8 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
   if (store.observationSequence === undefined) store.observationSequence = 0
   let closed = false
   let inFlight = null
-  let lastPersisted = ''
+  let lastPersistedRevision = loadedPersistenceRevision
+  let lastArchivedRevision = ''
   const journalPath = observationJournalPath(filePath)
   let pendingStates = []
   let journalBytes = 0
@@ -181,7 +188,12 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
   }
   if (journalRecoveryMessage) report(journalRecoveryMessage)
   const trim = () => {
-    store.entities = store.entities.slice(-LIMITS.entities)
+    let changed = false
+    const assign = (key, value) => {
+      if (!sameOrderedList(store[key], value)) changed = true
+      store[key] = value
+    }
+    assign('entities', store.entities.slice(-LIMITS.entities))
     // Keep the latest observation for every retained entity so evidence IDs in
     // the world model never point to an already discarded observation.
     const referenced = new Set(store.entities.map(entity => entity.evidenceId))
@@ -189,27 +201,48 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
     const protectedIds = new Set(protectedEvidence.map(item => item.id))
     const remaining = Math.max(0, LIMITS.evidence - protectedEvidence.length)
     const spare = remaining ? store.evidence.filter(item => !protectedIds.has(item.id)).slice(-remaining) : []
-    store.evidence = [...spare, ...protectedEvidence].sort((a, b) => stamp(a.at) - stamp(b.at))
+    assign('evidence', [...spare, ...protectedEvidence].sort((a, b) => stamp(a.at) - stamp(b.at)))
     const evidenceIds = new Set(store.evidence.map(item => item.id))
-    for (const situation of store.situations) situation.evidenceIds = (situation.evidenceIds || []).filter(item => evidenceIds.has(item)).slice(-32)
+    for (const situation of store.situations) {
+      const evidence = (situation.evidenceIds || []).filter(item => evidenceIds.has(item)).slice(-32)
+      if (!sameOrderedList(situation.evidenceIds || [], evidence)) changed = true
+      situation.evidenceIds = evidence
+    }
     const active = store.situations.filter(item => item.status !== 'resolved')
     const resolved = store.situations.filter(item => item.status === 'resolved')
-    store.situations = [...resolved.slice(-Math.max(0, LIMITS.situations - active.length)), ...active].slice(-LIMITS.situations)
-    for (const key of ['episodes', 'expectations', 'actionHistory']) store[key] = store[key].slice(-LIMITS[key])
-    store.reasonHistory = store.reasonHistory.filter(at => now() - stamp(at) < HOUR).slice(-LIMITS.reasonsPerHour)
-    store.patterns = store.patterns.slice(-240)
-    store.knowledge = (store.knowledge || []).slice(-48)
-    store.researchHistory = (store.researchHistory || []).slice(-60)
+    assign('situations', [...resolved.slice(-Math.max(0, LIMITS.situations - active.length)), ...active].slice(-LIMITS.situations))
+    for (const key of ['episodes', 'expectations', 'actionHistory']) assign(key, store[key].slice(-LIMITS[key]))
+    const trimAt = now()
+    assign('reasonHistory', store.reasonHistory.filter(at => trimAt - stamp(at) < HOUR).slice(-LIMITS.reasonsPerHour))
+    assign('patterns', store.patterns.slice(-240))
+    assign('knowledge', (store.knowledge || []).slice(-48))
+    assign('researchHistory', (store.researchHistory || []).slice(-60))
+    return changed
   }
   const persist = () => {
-    archiveSnapshot(store)
-    trim()
-    const content = JSON.stringify(store)
-    if (Buffer.byteLength(content, 'utf8') > MAX_STORE_BYTES) throw new Error('Autonomy store exceeds its storage limit; effects aborted')
+    const beforeRevision = persistenceRevision(store)
+    if (beforeRevision !== lastArchivedRevision) {
+      archiveSnapshot(store)
+      lastArchivedRevision = beforeRevision
+    }
+    const trimmed = trim()
+    const revision = trimmed ? persistenceRevision(store) : beforeRevision
+    const checkpointExists = checkpointPresent && fs.existsSync(filePath)
+    const shouldWriteCheckpoint = !checkpointExists || revision !== lastPersistedRevision
+    let content = ''
+    if (shouldWriteCheckpoint) {
+      content = JSON.stringify(store)
+      if (Buffer.byteLength(content, 'utf8') > MAX_STORE_BYTES) throw new Error('Autonomy store exceeds its storage limit; effects aborted')
+    }
     try {
-      if (content !== lastPersisted) {
+      if (shouldWriteCheckpoint) {
         writeAtomic(filePath, content)
-        lastPersisted = content
+        checkpointPresent = true
+        lastPersistedRevision = revision
+        // The pre-trim archive is a superset of the bounded checkpoint. Avoid
+        // archiving the same logical state again merely because trim reordered
+        // or expired working-view records.
+        lastArchivedRevision = revision
       }
       if (journalNeedsCompaction) {
         // Commit the applied sequence with the derived knowledge FIRST. If a

@@ -43,6 +43,82 @@ describe('Cerebrum shared household memory', () => {
     expect(fresh.totalMatches).to.equal(12)
   })
 
+  it('appends an ordered batch with valid byte offsets using one durable write sequence', () => {
+    const filePath = path.join(root, 'common.jsonl')
+    const archive = createCerebrumSharedArchive(filePath)
+    const originals = {
+      openSync: fs.openSync,
+      fstatSync: fs.fstatSync,
+      writeSync: fs.writeSync,
+      fsyncSync: fs.fsyncSync
+    }
+    const calls = { open: 0, fstat: 0, write: 0, fsync: 0 }
+    try {
+      fs.openSync = function (...args) { calls.open++; return originals.openSync.apply(this, args) }
+      fs.fstatSync = function (...args) { calls.fstat++; return originals.fstatSync.apply(this, args) }
+      fs.writeSync = function (...args) { calls.write++; return originals.writeSync.apply(this, args) }
+      fs.fsyncSync = function (...args) { calls.fsync++; return originals.fsyncSync.apply(this, args) }
+      const records = archive.appendMany([
+        { kind: 'knx', at: '2026-09-09T10:00:00.000Z', data: { destination: '1/2/3', value: 'è' } },
+        { kind: 'adapter', channel: 'unifi', at: '2026-09-09T10:00:01.000Z', data: { camera: 'Ingresso', icon: '🏠' } },
+        { kind: 'observation', nodeId: 'cerebrum-1', at: '2026-09-09T10:00:02.000Z', data: { text: 'Movimento' } }
+      ])
+      expect(calls).to.deep.equal({ open: 1, fstat: 1, write: 1, fsync: 1 })
+      expect(records.map(record => record.kind)).to.deep.equal(['knx', 'adapter', 'observation'])
+      expect(new Set(records.map(record => record.id)).size).to.equal(records.length)
+      let position = 0
+      for (const [index, line] of fs.readFileSync(filePath, 'utf8').trimEnd().split('\n').entries()) {
+        const saved = JSON.parse(line)
+        expect(saved).to.deep.equal(records[index])
+        expect(saved.id).to.match(/^m[0-9a-f-]{36}$/)
+        expect(saved.offset).to.equal(position)
+        position += Buffer.byteLength(`${line}\n`)
+      }
+      expect(() => validateCerebrumSharedArchive({ filePath })).not.to.throw()
+    } finally {
+      Object.assign(fs, originals)
+    }
+    const single = archive.append({ kind: 'conversation', data: { text: 'compatibile' } })
+    expect(single).to.include({ version: 2, kind: 'conversation' })
+    expect(single.offset).to.equal(fs.readFileSync(filePath).length - Buffer.byteLength(`${JSON.stringify(single)}\n`))
+    expect(() => validateCerebrumSharedArchive({ filePath })).not.to.throw()
+  })
+
+  it('truncates a partially written batch and durably preserves all earlier raw records', async () => {
+    const filePath = path.join(root, 'common.jsonl')
+    const archive = createCerebrumSharedArchive(filePath)
+    const original = archive.append({ kind: 'conversation', data: { text: 'raw evidence before batch' } })
+    const originalBytes = fs.readFileSync(filePath)
+    const writeSync = fs.writeSync
+    const fsyncSync = fs.fsyncSync
+    let failed = false
+    let rollbackFsyncs = 0
+    try {
+      fs.writeSync = function (fd, buffer, offset, length, ...rest) {
+        if (!failed) {
+          failed = true
+          writeSync.call(this, fd, buffer, offset, Math.max(1, Math.floor(length / 2)), ...rest)
+          throw new Error('simulated partial batch write')
+        }
+        return writeSync.call(this, fd, buffer, offset, length, ...rest)
+      }
+      fs.fsyncSync = function (...args) { rollbackFsyncs++; return fsyncSync.apply(this, args) }
+      expect(() => archive.appendMany([
+        { kind: 'knx', data: { value: 1 } },
+        { kind: 'knx', data: { value: 2 } }
+      ])).to.throw('simulated partial batch write')
+    } finally {
+      fs.writeSync = writeSync
+      fs.fsyncSync = fsyncSync
+    }
+    expect(rollbackFsyncs).to.equal(1)
+    expect(fs.readFileSync(filePath)).to.deep.equal(originalBytes)
+    expect(() => validateCerebrumSharedArchive({ filePath })).not.to.throw()
+    expect((await archive.query()).items.map(item => item.id)).to.deep.equal([original.id])
+    const fresh = archive.append({ kind: 'conversation', data: { text: 'raw evidence after rollback' } })
+    expect(fresh.offset).to.equal(originalBytes.length)
+  })
+
   it('migrates every legacy turn to the archive before bounding the shared working view', async () => {
     const archive = createCerebrumSharedArchive(path.join(root, 'common.jsonl'))
     const lines = ['CEREBRUM_CHAT_CONTEXT\t3', 'CREATED_AT\tnow', 'UPDATED_AT\tnow']

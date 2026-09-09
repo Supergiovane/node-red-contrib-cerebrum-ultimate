@@ -3,6 +3,7 @@
 const CEREBRUM_ENTITY_REGISTRY_MAX_ENTITIES = 1200
 const CEREBRUM_ENTITY_REGISTRY_MAX_BINDINGS = 24
 const CEREBRUM_ENTITY_REGISTRY_MAX_CAPABILITIES = 48
+const CEREBRUM_ENTITY_REGISTRY_MAX_CATALOG_BINDINGS = CEREBRUM_ENTITY_REGISTRY_MAX_ENTITIES
 
 const cleanText = (value, max = 240) => Array.from(String(value === undefined || value === null ? '' : value))
   .map(character => {
@@ -114,6 +115,33 @@ const mergeEntities = (primary, secondary) => normalizeEntity({
   updatedAt: [primary.updatedAt, secondary.updatedAt].filter(Boolean).sort().pop()
 })
 
+const arraysEqual = (left, right, comparator = (a, b) => a === b) => left.length === right.length &&
+  left.every((item, index) => comparator(item, right[index]))
+
+const bindingsSemanticallyEqual = (left, right) => Boolean(left && right) &&
+  left.key === right.key &&
+  left.source === right.source &&
+  left.adapterId === right.adapterId &&
+  left.providerId === right.providerId &&
+  left.objectId === right.objectId &&
+  left.label === right.label &&
+  arraysEqual(left.capabilities, right.capabilities) &&
+  left.access === right.access &&
+  left.confidence === right.confidence
+
+const entitiesSemanticallyEqual = (left, right) => Boolean(left && right) &&
+  left.id === right.id &&
+  left.identity === right.identity &&
+  left.label === right.label &&
+  left.area === right.area &&
+  left.kind === right.kind &&
+  arraysEqual(left.capabilities, right.capabilities) &&
+  arraysEqual(left.access, right.access) &&
+  left.unit === right.unit &&
+  left.confidence === right.confidence &&
+  arraysEqual(left.bindings, right.bindings, bindingsSemanticallyEqual) &&
+  arraysEqual(left.relationships, right.relationships)
+
 /**
  * Adds one native integration binding to the registry. Names, areas and kinds
  * never cause an automatic merge: two bindings converge only through an
@@ -170,6 +198,156 @@ const upsertCerebrumSemanticEntity = (registry, input = {}) => {
   return { entities, entity: next, created: index < 0, merged }
 }
 
+/**
+ * Synchronizes a bounded integration catalog without turning a discovery pass
+ * into live activity. The registry is normalized and indexed once; unchanged
+ * catalog entries retain both the entity update time and the binding last-seen
+ * time. Live observations should continue to use upsertCerebrumSemanticEntity,
+ * whose timestamp-refresh semantics intentionally remain unchanged.
+ */
+const synchronizeCerebrumSemanticEntities = (registry, inputs, options = {}) => {
+  const entities = normalizeCerebrumEntityRegistry(registry)
+  const requestedMaxInputs = Number(options.maxInputs)
+  const maxInputs = Number.isFinite(requestedMaxInputs) && requestedMaxInputs > 0
+    ? Math.min(CEREBRUM_ENTITY_REGISTRY_MAX_CATALOG_BINDINGS, Math.floor(requestedMaxInputs))
+    : CEREBRUM_ENTITY_REGISTRY_MAX_CATALOG_BINDINGS
+  const catalog = (Array.isArray(inputs) ? inputs : []).slice(0, maxInputs)
+  const synchronizedAt = normalizeAt(options.at, new Date().toISOString())
+  const positions = new Map()
+  const entitiesById = new Map()
+  const entitiesByBinding = new Map()
+  const changedEntityRefs = new Set()
+  let created = 0
+  let updated = 0
+  let merged = 0
+  let unchanged = 0
+  let ignored = 0
+
+  const indexEntity = (entity, index) => {
+    positions.set(entity, index)
+    if (!entitiesById.has(entity.id)) entitiesById.set(entity.id, entity)
+    entity.bindings.forEach(binding => {
+      if (!entitiesByBinding.has(binding.key)) entitiesByBinding.set(binding.key, entity)
+    })
+  }
+
+  const unindexEntity = entity => {
+    positions.delete(entity)
+    if (entitiesById.get(entity.id) === entity) entitiesById.delete(entity.id)
+    entity.bindings.forEach(binding => {
+      if (entitiesByBinding.get(binding.key) === entity) entitiesByBinding.delete(binding.key)
+    })
+  }
+
+  const replaceEntity = (current, next) => {
+    const index = positions.get(current)
+    unindexEntity(current)
+    entities[index] = next
+    indexEntity(next, index)
+    changedEntityRefs.delete(current)
+    changedEntityRefs.add(next)
+    return next
+  }
+
+  const mergeIndexedEntities = (primary, secondary) => {
+    const primaryIndex = positions.get(primary)
+    const secondaryIndex = positions.get(secondary)
+    const next = mergeEntities(primary, secondary)
+    unindexEntity(primary)
+    unindexEntity(secondary)
+    entities[primaryIndex] = next
+    entities[secondaryIndex] = null
+    indexEntity(next, primaryIndex)
+    changedEntityRefs.delete(primary)
+    changedEntityRefs.delete(secondary)
+    changedEntityRefs.add(next)
+    return next
+  }
+
+  entities.forEach(indexEntity)
+
+  catalog.forEach(input => {
+    const binding = normalizeBinding(input, synchronizedAt)
+    if (!binding) {
+      ignored += 1
+      return
+    }
+    const explicitId = cleanText(input && input.semanticId, 600)
+    const requestedId = explicitId || buildSourceScopedSemanticId(binding)
+    const explicitEntity = explicitId ? entitiesById.get(explicitId) : null
+    const bindingEntity = entitiesByBinding.get(binding.key)
+    let current = explicitEntity || bindingEntity || null
+    let mergedThisInput = false
+
+    if (explicitEntity && bindingEntity && explicitEntity !== bindingEntity) {
+      current = mergeIndexedEntities(explicitEntity, bindingEntity)
+      merged += 1
+      mergedThisInput = true
+    }
+
+    const at = normalizeAt(input && input.at, binding.lastSeenAt || synchronizedAt)
+    const currentBindingIndex = current ? current.bindings.findIndex(item => item.key === binding.key) : -1
+    const currentBinding = currentBindingIndex >= 0 ? current.bindings[currentBindingIndex] : null
+    const bindingChanged = !bindingsSemanticallyEqual(currentBinding, binding)
+    const nextBinding = Object.assign({}, binding, {
+      firstSeenAt: (currentBinding && currentBinding.firstSeenAt) || binding.firstSeenAt || at,
+      lastSeenAt: currentBinding && !bindingChanged ? currentBinding.lastSeenAt : at
+    })
+    const bindings = current ? current.bindings.slice() : []
+    if (currentBindingIndex >= 0) bindings[currentBindingIndex] = nextBinding
+    else bindings.push(nextBinding)
+    const nextCandidate = normalizeEntity({
+      id: explicitId || (current && current.id) || requestedId,
+      identity: explicitId || (current && current.identity === 'explicit') ? 'explicit' : 'source_scoped',
+      label: cleanText(input && (input.label || input.resourceName || input.deviceName), 240) || (current && current.label) || binding.label,
+      area: cleanText(input && input.area, 160) || (current && current.area) || '',
+      kind: cleanText(input && (input.kind || input.resourceType), 120) || (current && current.kind) || '',
+      capabilities: [...(current ? current.capabilities : []), ...uniqueText(input && (input.capabilities || input.capability)), ...binding.capabilities],
+      access: [...(current ? current.access : []), ...uniqueText(input && (input.access || binding.access), 12)],
+      unit: cleanText(input && input.unit, 80) || (current && current.unit) || '',
+      confidence: Math.max(normalizeConfidence(input && input.confidence), (current && current.confidence) || 0, binding.confidence),
+      bindings,
+      relationships: [...(current ? current.relationships : []), ...uniqueText(input && input.relationships, 48)],
+      createdAt: (current && current.createdAt) || at,
+      updatedAt: (current && current.updatedAt) || at
+    })
+    if (!nextCandidate) {
+      ignored += 1
+      return
+    }
+
+    const entityChanged = !current || mergedThisInput || !entitiesSemanticallyEqual(current, nextCandidate)
+    if (!entityChanged) {
+      unchanged += 1
+      return
+    }
+
+    const next = normalizeEntity(Object.assign({}, nextCandidate, { updatedAt: at }))
+    if (current) {
+      replaceEntity(current, next)
+      updated += 1
+    } else {
+      entities.push(next)
+      indexEntity(next, entities.length - 1)
+      changedEntityRefs.add(next)
+      created += 1
+    }
+  })
+
+  const boundedEntities = entities.filter(Boolean).slice(-CEREBRUM_ENTITY_REGISTRY_MAX_ENTITIES)
+  const retainedEntities = new Set(boundedEntities)
+  return {
+    entities: boundedEntities,
+    changedEntities: Array.from(changedEntityRefs).filter(entity => retainedEntities.has(entity)),
+    changed: changedEntityRefs.size > 0,
+    created,
+    updated,
+    merged,
+    unchanged,
+    ignored
+  }
+}
+
 const resolveCerebrumSemanticEntity = (registry, reference = {}) => {
   const entities = normalizeCerebrumEntityRegistry(registry)
   const explicitId = cleanText(reference.semanticId || reference.id, 600)
@@ -214,10 +392,12 @@ const buildCerebrumEntityRegistryContext = (registry, { question = '', maxEntiti
 
 module.exports = {
   CEREBRUM_ENTITY_REGISTRY_MAX_BINDINGS,
+  CEREBRUM_ENTITY_REGISTRY_MAX_CATALOG_BINDINGS,
   CEREBRUM_ENTITY_REGISTRY_MAX_ENTITIES,
   buildCerebrumEntityRegistryContext,
   buildSourceScopedSemanticId,
   normalizeCerebrumEntityRegistry,
   resolveCerebrumSemanticEntity,
+  synchronizeCerebrumSemanticEntities,
   upsertCerebrumSemanticEntity
 }

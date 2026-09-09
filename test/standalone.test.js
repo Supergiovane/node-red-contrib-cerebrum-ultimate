@@ -342,6 +342,81 @@ describe('Cerebrum Ultimate standalone package', () => {
     fs.rmSync(userDir, { recursive: true, force: true })
   })
 
+  it('does not rewrite stable memory or archive snapshots for a 300-object KNX catalog', async function () {
+    this.timeout(10000)
+    const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-stable-catalog-'))
+    const noop = () => {}
+    const gateway = {
+      id: 'stable-catalog-gateway',
+      name: 'Stable catalog gateway',
+      csv: Array.from({ length: 300 }, (_, index) => ({
+        ga: `1/${Math.floor(index / 256)}/${index % 256}`,
+        dpt: '9.001',
+        devicename: `Casa/Stanze/Temperatura stanza ${index}`
+      })),
+      addClient: noop,
+      removeClient: noop
+    }
+    let Constructor
+    let node
+    const RED = {
+      auth: { needsPermission: () => noop },
+      httpAdmin: { get: noop, post: noop, use: noop },
+      settings: { userDir, httpAdminRoot: '/' },
+      nodes: {
+        getNode: id => id === gateway.id ? gateway : undefined,
+        eachNode: noop,
+        registerType: (type, constructor) => { if (type === 'cerebrumUltimate') Constructor = constructor },
+        createNode: runtimeNode => {
+          const emitter = new EventEmitter()
+          runtimeNode.id = 'stable-catalog-test'
+          runtimeNode.type = 'cerebrumUltimate'
+          runtimeNode.credentials = {}
+          runtimeNode.on = emitter.on.bind(emitter)
+          runtimeNode.emit = emitter.emit.bind(emitter)
+          runtimeNode.status = noop
+          runtimeNode.warn = noop
+          runtimeNode.error = noop
+          runtimeNode.send = noop
+          runtimeNode.log = noop
+        }
+      },
+      util: { cloneMessage: message => JSON.parse(JSON.stringify(message)) }
+    }
+
+    try {
+      require('../nodes/cerebrumUltimate')(RED)
+      node = new Constructor({
+        name: 'Stable catalog',
+        server: gateway.id,
+        unifiProtectConfig: '',
+        llmEnabled: false,
+        etsExposeConfigured: true,
+        etsExposedGAs: gateway.csv.map(item => item.ga),
+        etsReadOnlyGAs: gateway.csv.map(item => item.ga)
+      })
+      const first = await node.getCerebrumMemoryFile()
+      expect(JSON.parse(first.jsonContent).semanticEntities).to.have.length(300)
+      const memoryPath = path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'memory', 'cerebrum-home-memory.md')
+      const checkpointPath = path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'memory', 'cerebrum-habit-learning.json')
+      const archivePath = path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'memory', 'shared', 'cerebrum-memory.jsonl')
+      const before = {
+        memory: fs.readFileSync(memoryPath, 'utf8'),
+        checkpoint: fs.readFileSync(checkpointPath, 'utf8'),
+        archiveBytes: fs.statSync(archivePath).size
+      }
+
+      const second = await node.getCerebrumMemoryFile()
+      expect(second.revision).to.equal(first.revision)
+      expect(fs.readFileSync(memoryPath, 'utf8')).to.equal(before.memory)
+      expect(fs.readFileSync(checkpointPath, 'utf8')).to.equal(before.checkpoint)
+      expect(fs.statSync(archivePath).size).to.equal(before.archiveBytes)
+    } finally {
+      if (node) await new Promise(resolve => node.emit('close', resolve))
+      fs.rmSync(userDir, { recursive: true, force: true })
+    }
+  })
+
   it('persists acquired home habits immediately and restores them after a Node-RED restart', async () => {
     const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-habit-restart-'))
     const providerListeners = new Set()

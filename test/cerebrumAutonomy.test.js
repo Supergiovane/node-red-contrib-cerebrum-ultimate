@@ -68,6 +68,50 @@ describe('Persistent Cerebrum autonomy', () => {
     expect(fs.existsSync(path.join(directory, 'autonomy.json'))).to.equal(true)
   })
 
+  it('keeps observing on idle ticks without archiving, rewriting or fsyncing timestamp-only changes', async () => {
+    enabled = false
+    const archived = []
+    let snapshotReads = 0
+    runtime = makeRuntime({
+      archiveSnapshot: world => archived.push(JSON.parse(JSON.stringify(world))),
+      readSnapshot: () => {
+        snapshotReads++
+        return { states, habits, episodes }
+      }
+    })
+    await runtime.tick()
+    const filePath = path.join(directory, 'autonomy.json')
+    const durableBefore = fs.readFileSync(filePath, 'utf8')
+    const archivedBefore = archived.length
+    const priorLastTickAt = runtime.snapshot().lastTickAt
+    currentTime += 15 * 1000
+
+    const originalFsync = fs.fsyncSync
+    let fsyncs = 0
+    fs.fsyncSync = (...args) => {
+      fsyncs++
+      return originalFsync(...args)
+    }
+    try {
+      expect((await runtime.tick()).status).to.equal('disabled')
+    } finally {
+      fs.fsyncSync = originalFsync
+    }
+
+    expect(snapshotReads).to.equal(2)
+    expect(runtime.snapshot().lastTickAt).to.equal(at())
+    expect(runtime.snapshot().lastTickAt).to.not.equal(priorLastTickAt)
+    expect(fs.readFileSync(filePath, 'utf8')).to.equal(durableBefore)
+    expect(archived).to.have.length(archivedBefore)
+    expect(fsyncs).to.equal(0)
+
+    currentTime += 1000
+    states = [state({ value: 'false' })]
+    await runtime.tick()
+    expect(fs.readFileSync(filePath, 'utf8')).to.not.equal(durableBefore)
+    expect(archived).to.have.length(archivedBefore + 1)
+  })
+
   it('retains rapid observed transitions even when the next snapshot has the original value', async () => {
     enabled = false
     states = [state({ value: 'false' })]

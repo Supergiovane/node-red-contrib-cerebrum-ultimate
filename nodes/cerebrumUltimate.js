@@ -31,6 +31,7 @@ const {
   HOME_MEMORY_DEFAULT_KB,
   HOME_MEMORY_MAX_EDUCATION_CHARS,
   HOME_MEMORY_MAX_SEMANTIC_OBJECTS,
+  HOME_MEMORY_MAX_STATES,
   addBoundedCerebrumNotification,
   addBoundedCerebrumObservation,
   applyCerebrumHabitDecision,
@@ -55,6 +56,7 @@ const {
 const {
   buildCerebrumEntityRegistryContext,
   normalizeCerebrumEntityRegistry,
+  synchronizeCerebrumSemanticEntities,
   upsertCerebrumSemanticEntity
 } = require('./utils/cerebrumEntityRegistry')
 const { buildCerebrumObservation } = require('./utils/cerebrumObservationBuilder')
@@ -8807,20 +8809,41 @@ module.exports = function (RED) {
     }
     node.querySharedMemory = action => node._sharedMemoryArchive.query(action)
     const archivedSnapshots = new Map()
-    const archiveCerebrumSnapshot = (collection, value) => {
-      if (!node._sharedMemoryArchive) return
-      const records = Array.isArray(value) ? value : [value]
-      const previous = archivedSnapshots.get(collection) || new Map()
-      const next = new Map()
-      records.forEach((record, index) => {
-        const hash = crypto.createHash('sha256').update(JSON.stringify(record) || 'null').digest('hex')
-        const key = String(record && (record.id || record.key || record.ga) || (Array.isArray(value) ? hash : index))
-        if (previous.get(key) !== hash) archiveCerebrumData('context', { collection, key, value: record })
-        next.set(key, hash)
+    const archiveCerebrumSnapshots = snapshots => {
+      if (!node._sharedMemoryArchive) return []
+      const prepared = (Array.isArray(snapshots) ? snapshots : []).map(({ collection, value }) => {
+        const records = Array.isArray(value) ? value : [value]
+        const previous = archivedSnapshots.get(collection) || new Map()
+        const next = new Map()
+        const entries = []
+        records.forEach((record, index) => {
+          const hash = crypto.createHash('sha256').update(JSON.stringify(record) || 'null').digest('hex')
+          const key = String(record && (record.id || record.key || record.ga) || (Array.isArray(value) ? hash : index))
+          if (previous.get(key) !== hash) entries.push({
+            kind: 'context',
+            nodeId: node.id,
+            channel: '',
+            data: { collection, key, value: record }
+          })
+          next.set(key, hash)
+        })
+        previous.forEach((hash, key) => {
+          if (!next.has(key)) entries.push({
+            kind: 'context',
+            nodeId: node.id,
+            channel: '',
+            data: { collection, key, removedFromWorkingView: true }
+          })
+        })
+        return { collection, next, entries }
       })
-      previous.forEach((hash, key) => { if (!next.has(key)) archiveCerebrumData('context', { collection, key, removedFromWorkingView: true }) })
-      archivedSnapshots.set(collection, next)
+      const entries = prepared.flatMap(item => item.entries)
+      const archived = entries.length ? node._sharedMemoryArchive.appendMany(entries) : []
+      // Advance the snapshot baseline only after the whole batch is durable.
+      prepared.forEach(item => archivedSnapshots.set(item.collection, item.next))
+      return archived
     }
+    const archiveCerebrumSnapshot = (collection, value) => archiveCerebrumSnapshots([{ collection, value }])
 
     const getSafeStorageNodeId = () => String(node.id || 'cerebrum')
       .replace(/[^A-Za-z0-9_.-]/g, '_')
@@ -9095,26 +9118,30 @@ module.exports = function (RED) {
       currentSemanticObjects.forEach((item) => {
         semanticByKey.set(`${item.ga || ''}\n${item.dpt || ''}\n${item.label || ''}`, item)
       })
-      node._homeMemory.semanticObjects = Array.from(semanticByKey.values())
+      const semanticObjects = Array.from(semanticByKey.values())
         .sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0))
         .slice(0, HOME_MEMORY_MAX_SEMANTIC_OBJECTS)
-      let semanticEntities = normalizeCerebrumEntityRegistry(node._homeMemory.semanticEntities)
-      currentSemanticObjects.forEach(item => {
-        semanticEntities = upsertCerebrumSemanticEntity(semanticEntities, {
-          source: 'knx',
-          adapterId: 'knx',
-          objectId: item.ga,
-          label: item.label,
-          area: item.area,
-          kind: item.kind,
-          capability: item.dpt ? `dpt:${item.dpt}` : '',
-          access: 'observe',
-          confidence: item.confidence,
-          at: synchronizedAt
-        }).entities
-      })
-      node._homeMemory.semanticEntities = semanticEntities
-      node._homeMemory.updatedAt = synchronizedAt
+      const semanticObjectsChanged = JSON.stringify(semanticObjects) !== JSON.stringify(normalizeCerebrumHomeMemory(node._homeMemory).semanticObjects)
+      const semanticResult = synchronizeCerebrumSemanticEntities(node._homeMemory.semanticEntities, currentSemanticObjects.map(item => ({
+        source: 'knx',
+        adapterId: 'knx',
+        objectId: item.ga,
+        label: item.label,
+        area: item.area,
+        kind: item.kind,
+        capability: item.dpt ? `dpt:${item.dpt}` : '',
+        access: 'observe',
+        confidence: item.confidence,
+        at: synchronizedAt
+      })), { at: synchronizedAt })
+      node._homeMemory.semanticObjects = semanticObjects
+      node._homeMemory.semanticEntities = semanticResult.entities
+      if (semanticObjectsChanged || semanticResult.changed) node._homeMemory.updatedAt = synchronizedAt
+      return {
+        changed: semanticObjectsChanged || semanticResult.changed,
+        semanticObjectsChanged,
+        semanticEntities: semanticResult
+      }
     }
 
     const registerCerebrumSemanticBinding = input => {
@@ -9151,15 +9178,30 @@ module.exports = function (RED) {
     const persistHabitLearningCheckpointNow = () => {
       try {
         const habits = getHabitLearningProgress(node._homeMemory)
+        const revision = crypto.createHash('sha256').update(JSON.stringify(habits), 'utf8').digest('hex')
+        const sharedStore = sharedCerebrumHomeMemoryStores.get(node._homeMemoryStorePath || getHomeMemoryFile())
+        const filePath = getHabitLearningCheckpointFile()
+        if (sharedStore && sharedStore.habitCheckpointRevision === revision && fs.existsSync(filePath)) {
+          const previous = sharedStore.lastHabitCheckpointResult || {
+            filePath,
+            habitCount: habits.length,
+            bytes: fs.statSync(filePath).size
+          }
+          return Object.assign({}, previous, { unchanged: true })
+        }
         const checkpoint = {
           version: 1,
           updatedAt: new Date().toISOString(),
           habits
         }
-        const filePath = getHabitLearningCheckpointFile()
         const content = `${JSON.stringify(checkpoint, null, 2)}\n`
         writeAtomicUtf8File({ filePath, content })
-        return { filePath, habitCount: habits.length, bytes: Buffer.byteLength(content, 'utf8') }
+        const result = { filePath, habitCount: habits.length, bytes: Buffer.byteLength(content, 'utf8') }
+        if (sharedStore) {
+          sharedStore.habitCheckpointRevision = revision
+          sharedStore.lastHabitCheckpointResult = result
+        }
+        return result
       } catch (error) {
         try { node.sysLogger?.warn(`Cerebrum habit learning checkpoint write error: ${error.message || error}`) } catch (logError) { /* ignore */ }
         return null
@@ -9215,20 +9257,35 @@ module.exports = function (RED) {
     const persistHomeMemoryNow = () => {
       try {
         synchronizeHomeMemorySemanticObjects()
-        Object.entries(node._homeMemory).forEach(([key, value]) => archiveCerebrumSnapshot(`home.${key}`, value))
+        const filePath = getHomeMemoryFile()
+        const revision = buildCerebrumHomeMemoryRevision(node._homeMemory)
+        const sharedStore = sharedCerebrumHomeMemoryStores.get(filePath)
+        if (sharedStore && sharedStore.persistedRevision === revision && fs.existsSync(filePath)) {
+          const previous = sharedStore.lastPersistResult || {
+            filePath,
+            bytes: fs.statSync(filePath).size,
+            maxBytes: HOME_MEMORY_DEFAULT_KB * 1024
+          }
+          return Object.assign({}, previous, { unchanged: true })
+        }
+        archiveCerebrumSnapshots(Object.entries(node._homeMemory).map(([key, value]) => ({ collection: `home.${key}`, value })))
         const rendered = buildCerebrumHomeMemoryMarkdown({
           memory: node._homeMemory,
           maxKb: HOME_MEMORY_DEFAULT_KB
         })
         node._homeMemory = rendered.memory
-        const filePath = getHomeMemoryFile()
         writeAtomicUtf8File({ filePath, content: rendered.markdown })
         persistHabitLearningCheckpointNow()
-        return {
+        const result = {
           filePath,
           bytes: rendered.bytes,
           maxBytes: rendered.maxBytes
         }
+        if (sharedStore) {
+          sharedStore.persistedRevision = buildCerebrumHomeMemoryRevision(node._homeMemory)
+          sharedStore.lastPersistResult = result
+        }
+        return result
       } catch (error) {
         try { node.sysLogger?.warn(`Cerebrum home memory write error: ${error.message || error}`) } catch (logError) { /* ignore */ }
         return null
@@ -15488,7 +15545,7 @@ module.exports = function (RED) {
           if (key) nextCatalog.set(key, camera)
         })
         node._cameraCatalog = nextCatalog
-        nextCatalog.forEach(camera => {
+        const semanticResult = synchronizeCerebrumSemanticEntities(node._homeMemory.semanticEntities, Array.from(nextCatalog.values()).map(camera => {
           const provider = currentProviders.get(camera.providerId) || {}
           const capabilities = [
             ...(Array.isArray(camera.capabilities) ? camera.capabilities : []),
@@ -15498,7 +15555,7 @@ module.exports = function (RED) {
             typeof provider.takeEventSnapshot === 'function' ? 'event_snapshot' : '',
             typeof provider.subscribe === 'function' ? 'events' : ''
           ].filter(Boolean)
-          registerCerebrumSemanticBinding({
+          return {
             semanticId: camera.semanticId,
             source: camera.adapterId || provider.adapterId || camera.source || 'camera',
             adapterId: camera.adapterId || provider.adapterId,
@@ -15511,9 +15568,10 @@ module.exports = function (RED) {
             access: camera.access || 'observe',
             confidence: 1,
             at: camera.lastSeenAt
-          })
-        })
-        scheduleHomeMemoryPersist()
+          }
+        }), { at: new Date().toISOString() })
+        node._homeMemory.semanticEntities = semanticResult.entities
+        if (semanticResult.changed) scheduleHomeMemoryPersist()
       }).finally(() => {
         if (node._cameraRegistrySyncInFlight === syncPromise) node._cameraRegistrySyncInFlight = null
       })
@@ -15715,10 +15773,11 @@ module.exports = function (RED) {
         const previousStates = new Map(normalizeCerebrumHomeMemory(node._homeMemory).states
           .filter(item => item.source === 'home-assistant')
           .map(item => [item.objectId, item]))
-        const observations = results.flat().map(entity => {
-          if (!entity || typeof entity !== 'object' || !entity.entity_id) return null
+        const catalogEntities = results.flat().filter(entity => entity && typeof entity === 'object' && entity.entity_id)
+        const observedAt = new Date(now).toISOString()
+        const semanticResult = synchronizeCerebrumSemanticEntities(node._homeMemory.semanticEntities, catalogEntities.map(entity => {
           const attributes = entity.attributes && typeof entity.attributes === 'object' ? entity.attributes : {}
-          const semanticEntity = registerCerebrumSemanticBinding({
+          return {
             semanticId: entity.semanticId || attributes.semantic_id,
             source: 'home-assistant',
             adapterId: 'home-assistant',
@@ -15732,12 +15791,25 @@ module.exports = function (RED) {
             access: entity.readOnly === true ? 'observe' : 'read',
             unit: attributes.unit_of_measurement,
             confidence: 1,
-            at: new Date(now).toISOString()
-          })
+            at: observedAt
+          }
+        }), { at: observedAt })
+        node._homeMemory.semanticEntities = semanticResult.entities
+        const semanticIdsByObjectId = new Map()
+        semanticResult.entities.forEach(semanticEntity => {
+          semanticEntity.bindings
+            .filter(binding => binding.source === 'home-assistant')
+            .forEach(binding => semanticIdsByObjectId.set(binding.objectId, semanticEntity.id))
+        })
+        // Current state is deliberately bounded. Select the same bounded tail
+        // before comparison so installations with >600 entities do not report
+        // the permanently discarded prefix as newly discovered on every pass.
+        const observations = catalogEntities.slice(-HOME_MEMORY_MAX_STATES).map(entity => {
+          const attributes = entity.attributes && typeof entity.attributes === 'object' ? entity.attributes : {}
           return {
             source: 'home-assistant',
             objectId: entity.entity_id,
-            semanticId: semanticEntity && semanticEntity.id,
+            semanticId: semanticIdsByObjectId.get(entity.entity_id) || '',
             label: attributes.friendly_name || entity.entity_id,
             area: attributes.area_id || attributes.area || entity.area_id || '',
             kind: attributes.device_class || String(entity.entity_id).split('.')[0] || 'entity',
@@ -15745,11 +15817,11 @@ module.exports = function (RED) {
             unit: attributes.unit_of_measurement || '',
             access: entity.readOnly === true ? 'observe' : 'read',
             value: entity.state,
-            at: new Date(now).toISOString(),
+            at: observedAt,
             verified: true,
             confidence: 1
           }
-        }).filter(Boolean)
+        })
         node._homeMemory = updateCerebrumCurrentStates(node._homeMemory, observations)
         observations.forEach(observation => {
           const previous = previousStates.get(observation.objectId)
@@ -19005,7 +19077,7 @@ module.exports = function (RED) {
         node,
         filePath: getWorldModelFile(),
         readSnapshot: () => normalizeCerebrumHomeMemory(node._homeMemory),
-        archiveSnapshot: world => Object.entries(world).forEach(([key, value]) => archiveCerebrumSnapshot(`world.${key}`, value)),
+        archiveSnapshot: world => archiveCerebrumSnapshots(Object.entries(world).map(([key, value]) => ({ collection: `world.${key}`, value }))),
         canReason: () => isCerebrumStateLeader('autonomy') && llmPolicy.reason() === 'interval',
         historyContext: () => {
           const tokens = resolveCerebrumOperationalContextLimit({ provider: node.llmProvider, model: node.llmModel, contextLength: node.llmContextLength, localContextTokens: node.llmLocalContextTokens, maxContextKb: node.llmMaxContextKb }).tokens
