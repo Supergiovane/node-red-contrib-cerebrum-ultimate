@@ -298,6 +298,8 @@ Camera providers may expose `queryEvents()` and `takeEventSnapshot()` in additio
 
 With `node-red-contrib-unifi-ultimate`, recorded history is enabled by the optional local **History user/password** in the selected UniFi Protect config node. The official Protect Integration API key supports live events and current snapshots but does not expose the recorded archive, so the UniFi config node owns the separate local session. Cerebrum receives only normalized event evidence and image bytes; credentials, cookies, private endpoints and raw controller responses remain inside the provider. Other camera packages can implement the same vendor-neutral methods.
 
+UniFi Protect remains the source of truth for this high-volume stream. Cerebrum queries recorded events only on demand and keeps each returned page only for the active reasoning turn. It does not copy unsolicited Protect messages into adapter history, observations, episodes or world memory; it also omits raw event payloads, queried event pages and JPEG bytes from conversation archives, prompt-debug files and backups. Live camera watches and local automations still consume the provider's bounded in-memory event stream.
+
 ### Local JavaScript automations
 
 In the Node-RED node editor, **History updates to LLM** defaults to **Only during user chat** (also for existing flows without this setting). Observation, raw history storage, current states, local learning and JavaScript callbacks continue without background model calls. An open Web page or a Telegram session ID is not an active chat: a user request authorizes only its own reasoning and tool follow-ups.

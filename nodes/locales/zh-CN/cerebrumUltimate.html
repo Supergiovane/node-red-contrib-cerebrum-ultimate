@@ -87,7 +87,7 @@ Canvas 上的节点状态专门用于显示最近收到的请求，以及 LLM �
 
 用户可以请求当前快照，或询问视觉模型画面中可见的内容。Telegram 和 RedBot 预设会把图像作为带说明文字的原生照片发送。用户还可以为移动、智能越线或进入入侵/徘徊区域创建持久通知，并可按检测到的人员以及指定名称的线或区域进行限制。这些规则保存在同一个 `cerebrum-chat-context.knxctx` 文件中，并在 Node-RED 重启后恢复。UniFi 事件订阅和快照请求直接通过检测到的提供方完成；不会使用 Cerebrum 输出 4，也不需要中间 Flow 连线。
 
-自动检测到的适配器发布的每个事件都会被标准化，并以 Cerebrum 原生紧凑行格式直接追加到 `cerebrumultimatestorage/cerebrum/adapter-history/<节点ID>/` 下的每日 `YYYY-MM-DD.knxctx` 文件。KNX 报文存档使用相同的紧凑格式，不经过中间 JSON 序列化。存档保留 10 天，保证超过 24 小时的历史，只保存事件元数据，不保存图像。现有 JSONL 存档不会被读取或迁移。提示词会使用所提供时间范围内最新的精确行，并自动适配本地模型的活动窗口。
+自动检测到的适配器事件通常会被标准化，并以 Cerebrum 原生紧凑行格式追加到 `cerebrumultimatestorage/cerebrum/adapter-history/<节点ID>/` 下的每日 `YYYY-MM-DD.knxctx` 文件。拥有自身历史记录且数据量很大的提供方可将其数据流声明为临时；UniFi Protect 采用此方式，因此 Cerebrum 不会归档其主动推送的消息，而只会按需查询控制器。KNX 报文存档使用相同的紧凑格式，不经过中间 JSON 序列化。持久存档保留 10 天且只保存事件元数据，不保存图像。现有 JSONL 存档不会被读取或迁移。
 
 ### 使用 TTS Ultimate 播报
 将输出 5 连接到可选软件包 `node-red-contrib-tts-ultimate` 中的一个或多个 `ttsultimate` 节点。目标和分发由普通 Node-RED 连线决定；如果 TTS 节点位于另一个 Flow 标签页，请使用 Link Out/Link In。原有的 TTS 节点选择器和内部注入已被移除。输出 1–4 的位置保持不变，但升级后的 Flow 必须实际连接输出 5，语音播报才能到达 TTS Ultimate。
@@ -99,7 +99,7 @@ Canvas 上的节点状态专门用于显示最近收到的请求，以及 LLM �
 
 模型会把本地 ETS 目录检索、KNX 读写、摄像机适配器、TTS 播报、持久记忆、Web 访问以及计划/提醒作为结构化工具。它可以依据当前请求和可信的已学习指导进行语义选择与组合，而不经过语言意图路由。目录检索是确定性的本地操作；运行时验证工具参数、摄像机适配器可用性和安全边界，KNX 写入仍保留完整的本地 ETS/DPT 校验和已配置的确认步骤。
 
-临时本地调试文件 `cerebrum-last-chat-prompt-<节点ID>.txt` 包含最近一次发送的精确 system/user 提示文本，会在每次聊天调用前覆盖，且不包含 API 密钥或 HTTP 标头。
+临时本地调试文件 `cerebrum-last-chat-prompt-<节点ID>.txt` 包含最近一次 system/user 提示的脱敏副本，会在每次聊天调用前覆盖，并排除临时摄像机历史证据、API 密钥和 HTTP 标头。
 
 ### 编辑和备份 Cerebrum 学习
 Node-RED 的 Cerebrum 配置中，**对话与家庭**选项卡包含**打开 Cerebrum 学习**按钮；它会为当前节点直接打开 Vue Web UI 中的此编辑器。

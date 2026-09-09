@@ -167,7 +167,7 @@
       "chatContextFileSchedules": "Authoritative persistent runtime state for this node's plans and reminders.",
       "chatContextFileSchedulesReadable": "Generated human-readable view of this node's plans and reminders.",
       "chatContextFileAssistantConfig": "Persistent Cerebrum configuration and semantic areas for this node.",
-      "chatContextFileLastChatPrompt": "Temporary local copy of the latest system and user messages sent to the Cerebrum model; overwritten on every Cerebrum request.",
+      "chatContextFileLastChatPrompt": "Temporary redacted local copy of the latest system and user messages sent to the Cerebrum model; transient camera-history evidence is omitted and the file is overwritten on every Cerebrum request.",
       "chatContextFileBadge": "File",
       "chatContextDirectoryRoot": "Telegram archive root",
       "chatContextDirectoryNode": "This node's telegram archive",

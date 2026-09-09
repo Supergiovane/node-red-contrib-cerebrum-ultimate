@@ -2,16 +2,22 @@ const {
   getCerebrumHomeAutomationRegistry,
   normalizeCerebrumFlowSendEvent
 } = require('../utils/cerebrumLearning')
+const {
+  hasCerebrumTransientMessageOrigin,
+  rememberCerebrumTransientMessageOrigin
+} = require('../utils/cerebrumTransientMessageOrigins')
 
 const HOOK_ID = 'onSend.cerebrumUltimate'
 const PROVIDER_ID = 'cerebrum-ultimate:runtime'
 const ADAPTER_ID = 'node-red-flow'
 const DUPLICATE_WINDOW_MS = 750
 const MAX_EVENTS_PER_MINUTE = 240
+const UNIFI_PROTECT_NODE_TYPE_RE = /^unifi-protect(?:-|$)/
 
 module.exports = RED => {
   const listeners = new Set()
   const recentFingerprints = new Map()
+  const unifiProtectMessages = new WeakSet()
   let eventWindowStartedAt = Date.now()
   let eventWindowCount = 0
 
@@ -34,6 +40,32 @@ module.exports = RED => {
     }
   }
 
+  const rememberUnifiProtectOrigin = (message, messageId, now) => {
+    if (message && typeof message === 'object') unifiProtectMessages.add(message)
+    rememberCerebrumTransientMessageOrigin({ messageId, source: 'unifi-protect', at: now })
+  }
+
+  const isUnifiProtectFlowEvent = (sendEvent, now) => {
+    const envelope = sendEvent && typeof sendEvent === 'object' ? sendEvent : {}
+    const message = envelope.msg && typeof envelope.msg === 'object' ? envelope.msg : null
+    const source = envelope.source && typeof envelope.source === 'object' ? envelope.source : {}
+    const sourceNode = source.node && typeof source.node === 'object' ? source.node : source
+    const nodeType = String(sourceNode.type || source.type || '').trim().toLowerCase()
+    const messageId = String((message && message._msgid) || '').trim().slice(0, 200)
+    const details = message && message.details && typeof message.details === 'object' && !Array.isArray(message.details)
+      ? message.details
+      : null
+    const hasProtectMetadata = !!(details && details.unifiProtect !== undefined && details.unifiProtect !== null)
+    const knownProtectOrigin = !!(message && unifiProtectMessages.has(message)) || hasCerebrumTransientMessageOrigin({
+      messageId,
+      source: 'unifi-protect',
+      at: now
+    })
+    if (!UNIFI_PROTECT_NODE_TYPE_RE.test(nodeType) && !hasProtectMetadata && !knownProtectOrigin) return false
+    rememberUnifiProtectOrigin(message, messageId, now)
+    return true
+  }
+
   const allowEvent = (event, now) => {
     refreshEventWindow(now)
     if (eventWindowCount >= MAX_EVENTS_PER_MINUTE) return false
@@ -51,6 +83,13 @@ module.exports = RED => {
       try {
         const now = Date.now()
         refreshEventWindow(now)
+        // Protect is exposed through explicit integration/query providers. Drop
+        // its verbose flow copies before normalization and rate-limit accounting
+        // so they never become a second, durable household event stream.
+        // Track _msgid as well as the canonical metadata so ordinary Function,
+        // Change or Switch nodes cannot make the same message look like a new
+        // household observation merely by removing msg.details.
+        if (isUnifiProtectFlowEvent(sendEvent, now)) return
         if (eventWindowCount >= MAX_EVENTS_PER_MINUTE) return
         const event = normalizeCerebrumFlowSendEvent(sendEvent, { at: new Date(now).toISOString() })
         if (!event || !allowEvent(event, now)) return

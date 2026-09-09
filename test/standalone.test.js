@@ -18,6 +18,7 @@ const {
   getCerebrumCameraAdapterRegistry
 } = require('../nodes/utils/cerebrumCamera')
 const { parseCerebrumHomeMemoryMarkdownStrict } = require('../nodes/utils/homeMemory')
+const { rememberCerebrumTransientMessageOrigin } = require('../nodes/utils/cerebrumTransientMessageOrigins')
 const {
   buildCerebrumCompatibleNodeSummary,
   buildCerebrumPackageNodeCatalog,
@@ -26,10 +27,25 @@ const {
   buildCerebrumStateRefreshMessage,
   buildCerebrumUniversalMessage,
   isCerebrumCameraProviderSelected,
+  isCerebrumUnifiProtectFlowMessage,
+  redactCerebrumTransientPromptSections,
+  sanitizeCerebrumConversationMetadataForArchive,
+  shouldPersistCerebrumCameraProviderEvents,
+  summarizeCerebrumCameraHistoryAuditResult,
   normalizeCerebrumEtsAccessConfiguration
 } = require('../nodes/cerebrumUltimate').__test
 
 describe('Cerebrum Ultimate standalone package', () => {
+  it('keeps transient camera-history evidence out of local prompt debug copies', () => {
+    const evidence = '[CH1] providerId=protect-1 | eventId=motion-secret | snapshot=available'
+    const actualPrompt = `CAMERA HISTORY TOOL RESULTS:\n${evidence}\nReturn the JSON object now.`
+    const debugPrompt = redactCerebrumTransientPromptSections(actualPrompt, [evidence])
+
+    expect(actualPrompt).to.include('eventId=motion-secret')
+    expect(debugPrompt).to.include('Transient camera-history evidence omitted')
+    expect(debugPrompt).not.to.include('eventId=motion-secret')
+  })
+
   it('publishes only the new standalone node types', () => {
     expect(manifest.name).to.equal('node-red-contrib-cerebrum-ultimate')
     expect(manifest['node-red'].nodes).to.deep.equal({
@@ -151,6 +167,62 @@ describe('Cerebrum Ultimate standalone package', () => {
     registry.registerProvider(provider)
     expect(getCerebrumCameraAdapterRegistry().providers.get(provider.id)).to.equal(provider)
     registry.unregisterProvider(provider.id)
+  })
+
+  it('keeps UniFi Protect live events and camera media out of durable memory', () => {
+    expect(isCerebrumUnifiProtectFlowMessage({
+      payload: { motion: true },
+      details: { unifiProtect: { deviceType: 'camera', deviceId: 'camera-1' } }
+    })).to.equal(true)
+    expect(isCerebrumUnifiProtectFlowMessage({
+      payload: { on: true },
+      details: { matter: { deviceId: 'light-1' } }
+    })).to.equal(false)
+    rememberCerebrumTransientMessageOrigin({
+      messageId: 'protect-relay-without-metadata',
+      source: 'unifi-protect'
+    })
+    expect(isCerebrumUnifiProtectFlowMessage({
+      _msgid: 'protect-relay-without-metadata',
+      payload: { motion: true }
+    })).to.equal(true)
+    expect(shouldPersistCerebrumCameraProviderEvents({
+      provider: { adapterId: 'unifi-ultimate' },
+      event: { source: 'unifi-ultimate' }
+    })).to.equal(false)
+    expect(shouldPersistCerebrumCameraProviderEvents({
+      provider: { adapterId: 'future-camera', eventRetention: 'none' }
+    })).to.equal(false)
+    expect(shouldPersistCerebrumCameraProviderEvents({
+      provider: { adapterId: 'ordinary-camera' }
+    })).to.equal(true)
+
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+    const metadata = {
+      type: 'camera_notification',
+      event: { eventId: 'protect-event-1', eventType: 'motion', raw: { verbose: true } },
+      image: { data: jpeg, mediaType: 'image/jpeg', filename: 'motion.jpg' }
+    }
+    const archived = sanitizeCerebrumConversationMetadataForArchive(metadata)
+    expect(archived.event).to.deep.equal({ eventId: 'protect-event-1', eventType: 'motion' })
+    expect(archived.image).to.deep.equal({
+      mediaType: 'image/jpeg',
+      filename: 'motion.jpg',
+      byteLength: 4,
+      stored: false
+    })
+    expect(metadata.event.raw).to.deep.equal({ verbose: true })
+    expect(metadata.image.data).to.equal(jpeg)
+
+    const audit = summarizeCerebrumCameraHistoryAuditResult({
+      ok: true,
+      filters: { cameraId: 'camera-1', eventType: 'motion' },
+      returnedEvents: 1,
+      hasMore: false,
+      events: [{ eventId: 'event-1', raw: { verbose: true } }]
+    })
+    expect(audit).not.to.have.property('events')
+    expect(audit).to.include({ ok: true, returnedEvents: 1, hasMore: false })
   })
 
   it('uses independent storage and admin routes', () => {

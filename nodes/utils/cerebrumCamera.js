@@ -31,6 +31,10 @@ const uniqueTexts = values => Array.from(new Set((Array.isArray(values) ? values
 //                 offset, limit }) -> { events, nextOffset, hasMore }
 //   takeEventSnapshot({ eventId, cameraId, cameraName }) -> { data, mediaType }
 //   subscribe(listener) -> unsubscribe(), with normalized camera event objects.
+// Providers whose live feed must never enter Cerebrum's durable memory declare
+// `eventRetention: 'none'`. Queries remain available on demand and the provider
+// remains the source of truth for recordings; watches may still consume the
+// transient subscription stream.
 // The global Symbol lets separately installed Node-RED packages share the same
 // in-process registry without either package importing the other one.
 const getCerebrumCameraAdapterRegistry = () => {

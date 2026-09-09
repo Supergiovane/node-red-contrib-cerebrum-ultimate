@@ -16,6 +16,7 @@ const {
   normalizeCerebrumHomeAutomationEvent
 } = require('../nodes/utils/cerebrumLearning')
 const { normalizeCerebrumAdapterHistoryEvent } = require('../nodes/utils/cerebrumEventHistory')
+const { hasCerebrumTransientMessageOrigin } = require('../nodes/utils/cerebrumTransientMessageOrigins')
 
 describe('Cerebrum discovery and Home Assistant round trip', () => {
   it('inventories installed, deployed and usable providers without exposing live RED objects', () => {
@@ -196,6 +197,30 @@ describe('Cerebrum discovery and Home Assistant round trip', () => {
     hook([{
       source: { node: { id: 'matter-1', type: 'knxUltimateMatterControllerDevice', name: 'Matter light' } },
       msg: { payload: { on: true } }
+    }])
+    hook([{
+      source: { node: { id: 'protect-1', type: 'unifi-protect-device', name: 'Ingresso' } },
+      msg: {
+        _msgid: 'protect-message-1',
+        payload: { deviceName: 'Ingresso', event: { type: 'motion' } },
+        details: { unifiProtect: { source: 'events', deviceId: 'camera-1', eventType: 'motion' } }
+      }
+    }])
+    hook([{
+      source: { node: { id: 'logic-1', type: 'function', name: 'Protect relay' } },
+      msg: { _msgid: 'protect-message-1', payload: { motion: true } }
+    }])
+    expect(hasCerebrumTransientMessageOrigin({
+      messageId: 'protect-message-1',
+      source: 'unifi-protect'
+    })).to.equal(true)
+    hook([{
+      source: { node: { id: 'logic-2', type: 'change', name: 'Protect transform' } },
+      msg: {
+        _msgid: 'protect-message-2',
+        payload: { motion: true },
+        details: { unifiProtect: { source: 'events', deviceId: 'camera-1' } }
+      }
     }])
     hook([{
       source: { node: { id: 'debug-1', type: 'debug', name: 'Not observed' } },

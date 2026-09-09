@@ -152,7 +152,7 @@
       "chatContextFileSchedules": "État d’exécution persistant faisant autorité pour les planifications et rappels de ce nœud.",
       "chatContextFileSchedulesReadable": "Vue lisible générée des planifications et rappels de ce nœud.",
       "chatContextFileAssistantConfig": "Configuration persistante de Cerebrum et zones sémantiques de ce nœud.",
-      "chatContextFileLastChatPrompt": "Copie locale temporaire des derniers messages système et utilisateur envoyés au modèle Cerebrum ; remplacée à chaque demande Cerebrum.",
+      "chatContextFileLastChatPrompt": "Copie locale temporaire et expurgée des derniers messages système et utilisateur envoyés au modèle Cerebrum ; les preuves transitoires de l’historique caméra sont omises et le fichier est remplacé à chaque demande.",
       "chatContextFileBadge": "Fichier",
       "chatContextDirectoryRoot": "Racine de l'archive des télégrammes",
       "chatContextDirectoryNode": "Archive des télégrammes de ce nœud",

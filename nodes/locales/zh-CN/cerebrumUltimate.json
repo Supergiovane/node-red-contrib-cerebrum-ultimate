@@ -152,7 +152,7 @@
       "chatContextFileSchedules": "此节点计划和提醒的权威持久运行时状态。",
       "chatContextFileSchedulesReadable": "此节点计划和提醒自动生成的易读视图。",
       "chatContextFileAssistantConfig": "此节点的持久化 Cerebrum 配置和语义区域。",
-      "chatContextFileLastChatPrompt": "发送给 Cerebrum 模型的最新 system 和 user 消息的临时本地副本；每次 Cerebrum 请求都会覆盖。",
+      "chatContextFileLastChatPrompt": "发送给 Cerebrum 模型的最新 system 和 user 消息的临时脱敏本地副本；其中不包含临时摄像机历史证据，并会在每次 Cerebrum 请求时覆盖。",
       "chatContextFileBadge": "文件",
       "chatContextDirectoryRoot": "报文归档根目录",
       "chatContextDirectoryNode": "此节点的报文归档",

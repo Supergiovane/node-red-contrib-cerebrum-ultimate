@@ -16,6 +16,7 @@ const { createBackupZipFile, decodeBackupFile, createBackupDownloads } = require
 const { getAiEducationFilePath, createAiEducationStore, readBackupAiEducation } = require('./utils/cerebrumAiEducation')
 const { createCerebrumAutomationFiles, registerCerebrumAutomationRoutes } = require('./utils/cerebrumAutomationFiles')
 const { createCerebrumAutomationRuntime } = require('./utils/cerebrumAutomationRuntime')
+const { hasCerebrumTransientMessageOrigin } = require('./utils/cerebrumTransientMessageOrigins')
 const { automationActionSchema, automationContract, executeAutomationAction } = require('./utils/cerebrumAutomationTool')
 const { createCerebrumLlmPolicy, normalizeLlmIntervalMinutes } = require('./utils/cerebrumLlmPolicy')
 const { createCerebrumEducationCompiler } = require('./utils/cerebrumEducationCompiler')
@@ -439,6 +440,84 @@ const isCerebrumCameraProviderSelected = ({ provider, providerId, node } = {}) =
   const providerConfigId = resolveCerebrumCameraProviderConfigNodeId(provider)
   if (providerConfigId) return providerConfigId === selectedConfigId
   return String(providerId || '').trim() === `unifi-ultimate:${selectedConfigId}`
+}
+
+// UniFi Protect owns its event/recording archive. Its provider is intentionally
+// live-only inside Cerebrum: events may drive an explicitly configured watch or
+// local automation, but the high-volume websocket feed must not be copied into
+// Cerebrum's adapter history, observations, episodes or world memory.
+// `eventRetention: 'none'` is the vendor-neutral opt-out for future adapters;
+// the adapter-id fallback also protects users running an older UniFi package.
+const shouldPersistCerebrumCameraProviderEvents = ({ provider, event } = {}) => {
+  const retention = String(provider && (provider.eventRetention || provider.eventPersistence) || '')
+    .trim()
+    .toLowerCase()
+  if (provider && provider.persistEvents === false) return false
+  if (['none', 'transient', 'live-only'].includes(retention)) return false
+  const adapterIds = [
+    provider && provider.adapterId,
+    event && event.adapterId,
+    event && event.source
+  ].map(value => String(value || '').trim().toLowerCase())
+  return !adapterIds.includes('unifi-ultimate')
+}
+
+const summarizeCerebrumCameraHistoryAuditResult = result => ({
+  ok: result && result.ok === true,
+  reason: String(result && result.reason || '').slice(0, 500),
+  error: String(result && result.error || '').slice(0, 500),
+  filters: result && result.filters,
+  returnedEvents: Math.max(0, Number(result && result.returnedEvents) || 0),
+  hasMore: result && result.hasMore === true,
+  continuations: Array.isArray(result && result.continuations) ? result.continuations : [],
+  errors: Array.isArray(result && result.errors) ? result.errors : []
+})
+
+const sanitizeCerebrumConversationMetadataForArchive = metadata => {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata
+  const sanitized = Object.assign({}, metadata)
+  if (sanitized.event && typeof sanitized.event === 'object' && !Array.isArray(sanitized.event)) {
+    sanitized.event = Object.assign({}, sanitized.event)
+    delete sanitized.event.raw
+  }
+  if (sanitized.image && typeof sanitized.image === 'object' && !Array.isArray(sanitized.image)) {
+    const image = sanitized.image
+    const data = image.data
+    let byteLength = 0
+    if (Buffer.isBuffer(data) || data instanceof Uint8Array) byteLength = data.length
+    else if (typeof data === 'string') byteLength = Buffer.byteLength(data, 'utf8')
+    sanitized.image = {
+      mediaType: String(image.mediaType || '').slice(0, 120),
+      filename: String(image.filename || '').slice(0, 240),
+      byteLength,
+      stored: false
+    }
+  }
+  return sanitized
+}
+
+const redactCerebrumTransientPromptSections = (value, sections = []) => {
+  let redacted = String(value || '')
+  Array.from(new Set((Array.isArray(sections) ? sections : [])
+    .map(section => String(section || ''))
+    .filter(Boolean)))
+    .sort((left, right) => right.length - left.length)
+    .forEach(section => {
+      redacted = redacted.split(section).join('[Transient camera-history evidence omitted from this local debug copy.]')
+    })
+  return redacted
+}
+
+const isCerebrumUnifiProtectFlowMessage = message => {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) return false
+  const details = message.details
+  const hasMetadata = !!(details && typeof details === 'object' && !Array.isArray(details) &&
+    details.unifiProtect && typeof details.unifiProtect === 'object' && !Array.isArray(details.unifiProtect))
+  if (hasMetadata) return true
+  return hasCerebrumTransientMessageOrigin({
+    messageId: message._msgid,
+    source: 'unifi-protect'
+  })
 }
 
 const summarizeDetectedCerebrumCameraAdapters = ({ registry, node } = {}) => {
@@ -8960,15 +9039,16 @@ module.exports = function (RED) {
       persistRuntimeStateNow()
     }
 
-    const persistLastChatPromptDebug = ({ systemPrompt, staticContext, userContent } = {}) => {
+    const persistLastChatPromptDebug = ({ systemPrompt, staticContext, userContent, transientSections = [] } = {}) => {
       const systemText = String(systemPrompt || '')
       const staticText = String(staticContext || '')
-      const userText = String(userContent || '')
+      const actualUserText = String(userContent || '')
+      const userText = redactCerebrumTransientPromptSections(actualUserText, transientSections)
       const measurement = measureCerebrumPromptContext({
         body: {
           messages: [
             { role: 'system', content: [systemText, staticText].filter(Boolean).join('\n\n') },
-            { role: 'user', content: userText }
+            { role: 'user', content: actualUserText }
           ]
         },
         provider: node.llmProvider,
@@ -8980,9 +9060,9 @@ module.exports = function (RED) {
         `Generated at: ${new Date().toISOString()}`,
         `Provider: ${String(node.llmProvider || '')}`,
         `Model: ${String(node.llmModel || '')}`,
-        `UTF-8 bytes: ${measurement.bytes}`,
-        `Estimated input tokens: ${measurement.estimatedInputTokens}`,
-        'This file contains prompt text only. API keys and HTTP headers are not included.',
+        `Actual prompt UTF-8 bytes: ${measurement.bytes}`,
+        `Estimated actual input tokens: ${measurement.estimatedInputTokens}`,
+        'This file contains a redacted prompt debug copy. Transient camera-history evidence, API keys and HTTP headers are not included.',
         '',
         '===== SYSTEM MESSAGE START =====',
         systemText,
@@ -12271,7 +12351,7 @@ module.exports = function (RED) {
       })
     }
 
-    const callLLMChatOnce = async ({ contextTokensOverride = 0, systemPrompt, staticContext = '', userContent, essentialUserContent = null, images = [], jsonSchema = null, maxTokensOverride = null, trackChatContextUsage = false, promptCacheKey = '' }) => {
+    const callLLMChatOnce = async ({ contextTokensOverride = 0, systemPrompt, staticContext = '', userContent, essentialUserContent = null, images = [], jsonSchema = null, maxTokensOverride = null, trackChatContextUsage = false, promptCacheKey = '', promptDebugRedactions = [] }) => {
       llmPolicy.assertAllowed()
       if (!node.llmEnabled) throw new Error('LLM is disabled in node config')
       if (node.llmProvider === 'lmstudio' && !String(node.llmModel || '').trim()) {
@@ -12329,7 +12409,8 @@ module.exports = function (RED) {
           persistLastChatPromptDebug({
             systemPrompt: resolvedSystemPrompt,
             staticContext: resolvedStaticContext,
-            userContent: resolvedUserContent
+            userContent: resolvedUserContent,
+            transientSections: promptDebugRedactions
           })
         } catch (error) {
           try { node.sysLogger?.warn(`Cerebrum prompt debug file error: ${error.message || error}`) } catch (logError) { /* ignore */ }
@@ -13396,6 +13477,7 @@ module.exports = function (RED) {
         systemPrompt,
         staticContext,
         userContent,
+        promptDebugRedactions: cameraHistoryResearchContext ? [cameraHistoryResearchContext] : [],
         essentialUserContent: [
           automationContext,
           knxAvailabilityContext,
@@ -13800,7 +13882,13 @@ module.exports = function (RED) {
         reasoningState.cameraResearchResults = cameraResearchResults.concat(newCameraResults)
         reasoningState.cameraHistoryFinalPass = !progressed
         newCameraResults.forEach(result => {
-          archiveCerebrumData('operation', { operation: 'camera_history_query', result }, sessionId)
+          // Keep only a bounded audit summary. Protect remains the source of
+          // truth for recorded events; the queried event page is working
+          // evidence for this reasoning turn, not another local event archive.
+          archiveCerebrumData('operation', {
+            operation: 'camera_history_query',
+            result: summarizeCerebrumCameraHistoryAuditResult(result)
+          }, sessionId)
           recordCerebrumOperation({
             category: 'tool',
             source: 'cameraActions',
@@ -14403,7 +14491,14 @@ module.exports = function (RED) {
       const preparedOutputs = Array.isArray(outputs) ? outputs.slice() : outputs
       if (Array.isArray(preparedOutputs) && preparedOutputs[2]) {
         const replies = Array.isArray(preparedOutputs[2]) ? preparedOutputs[2] : [preparedOutputs[2]]
-        replies.forEach(reply => archiveCerebrumData('conversation', { role: 'assistant', question: extractCerebrumQuestion(inputMessage), payload: reply.payload, metadata: reply.cerebrum }, resolveCerebrumSessionId(inputMessage)))
+        replies.forEach(reply => archiveCerebrumData('conversation', {
+          role: 'assistant',
+          question: extractCerebrumQuestion(inputMessage),
+          payload: reply.payload,
+          // Images are delivered to the requested chat, but their bytes and
+          // raw Protect event are never copied into the JSONL memory archive.
+          metadata: sanitizeCerebrumConversationMetadataForArchive(reply.cerebrum)
+        }, resolveCerebrumSessionId(inputMessage)))
       }
       const sidebarRequestId = String(inputMessage && inputMessage.cerebrum && inputMessage.cerebrum.sidebarRequestId || '')
       const sidebarCapture = sidebarRequestId ? node._sidebarAskCaptures.get(sidebarRequestId) : null
@@ -15406,12 +15501,16 @@ module.exports = function (RED) {
     }
 
     const handleCameraAdapterEvent = (providerEvent, provider = null) => {
-      const event = normalizeCerebrumCameraEvent(providerEvent)
-      if (!event) return false
+      const normalizedEvent = normalizeCerebrumCameraEvent(providerEvent)
+      if (!normalizedEvent) return false
+      // The raw controller payload is never needed for matching, automations or
+      // notifications. Keep the operational event deliberately small even for
+      // providers that include a private `raw` object in their callback.
+      const event = Object.assign({}, normalizedEvent)
+      delete event.raw
       const adapter = provider && node._cameraAdapters instanceof Map
         ? node._cameraAdapters.get(String(provider.adapterId || ''))
         : null
-      const persisted = persistAdapterEventToDisk({ event: Object.assign({}, providerEvent, event), adapter, provider })
       const camera = node._cameraCatalog instanceof Map ? node._cameraCatalog.get(event.cameraId) : null
       const source = provider?.adapterId || providerEvent.adapterId || 'camera'
       const cameraSemanticId = event.semanticId || (camera && camera.semanticId)
@@ -15419,35 +15518,40 @@ module.exports = function (RED) {
       const cameraArea = event.area || (camera && camera.area)
       const providerCapabilities = provider && Array.isArray(provider.capabilities) ? provider.capabilities : []
       const cameraAccess = (camera && camera.access) || 'observe'
-      const semanticEntity = registerCerebrumSemanticBinding({
-        semanticId: cameraSemanticId,
-        source,
-        adapterId: provider?.adapterId || providerEvent.adapterId,
-        providerId: provider?.id || providerEvent.providerId,
-        objectId: event.cameraId,
-        label: cameraLabel,
-        area: cameraArea,
-        kind: 'camera',
-        capabilities: [...providerCapabilities, 'events'],
-        access: cameraAccess,
-        confidence: 1,
-        at: event.at
-      })
-      recordCerebrumStructuredObservation({
-        source,
-        adapterId: provider?.adapterId || providerEvent.adapterId,
-        providerId: provider?.id || providerEvent.providerId,
-        objectId: event.cameraId,
-        semanticId: semanticEntity && semanticEntity.id,
-        label: cameraLabel,
-        area: cameraArea,
-        kind: 'camera',
-        capability: 'events',
-        event: event.eventType,
-        value: event.active,
-        at: event.at,
-        confidence: 1
-      }, persisted && persisted.archiveRecord)
+      if (shouldPersistCerebrumCameraProviderEvents({ provider, event: providerEvent })) {
+        const persistableEvent = Object.assign({}, providerEvent, event)
+        delete persistableEvent.raw
+        const persisted = persistAdapterEventToDisk({ event: persistableEvent, adapter, provider })
+        const semanticEntity = registerCerebrumSemanticBinding({
+          semanticId: cameraSemanticId,
+          source,
+          adapterId: provider?.adapterId || providerEvent.adapterId,
+          providerId: provider?.id || providerEvent.providerId,
+          objectId: event.cameraId,
+          label: cameraLabel,
+          area: cameraArea,
+          kind: 'camera',
+          capabilities: [...providerCapabilities, 'events'],
+          access: cameraAccess,
+          confidence: 1,
+          at: event.at
+        })
+        recordCerebrumStructuredObservation({
+          source,
+          adapterId: provider?.adapterId || providerEvent.adapterId,
+          providerId: provider?.id || providerEvent.providerId,
+          objectId: event.cameraId,
+          semanticId: semanticEntity && semanticEntity.id,
+          label: cameraLabel,
+          area: cameraArea,
+          kind: 'camera',
+          capability: 'events',
+          event: event.eventType,
+          value: event.active,
+          at: event.at,
+          confidence: 1
+        }, persisted && persisted.archiveRecord)
+      }
       node._automationRuntime?.ingest({ source, objectId: event.cameraId, event: event.eventType, value: event.active, at: event.at, changed: false, objectTypes: event.objectTypes, scopeId: event.scopeId, eventId: event.eventId })
       if (event.active === false) return true
       const now = nowMs()
@@ -18638,6 +18742,11 @@ module.exports = function (RED) {
 
     const processCerebrumInput = async (msg) => {
       if (handleHomeAssistantApiResponse(msg)) return
+      // A Protect Device node may be wired into Cerebrum and auto-emit a large
+      // state message every few seconds. It is integration data, not a chat
+      // command (an empty topic used to fall through to the expensive summary
+      // command). Protect access is provided by the camera query adapter instead.
+      if (isCerebrumUnifiProtectFlowMessage(msg)) return
       let adaptedMessage = msg
       try {
         adaptedMessage = executeCerebrumChatAdapter({
@@ -19336,6 +19445,8 @@ module.exports.__test = {
   isCerebrumOpenAiCompatibleChatProvider,
   isCerebrumOnboardingRequest,
   isCerebrumCameraProviderSelected,
+  isCerebrumUnifiProtectFlowMessage,
+  shouldPersistCerebrumCameraProviderEvents,
   isCerebrumSafeFirstRunPrompt,
   isCerebrumTelegramVoiceInput,
   isOfficialOpenAiVoiceUrl,
@@ -19374,6 +19485,7 @@ module.exports.__test = {
   postOpenAiResponsesWithFallbacks,
   readBoundedResponseBuffer,
   redactCerebrumTelegramVoiceLocations,
+  redactCerebrumTransientPromptSections,
   resolveCerebrumLanguage,
   resolveCerebrumLlmTimeoutMs,
   resolveCerebrumLocalGenerationBudget,
@@ -19386,7 +19498,9 @@ module.exports.__test = {
   resolveOllamaModelMaxContext,
   releaseSharedCerebrumState,
   safeCerebrumSend,
+  sanitizeCerebrumConversationMetadataForArchive,
   sanitizeCerebrumWebSourceText,
+  summarizeCerebrumCameraHistoryAuditResult,
   summarizeDetectedCerebrumCameraAdapters,
   summarizeCerebrumChatContext,
   appendCerebrumWebSources,

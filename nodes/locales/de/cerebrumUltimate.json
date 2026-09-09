@@ -159,7 +159,7 @@
       "chatContextFileSchedules": "Verbindlicher dauerhafter Laufzeitstatus der Pläne und Erinnerungen dieses Nodes.",
       "chatContextFileSchedulesReadable": "Erzeugte menschenlesbare Ansicht der Pläne und Erinnerungen dieses Nodes.",
       "chatContextFileAssistantConfig": "Dauerhafte Cerebrum-Konfiguration und semantische Bereiche dieses Nodes.",
-      "chatContextFileLastChatPrompt": "Temporäre lokale Kopie der letzten System- und Benutzernachricht an das Cerebrum-Modell; wird bei jeder Cerebrum-Anfrage überschrieben.",
+      "chatContextFileLastChatPrompt": "Temporäre redigierte lokale Kopie der letzten System- und Benutzernachricht an das Cerebrum-Modell; transiente Kamera-Verlaufsdaten werden ausgelassen und die Datei wird bei jeder Anfrage überschrieben.",
       "chatContextFileBadge": "Datei",
       "chatContextDirectoryRoot": "Stammverzeichnis des Telegrammarchivs",
       "chatContextDirectoryNode": "Telegrammarchiv dieses Nodes",

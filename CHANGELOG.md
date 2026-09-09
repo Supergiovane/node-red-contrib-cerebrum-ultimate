@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.3.1 — 2026-09-09
+## 0.3.2 — 2026-09-09
 
 - Added a versioned, integration-neutral runtime capability contract with sanitized health, readiness and supported-operation snapshots for RED, KNX, Home Assistant, UniFi/camera and third-party adapters. Capability discovery does not grant device authority.
 - Added persistent deterministic episodes derived from evidence-linked observations across integrations, plus non-destructive links between compatible habit and behaviour-pattern views.
 - Added process-local capability leadership so Cerebrum nodes sharing household memory keep ingesting locally while avoiding duplicate periodic autonomous reasoning.
 - Added vendor-neutral recorded-camera queries and exact event snapshots. Cerebrum can iteratively page normalized historical evidence, select an exact event and return its recorded JPEG without exposing provider credentials or substituting a live image; UniFi Protect supplies the operations through its selected runtime provider.
+- Made UniFi Protect source-owned and live-only inside Cerebrum: unsolicited Protect output is ignored before generic observation/chat processing, camera events remain available to transient watches and local automations, historical pages are queried on demand, and raw payloads, event pages and JPEG bytes are excluded from Cerebrum archives, prompt-debug files and backups.
 
 ## 0.2.2 — 2026-09-09
 

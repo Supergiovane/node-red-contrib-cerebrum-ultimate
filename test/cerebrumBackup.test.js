@@ -526,13 +526,118 @@ describe('Cerebrum portable backup', () => {
       }])
       expect(currentSnapshotCalls).to.have.length(0)
       expect(prompts[1]).to.include('CAMERA HISTORY TOOL RESULTS').and.include('eventId=event-42')
+      const debugPrompt = fs.readFileSync(node._lastChatPromptDebugFile, 'utf8')
+      expect(debugPrompt).to.include('Transient camera-history evidence omitted')
+      expect(debugPrompt).not.to.include('eventId=event-42')
+      const backup = await decodeBackupUpload(await createBackupZip(await node.exportAiConfig()))
+      expect(backup.supplementalFiles.lastChatPrompt.content).to.include('Transient camera-history evidence omitted')
+      expect(backup.supplementalFiles.lastChatPrompt.content).not.to.include('eventId=event-42')
+      expect(backup.supplementalFiles.lastChatPrompt.content).not.to.include('[CH1]')
+      expect(backup.supplementalFiles.lastChatPrompt.content).not.to.include('2026-09-09T08:00:00.000Z')
       expect(result.metadata).to.include({ type: 'camera_event_snapshot', eventId: 'event-42' })
       expect(result.metadata.image).to.include({ mediaType: 'image/jpeg' })
       expect(result.metadata.image.data).to.equal(image)
       expect(result.answer).to.include('Ingresso principale')
+
+      const archived = fs.readFileSync(node._sharedMemoryArchive.filePath, 'utf8')
+        .trim()
+        .split('\n')
+        .map(JSON.parse)
+      const historyAudit = archived.find(record => record.kind === 'operation' && record.data?.operation === 'camera_history_query')
+      expect(historyAudit.data.result).not.to.have.property('events')
+      expect(historyAudit.data.result).to.include({ ok: true, returnedEvents: 1, hasMore: false })
+      const archivedReply = archived.find(record => record.kind === 'conversation' && record.data?.metadata?.type === 'camera_event_snapshot')
+      expect(archivedReply.data.metadata.image).to.deep.equal({
+        mediaType: 'image/jpeg',
+        filename: 'ingresso-principale-snapshot.jpg',
+        byteLength: 4,
+        stored: false
+      })
     } finally {
       registry.unregisterProvider(providerId)
       simpleGet.concat = transport
+    }
+  })
+
+  it('uses UniFi Protect live events without copying the feed into Cerebrum memory', async function () {
+    this.timeout(10000)
+    const registry = require('../nodes/utils/cerebrumCamera').getCerebrumCameraAdapterRegistry()
+    const providerId = 'unifi-ultimate:protect-live-only'
+    let listener
+    registry.registerAdapter({ id: 'unifi-ultimate', title: 'UniFi Ultimate / Protect' })
+    registry.registerProvider({
+      id: providerId,
+      adapterId: 'unifi-ultimate',
+      controllerId: 'protect-live-only',
+      eventRetention: 'none',
+      capabilities: ['camera_catalog', 'snapshot', 'motion', 'event_history', 'event_snapshot'],
+      async listCameras () {
+        return [{
+          id: 'protect-live-only:camera-1',
+          name: 'Ingresso',
+          adapterId: 'unifi-ultimate',
+          providerId,
+          online: true
+        }]
+      },
+      subscribe (callback) {
+        listener = callback
+        return () => { listener = null }
+      }
+    })
+    try {
+      const node = create('protect-live-only', { unifiProtectConfig: 'protect-live-only' })
+      node.cerebrumAutonomyEnabled = false
+      await node.refreshCameraAdapterRegistry({ force: true })
+      expect(listener).to.be.a('function')
+
+      const appended = []
+      const append = node._sharedMemoryArchive.append.bind(node._sharedMemoryArchive)
+      node._sharedMemoryArchive.append = entry => {
+        appended.push(entry)
+        return append(entry)
+      }
+      const observationsBefore = node._homeMemory.observations.length
+      const episodesBefore = node._homeMemory.episodes.length
+
+      listener({
+        source: 'unifi-ultimate',
+        adapterId: 'unifi-ultimate',
+        providerId,
+        cameraId: 'protect-live-only:camera-1',
+        cameraName: 'Ingresso',
+        eventId: 'motion-1',
+        eventType: 'motion',
+        active: true,
+        at: '2026-09-09T12:00:00.000Z',
+        raw: { controllerPayload: 'must-not-be-saved' }
+      })
+
+      expect(appended).to.deep.equal([])
+      expect(node._homeMemory.observations).to.have.length(observationsBefore)
+      expect(node._homeMemory.episodes).to.have.length(episodesBefore)
+      const historyDir = path.join(storage(node), 'adapter-history', node.id)
+      expect(fs.existsSync(historyDir)).to.equal(false)
+
+      const outputs = []
+      node.send = output => outputs.push(output)
+      node.emit('input', {
+        payload: { camera: { id: 'camera-1' }, verbose: true },
+        details: { unifiProtect: { deviceType: 'camera', deviceId: 'camera-1', source: 'interval' } }
+      })
+      require('../nodes/utils/cerebrumTransientMessageOrigins').rememberCerebrumTransientMessageOrigin({
+        messageId: 'protect-relay-direct-input',
+        source: 'unifi-protect'
+      })
+      node.emit('input', {
+        _msgid: 'protect-relay-direct-input',
+        payload: { motion: true }
+      })
+      await new Promise(resolve => setImmediate(resolve))
+      expect(outputs).to.deep.equal([])
+      expect(appended).to.deep.equal([])
+    } finally {
+      registry.unregisterProvider(providerId)
     }
   })
 

@@ -952,7 +952,7 @@
                     schedules: t("cerebrumUltimate.messages.chatContextFileSchedules", "Authoritative structured plans and reminders for this node."),
                     schedulesReadable: t("cerebrumUltimate.messages.chatContextFileSchedulesReadable", "Human-readable plans and reminders generated from the scheduler state."),
                     assistantConfig: t("cerebrumUltimate.messages.chatContextFileAssistantConfig", "Persistent Cerebrum configuration and semantic areas for this node."),
-                    lastChatPrompt: t("cerebrumUltimate.messages.chatContextFileLastChatPrompt", "Temporary local copy of the latest system and user messages sent to the Cerebrum model; overwritten on every Cerebrum request.")
+                    lastChatPrompt: t("cerebrumUltimate.messages.chatContextFileLastChatPrompt", "Temporary redacted local copy of the latest system and user messages sent to the Cerebrum model; transient camera-history evidence is omitted and the file is overwritten on every Cerebrum request.")
                 };
                 (Array.isArray(overview.files) ? overview.files : []).forEach(function (item) {
                     if (!item || !item.name || !item.path) return;
