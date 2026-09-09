@@ -395,6 +395,147 @@ describe('Cerebrum portable backup', () => {
     } finally { simpleGet.concat = transport }
   })
 
+  it('queries recorded camera events before returning the exact historical snapshot', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const registry = require('../nodes/utils/cerebrumCamera').getCerebrumCameraAdapterRegistry()
+    const providerId = 'camera-history-test:controller-1'
+    const image = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+    const historyCalls = []
+    const snapshotCalls = []
+    const currentSnapshotCalls = []
+    const prompts = []
+    registry.registerAdapter({ id: 'camera-history-test', title: 'Recorded camera test' })
+    registry.registerProvider({
+      id: providerId,
+      adapterId: 'camera-history-test',
+      controllerId: 'controller-1',
+      title: 'Recorded camera test',
+      capabilities: ['camera_catalog', 'event_history', 'event_snapshot'],
+      async listCameras () {
+        return [{ id: 'controller-1:camera-1', name: 'Ingresso principale', online: false }]
+      },
+      async queryEvents (request) {
+        historyCalls.push(request)
+        return {
+          events: [{
+            providerId,
+            eventId: 'event-42',
+            cameraId: 'controller-1:camera-1',
+            cameraName: 'Ingresso principale',
+            eventType: 'smartDetectZone',
+            objectTypes: ['person'],
+            at: '2026-09-09T08:00:00.000Z',
+            endAt: '2026-09-09T08:00:04.000Z',
+            active: false,
+            thumbnailAvailable: true
+          }],
+          hasMore: false,
+          nextOffset: null
+        }
+      },
+      async takeEventSnapshot (request) {
+        snapshotCalls.push(request)
+        return { data: image, mediaType: 'image/jpeg', eventId: request.eventId }
+      },
+      async takeSnapshot (request) {
+        currentSnapshotCalls.push(request)
+        throw new Error('A current snapshot must not be used for historical evidence')
+      },
+      subscribe: () => () => {}
+    })
+    let modelCall = 0
+    simpleGet.concat = (options, callback) => {
+      modelCall += 1
+      prompts.push(JSON.stringify(JSON.parse(options.body).messages))
+      const cameraActions = modelCall === 1
+        ? [{
+            type: 'query_events',
+            providerId,
+            camera: 'Ingresso principale',
+            eventId: '',
+            eventType: 'motion',
+            scopeName: '',
+            objectTypes: [],
+            from: '',
+            to: '',
+            offset: 0,
+            limit: 20,
+            cooldownSeconds: 0,
+            sendSnapshot: false,
+            reason: 'Trova l’ultimo movimento registrato'
+          }]
+        : [{
+            type: 'event_snapshot',
+            providerId,
+            camera: 'Ingresso principale',
+            eventId: 'event-42',
+            eventType: '',
+            scopeName: '',
+            objectTypes: [],
+            from: '',
+            to: '',
+            offset: 0,
+            limit: 20,
+            cooldownSeconds: 0,
+            sendSnapshot: false,
+            reason: 'Mostra l’immagine dell’evento più recente'
+          }]
+      const response = {
+        reply: '',
+        language: 'it',
+        commands: [],
+        cameraActions,
+        speechActions: [],
+        memoryActions: [],
+        catalogActions: [],
+        webActions: [],
+        scheduleActions: [],
+        historyActions: [],
+        codeActions: [],
+        automationActions: []
+      }
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      const node = create('recorded-camera-chat', {
+        llmEnabled: true,
+        llmProvider: 'openai_compat',
+        llmBaseUrl: 'https://llm.invalid/v1/chat/completions',
+        llmModel: 'test-model',
+        llmMaxTokens: 1200,
+        llmContextLength: 32768
+      })
+      node.cerebrumAutonomyEnabled = false
+      const result = await node.sidebarAsk('Fammi vedere lo snapshot dell’ultimo movimento rilevato all’ingresso')
+
+      expect(modelCall).to.equal(2)
+      expect(historyCalls).to.have.length(1)
+      expect(historyCalls[0]).to.include({
+        cameraId: 'controller-1:camera-1',
+        offset: 0,
+        limit: 20
+      })
+      expect(historyCalls[0].eventTypes).to.deep.equal(['motion'])
+      expect(snapshotCalls).to.deep.equal([{
+        eventId: 'event-42',
+        cameraId: 'controller-1:camera-1',
+        cameraName: 'Ingresso principale',
+        reason: 'Mostra l’immagine dell’evento più recente'
+      }])
+      expect(currentSnapshotCalls).to.have.length(0)
+      expect(prompts[1]).to.include('CAMERA HISTORY TOOL RESULTS').and.include('eventId=event-42')
+      expect(result.metadata).to.include({ type: 'camera_event_snapshot', eventId: 'event-42' })
+      expect(result.metadata.image).to.include({ mediaType: 'image/jpeg' })
+      expect(result.metadata.image.data).to.equal(image)
+      expect(result.answer).to.include('Ingresso principale')
+    } finally {
+      registry.unregisterProvider(providerId)
+      simpleGet.concat = transport
+    }
+  })
+
   it('continues beyond four ETS passes, revisits earlier evidence and still requires write confirmation', async function () {
     this.timeout(10000)
     const simpleGet = require('simple-get')

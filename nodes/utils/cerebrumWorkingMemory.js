@@ -6,15 +6,15 @@ const CEREBRUM_MEMORY_QUERY_MAX_ITEMS = 20
 const SECTION_NAMES = ['areas', 'situations', 'entities', 'expectations', 'goals', 'patterns', 'knowledge', 'evidence', 'episodes', 'habits']
 const SECTION_LABELS = { areas: 'AREA', situations: 'SITUATION', entities: 'ENTITY', expectations: 'EXPECTATION', goals: 'GOAL', patterns: 'PATTERN', knowledge: 'KNOWLEDGE', evidence: 'EVIDENCE', episodes: 'EPISODE', habits: 'HABIT' }
 const FIELDS = {
-  entities: ['id', 'source', 'objectId', 'label', 'area', 'kind', 'value', 'observedAt', 'verifiedAt', 'changedAt', 'refreshIntervalSeconds', 'fresh', 'available', 'evidenceId'],
+  entities: ['id', 'semanticId', 'source', 'objectId', 'label', 'area', 'kind', 'capability', 'unit', 'access', 'value', 'observedAt', 'verifiedAt', 'changedAt', 'refreshIntervalSeconds', 'fresh', 'available', 'evidenceId'],
   situations: ['id', 'kind', 'summary', 'status', 'goalId', 'researchTopic', 'entityIds', 'evidenceIds', 'createdAt', 'updatedAt', 'dueAt', 'lastReasonAt', 'expected'],
   expectations: ['id', 'habitId', 'entityId', 'expectedValue', 'windowStartAt', 'dueAt', 'status'],
   goals: ['id', 'origin', 'topic', 'status', 'entityIds', 'evidenceIds', 'patternIds', 'sourceIds', 'comfortConfirmed', 'createdAt', 'updatedAt', 'dueAt', 'summary', 'comfortBenefit', 'successCriterion', 'plan', 'assessment', 'baseline', 'current', 'support', 'reviews'],
-  patterns: ['id', 'entityId', 'source', 'objectId', 'label', 'area', 'kind', 'dayType', 'hour', 'status', 'observedDays', 'occurrences', 'firstObserved', 'lastObserved', 'numeric', 'categoricalValues', 'unlistedValues', 'originObservations', 'evidenceIds', 'summary', 'dataCoverage'],
+  patterns: ['id', 'entityId', 'semanticId', 'source', 'objectId', 'label', 'area', 'kind', 'dayType', 'hour', 'status', 'observedDays', 'occurrences', 'firstObserved', 'lastObserved', 'numeric', 'categoricalValues', 'unlistedValues', 'originObservations', 'evidenceIds', 'relatedHabitIds', 'summary', 'dataCoverage'],
   knowledge: ['id', 'url', 'retrievedAt', 'expiresAt', 'origin', 'topic', 'goalId', 'title', 'excerptOnly', 'text'],
   evidence: ['id', 'entityId', 'type', 'at', 'summary', 'value', 'previousValue', 'observedAt'],
-  episodes: ['id', 'situationId', 'at', 'summary', 'outcome', 'entityIds', 'evidenceIds'],
-  habits: ['id', 'type', 'description', 'summary', 'source', 'objectId', 'entityIds', 'label', 'area', 'kind', 'value', 'status', 'confidence', 'samples', 'supportingObservations', 'contradictingObservations', 'observationDays', 'observationSpanDays', 'dayType', 'averageMinuteOfDay', 'deviationMinutes', 'firstSeenAt', 'updatedAt', 'lastObserved', 'evidenceIds']
+  episodes: ['id', 'type', 'status', 'hypothesis', 'origin', 'situationId', 'at', 'startedAt', 'endedAt', 'area', 'sources', 'summary', 'outcome', 'confidence', 'importance', 'entityIds', 'evidenceIds', 'observationIds'],
+  habits: ['id', 'type', 'description', 'summary', 'source', 'objectId', 'semanticId', 'entityIds', 'label', 'area', 'kind', 'value', 'status', 'confidence', 'samples', 'supportingObservations', 'contradictingObservations', 'observationDays', 'observationSpanDays', 'dayType', 'averageMinuteOfDay', 'deviationMinutes', 'firstSeenAt', 'updatedAt', 'lastObserved', 'evidenceIds', 'relatedPatternIds']
 }
 
 const byteLength = value => Buffer.byteLength(value, 'utf8')
@@ -135,9 +135,10 @@ const prepareWorld = world => {
   const evidenceById = new Map(sections.evidence.map(record => [identifier(record), record]))
   const goalsById = new Map(sections.goals.map(record => [identifier(record), record]))
   const linkedIds = (record, section) => {
-    if (section === 'entities') return [identifier(record)]
+    if (section === 'entities') return [identifier(record), typeof record.semanticId === 'string' ? record.semanticId : ''].filter(Boolean)
     const ids = stringList(record.entityIds)
     if (typeof record.entityId === 'string') ids.push(record.entityId)
+    if (typeof record.semanticId === 'string') ids.push(record.semanticId)
     if (typeof record.goalId === 'string') {
       const goal = goalsById.get(record.goalId)
       if (goal) ids.push(...stringList(goal.entityIds))
@@ -162,7 +163,7 @@ const prepareWorld = world => {
 }
 
 const rankRecords = (records, { section, words, preferredIds, preferredRecordIds = new Set(), preferredAreas = new Set(), linkedIds }) => records.map(record => {
-  const text = normalizeText(['id', 'label', 'area', 'kind', 'type', 'summary', 'description', 'source', 'objectId', 'topic', 'comfortBenefit', 'successCriterion', 'title', 'url', 'text'].map(key => typeof record[key] === 'string' ? record[key].slice(0, 512) : '').join(' '))
+  const text = normalizeText(['id', 'semanticId', 'label', 'area', 'kind', 'type', 'summary', 'description', 'source', 'objectId', 'topic', 'comfortBenefit', 'successCriterion', 'title', 'url', 'text'].map(key => typeof record[key] === 'string' ? record[key].slice(0, 600) : '').join(' '))
   const queryScore = words.reduce((total, word) => total + (text.includes(word) ? 10 : 0), 0)
   const score = queryScore + (preferredRecordIds.has(identifier(record)) ? 5000 : 0) + (linkedIds(record, section).some(id => preferredIds.has(id)) ? 1000 : 0) + (preferredAreas.has(record.area || (section === 'areas' && record.id)) ? 50 : 0)
   return { record, score, queryScore }
@@ -229,8 +230,8 @@ const buildCerebrumWorkingMemory = ({ world, question = '', situation = null, by
   }
 }
 
-/** Read-only progressive retrieval. `get` accepts entity IDs only, preserving
- * integration prefixes. The goals/patterns/knowledge/evidence operations also
+/** Read-only progressive retrieval. `get` accepts source-qualified native IDs
+ * or explicit semantic IDs; neither path guesses identity from labels. The goals/patterns/knowledge/evidence operations also
  * accept exact record IDs in entityIds, allowing recall of a cited fact/source. */
 const queryCerebrumWorldMemory = ({ world, operation = 'search', query = '', entityIds = [], limit = 8, offset = 0, byteBudget = CEREBRUM_MEMORY_QUERY_MAX_BYTES } = {}) => {
   const operations = { search: 'entities', get: 'entities', episodes: 'episodes', situations: 'situations', areas: 'areas', habits: 'habits', expectations: 'expectations', goals: 'goals', patterns: 'patterns', knowledge: 'knowledge', evidence: 'evidence' }
@@ -239,8 +240,8 @@ const queryCerebrumWorldMemory = ({ world, operation = 'search', query = '', ent
   const budget = finiteInteger(byteBudget, CEREBRUM_MEMORY_QUERY_MAX_BYTES, 768, CEREBRUM_MEMORY_QUERY_MAX_BYTES)
   const count = finiteInteger(limit, 8, 1, CEREBRUM_MEMORY_QUERY_MAX_ITEMS)
   const start = finiteInteger(offset, 0, 0, 1000000)
-  const ids = new Set(stringList(entityIds).slice(0, CEREBRUM_MEMORY_QUERY_MAX_ITEMS).filter(id => id.length <= 500))
-  if (operation === 'get' && ids.size === 0) return { ok: false, operation, error: 'get requires exact entityIds including the source prefix.' }
+  const ids = new Set(stringList(entityIds).slice(0, CEREBRUM_MEMORY_QUERY_MAX_ITEMS).filter(id => id.length <= 600))
+  if (operation === 'get' && ids.size === 0) return { ok: false, operation, error: 'get requires exact source-qualified entityIds or semantic IDs.' }
   const { sections, linkedIds } = prepareWorld(world)
   const words = queryWords(query)
   const acceptsRecordIds = ['goals', 'patterns', 'knowledge', 'evidence'].includes(operation)

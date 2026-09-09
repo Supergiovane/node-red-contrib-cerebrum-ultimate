@@ -14,6 +14,7 @@ describe('Persistent Cerebrum autonomy', () => {
   let currentTime
   let states
   let habits
+  let episodes
   let reasons
   let executions
   let notifications
@@ -28,7 +29,7 @@ describe('Persistent Cerebrum autonomy', () => {
   const actionDecision = situation => decision(situation, { disposition: 'act', summary: 'Turn off the kitchen light.', action: { source: 'homeassistant', objectId: 'light.kitchen', value: false }, expected: { source: 'homeassistant', objectId: 'light.kitchen', value: false } })
   const makeRuntime = (overrides = {}) => createCerebrumAutonomy({
     filePath: path.join(directory, 'autonomy.json'),
-    readSnapshot: () => ({ states, habits }),
+    readSnapshot: () => ({ states, habits, episodes }),
     now: () => currentTime,
     enabled: () => enabled,
     reason: async input => { reasons.push(input); return decide(input) },
@@ -42,6 +43,7 @@ describe('Persistent Cerebrum autonomy', () => {
     currentTime = new Date(2026, 8, 7, 8, 0, 0).getTime()
     states = [state()]
     habits = []
+    episodes = []
     reasons = []
     executions = []
     notifications = []
@@ -79,6 +81,27 @@ describe('Persistent Cerebrum autonomy', () => {
     expect(runtime.snapshot().evidence.filter(item => item.type === 'state_changed').map(item => item.value)).to.deep.equal(['true', 'false'])
     expect(runtime.snapshot().situations.filter(item => item.key === 'area:kitchen')).to.have.length(1)
     expect(runtime.snapshot().entities[0].value).to.equal('false')
+  })
+
+  it('imports durable observation episodes without confusing them with autonomy outcomes', async () => {
+    enabled = false
+    episodes = [{
+      id: 'observation-episode-1',
+      type: 'correlated_episode',
+      status: 'derived',
+      origin: 'deterministic-observation-correlation',
+      startedAt: at(),
+      endedAt: at(),
+      entityIds: ['homeassistant:light.kitchen'],
+      observationIds: ['observation-1'],
+      evidenceIds: ['archive-m1'],
+      summary: 'Linked observations'
+    }]
+
+    await runtime.tick()
+    const imported = runtime.snapshot().episodes.find(item => item.id === 'observation-episode-1')
+    expect(imported).to.include({ origin: 'deterministic-observation-correlation', hypothesis: false })
+    expect(imported.observationIds).to.deep.equal(['observation-1'])
   })
 
   it('saves observations before a tick and replays a restart journal exactly once without rewinding newer state', async () => {

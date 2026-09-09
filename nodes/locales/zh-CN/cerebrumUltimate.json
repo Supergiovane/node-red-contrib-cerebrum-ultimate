@@ -33,7 +33,7 @@
       "llmIncludeRaw": "Include raw payload hex",
       "llmAllowKnxCommands": "允许 AI 读取 KNX 状态并控制执行器",
       "llmRequireCommandConfirmation": "发送 KNX 命令前请求确认",
-      "llmAllowRuntimeCode": "允许 AI 运行特权本地 JavaScript",
+      "llmAllowRuntimeCode": "允许 AI 使用隔离的 JavaScript 检查 Node-RED",
       "webAccessEnabled": "允许 AI 使用 Web",
       "webMaxCallsPerHour": "每小时最多 Web 调用次数",
       "chatAdapterPreset": "输入/输出消息适配器",
@@ -86,7 +86,7 @@
     "messages": {
       "webAccessHint": "模型会根据每个明确的 Cerebrum 请求或计划请求，以语义方式选择这个通用 Web 工具。如果关键范围不明确，它会先向用户询问再搜索；不使用后台轮询、关键词或意图分类器。外部网站和搜索服务会收到查询及本服务器的公网 IP；私有 KNX、摄像头、对话、记忆和凭据数据绝不会被自动加入。",
       "webBudgetHint": "滚动预算统计对话和用户创建的计划任务产生的真实外部调用。",
-      "runtimeCodeHint": "高级且存在潜在危险。这不是安全沙箱：生成的同步 JavaScript 可直接访问 node 和 RED，其结果会发送给所选模型提供商。仅在信任该模型及其指令时启用。",
+      "runtimeCodeHint": "高级只读检查。同步 JavaScript 仅接收经过清理且不可变的已安装节点集、已部署节点、集成和提供商就绪状态快照；不会暴露实时 Node-RED 对象、凭据或主机能力。结果会发送给所选模型提供商。",
       "lmStudioContextAvailable": "模型最大上下文",
       "lmStudioContextLoading": "正在检查模型的当前上下文",
       "lmStudioContextInactive": "模型未运行；首次请求时将使用 Bionic 默认值",

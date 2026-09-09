@@ -294,9 +294,12 @@ describe('Cerebrum bounded home intelligence memory', () => {
     memory = updateCerebrumCurrentState(memory, {
       source: 'home-assistant',
       objectId: 'light.kitchen',
+      semanticId: 'home:kitchen-light',
       label: 'Kitchen light',
       area: 'kitchen',
       kind: 'light',
+      capability: 'light',
+      access: 'read',
       value: 'off',
       at: '2026-08-11T07:00:00.000Z',
       verified: true
@@ -313,6 +316,7 @@ describe('Cerebrum bounded home intelligence memory', () => {
     })
 
     expect(memory.states).to.have.length(2)
+    expect(memory.states[0]).to.include({ semanticId: 'home:kitchen-light', capability: 'light', access: 'read' })
     expect(memory.states.every(item => ['hot', 'warm', 'cold'].includes(item.tier))).to.equal(true)
     const context = buildCerebrumStateMemoryContext({
       memory,
@@ -322,7 +326,47 @@ describe('Cerebrum bounded home intelligence memory', () => {
       now: Date.parse('2026-08-11T07:02:00.000Z')
     })
     expect(context).to.include('home-assistant:light.kitchen')
+    expect(context).to.include('semanticId=home:kitchen-light')
     expect(context).not.to.include('knx:1/2/3')
+  })
+
+  it('round-trips the additive cross-integration registry without changing memory version 2', () => {
+    const memory = createEmptyCerebrumHomeMemory()
+    memory.episodes = [{
+      id: 'episode:entry',
+      type: 'correlated_episode',
+      status: 'derived',
+      hypothesis: false,
+      origin: 'deterministic-observation-correlation',
+      startedAt: '2026-09-09T08:00:00.000Z',
+      endedAt: '2026-09-09T08:00:02.000Z',
+      sources: ['knx', 'unifi-protect'],
+      observationIds: ['observation:door', 'observation:camera'],
+      evidenceIds: ['m1', 'm2'],
+      summary: 'Door and camera observations at the entrance'
+    }]
+    memory.semanticEntities = [{
+      id: 'home:entry-camera',
+      identity: 'explicit',
+      label: 'Ingresso',
+      kind: 'camera',
+      area: 'hall',
+      capabilities: ['snapshot', 'events'],
+      access: ['observe'],
+      bindings: [
+        { source: 'unifi-protect', adapterId: 'unifi-protect', providerId: 'main', objectId: 'camera-1', label: 'Ingresso' },
+        { source: 'home-assistant', adapterId: 'home-assistant', providerId: 'ha', objectId: 'camera.ingresso', label: 'Camera ingresso' }
+      ]
+    }]
+    const rendered = buildCerebrumHomeMemoryMarkdown({ memory })
+    const restored = parseCerebrumHomeMemoryMarkdownStrict(rendered.markdown)
+
+    expect(restored.version).to.equal(2)
+    expect(restored.semanticEntities[0].bindings).to.have.length(2)
+    expect(restored.episodes[0].evidenceIds).to.deep.equal(['m1', 'm2'])
+    expect(rendered.markdown).to.include('## Cross-integration entity registry')
+    expect(rendered.markdown).to.include('## Observed episodes')
+    expect(rendered.markdown).to.include('unifi-protect/main:camera-1')
   })
 
   it('round-trips occupant decisions through the editable authoritative JSON block', () => {
@@ -368,6 +412,7 @@ describe('Cerebrum bounded home intelligence memory', () => {
       habitDecisions: [],
       states: [{ label: 'Luce cucina', value: 'on', area: 'cucina', source: 'knx', observedAt: '2026-08-18T07:30:00.000Z' }],
       observations: [],
+      episodes: [{ startedAt: '2026-08-18T07:30:00.000Z', endedAt: '2026-08-18T07:30:02.000Z', summary: 'Porta e presenza correlate', sources: ['knx', 'unifi'] }],
       notifications: [],
       semanticObjects: [{ label: 'Luce cucina', kind: 'light', area: 'cucina' }],
       reconciler: { lastTickAt: '2026-08-18T07:34:00.000Z', autonomousReadCount: 2 }
@@ -379,6 +424,8 @@ describe('Cerebrum bounded home intelligence memory', () => {
     expect(text).to.include('Luce cucina')
     expect(text).to.include('8 osservazioni')
     expect(text).to.include('15 giorni tra la prima e l’ultima osservazione')
+    expect(text).to.include('EPISODI OSSERVATI')
+    expect(text).to.include('Porta e presenza correlate')
     expect(text).not.to.include('"habits"')
     expect(text).not.to.include('{')
   })

@@ -107,6 +107,17 @@ describe('Cerebrum read-only world retrieval', function () {
     expect(queryCerebrumWorldMemory({ world, operation: '__proto__' }).ok).to.equal(false)
   })
 
+  it('retrieves every native binding linked by one explicit semantic identity', function () {
+    const world = makeWorld()
+    world.entities[0].semanticId = 'home:garden-light'
+    world.entities.push({ id: 'ha:light.garden', semanticId: 'home:garden-light', source: 'ha', objectId: 'light.garden', label: 'Luce giardino HA', value: true })
+
+    expect(queryCerebrumWorldMemory({ world, operation: 'get', entityIds: ['home:garden-light'] }).items.map(item => item.id)).to.have.members([
+      'knx:1/2/3',
+      'ha:light.garden'
+    ])
+  })
+
   it('retrieves episodes through exact situation/evidence links and combines entity and text filters', function () {
     const world = makeWorld()
     world.episodes.push({ id: 'ep-unrelated', summary: 'Giardino', situationId: 'missing', evidenceIds: ['ev-kitchen'] })

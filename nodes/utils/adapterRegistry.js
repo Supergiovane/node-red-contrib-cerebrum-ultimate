@@ -1,5 +1,10 @@
 'use strict'
 
+const {
+  inspectCerebrumIntegrationRegistry,
+  normalizeCerebrumIntegrationManifest
+} = require('./cerebrumIntegrationContract')
+
 const REGISTRY_VERSION = 1
 const REGISTRY_KEY = Symbol.for('node-red.cerebrum-ultimate.adapters.v1')
 const MAX_CAPABILITIES = 48
@@ -20,16 +25,7 @@ const uniqueText = (values, max = MAX_CAPABILITIES) => Array.from(new Set((Array
   .slice(0, max)
 
 const normalizeAdapter = adapter => {
-  if (!adapter || typeof adapter !== 'object') throw new Error('Cerebrum adapter must be an object')
-  const id = text(adapter.id, 120)
-  if (!id) throw new Error('Cerebrum adapter id is required')
-  return Object.freeze({
-    id,
-    title: text(adapter.title || id, 240),
-    packageName: text(adapter.packageName, 240),
-    capabilities: uniqueText(adapter.capabilities),
-    access: text(adapter.access || 'observe', 80)
-  })
+  return Object.freeze(normalizeCerebrumIntegrationManifest(adapter))
 }
 
 const normalizeProvider = provider => {
@@ -83,16 +79,12 @@ const createRegistry = () => {
       return () => this.listeners.delete(listener)
     },
     snapshot () {
+      const inspected = inspectCerebrumIntegrationRegistry(this)
       return {
         version: this.version,
-        adapters: Array.from(this.adapters.values()),
-        providers: Array.from(this.providers.values()).map(provider => ({
-          id: text(provider.id, 200),
-          adapterId: text(provider.adapterId, 120),
-          title: text(provider.title || provider.id, 240),
-          capabilities: uniqueText(provider.capabilities),
-          connected: provider.connected !== false
-        }))
+        contractVersion: inspected.contractVersion,
+        adapters: inspected.adapters,
+        providers: inspected.providers
       }
     }
   }
@@ -135,6 +127,13 @@ const normalizeCerebrumEvent = (value, defaults = {}) => {
     resourceName: text(source.resourceName || source.name || resourceId, 240),
     area: text(source.area, 160),
     deviceName: text(source.deviceName, 240),
+    semanticId: text(source.semanticId, 600),
+    kind: text(source.kind || source.resourceType || source.domain, 120),
+    capability: text(source.capability, 120),
+    capabilities: uniqueText(source.capabilities || (source.capability ? [source.capability] : [])),
+    access: text(source.access || (source.readOnly === true ? 'observe' : ''), 80),
+    unit: text(source.unit || source.unitOfMeasurement, 80),
+    confidence: Math.max(0, Math.min(1, Number(source.confidence) || 0)),
     state: text(state, 500),
     previousState: text(source.previousState, 500),
     at: text(source.at || new Date().toISOString(), 64),

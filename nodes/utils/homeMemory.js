@@ -1,3 +1,12 @@
+const {
+  CEREBRUM_ENTITY_REGISTRY_MAX_ENTITIES,
+  normalizeCerebrumEntityRegistry
+} = require('./cerebrumEntityRegistry')
+const {
+  CEREBRUM_HOME_EPISODE_MAX_ITEMS,
+  normalizeCerebrumEpisodes
+} = require('./cerebrumMemoryConsolidator')
+
 const HOME_MEMORY_VERSION = 2
 const HOME_MEMORY_MIN_KB = 64
 const HOME_MEMORY_MAX_KB = 5120
@@ -288,10 +297,12 @@ const createEmptyCerebrumHomeMemory = () => ({
   ownerSessionId: '',
   ownerLanguage: '',
   observations: [],
+  episodes: [],
   habits: [],
   habitDecisions: [],
   notifications: [],
   semanticObjects: [],
+  semanticEntities: [],
   states: [],
   reconciler: {
     lastTickAt: '',
@@ -336,6 +347,7 @@ const normalizeHabits = value => normalizeArray(value, HOME_MEMORY_MAX_HABITS).m
     : null
   return Object.assign({}, item, {
     id: clampText(item.id || buildCerebrumHabitId(item), 420),
+    semanticId: clampText(item.semanticId, 600),
     status: normalizeHabitStatus(item.status),
     proposalSessionId: clampText(item.proposalSessionId, 160),
     proposalMessage: clampText(item.proposalMessage, 1600),
@@ -352,11 +364,15 @@ const normalizeHabits = value => normalizeArray(value, HOME_MEMORY_MAX_HABITS).m
 
 const normalizeCurrentStates = value => normalizeArray(value, HOME_MEMORY_MAX_STATES).map(item => ({
   key: clampText(item.key || `${item.source || 'unknown'}:${item.objectId || ''}`, 360),
+  semanticId: clampText(item.semanticId, 600),
   source: clampText(item.source || 'unknown', 80),
   objectId: clampText(item.objectId, 240),
   label: clampText(item.label || item.objectId, 240),
   area: clampText(item.area, 120),
   kind: clampText(item.kind, 120),
+  capability: clampText(item.capability, 120),
+  unit: clampText(item.unit, 80),
+  access: clampText(item.access, 80),
   value: normalizeStateValue(item.value),
   previousValue: normalizeStateValue(item.previousValue),
   observedAt: clampText(item.observedAt, 64),
@@ -395,10 +411,12 @@ const normalizeCerebrumHomeMemory = (value = {}) => {
     ownerSessionId: clampText(source.ownerSessionId, 160),
     ownerLanguage: clampText(source.ownerLanguage, 16),
     observations: normalizeArray(source.observations, HOME_MEMORY_MAX_OBSERVATIONS),
+    episodes: normalizeCerebrumEpisodes(source.episodes, CEREBRUM_HOME_EPISODE_MAX_ITEMS),
     habits: normalizeHabits(source.habits),
     habitDecisions: normalizeArray(source.habitDecisions, HOME_MEMORY_MAX_HABIT_DECISIONS),
     notifications: normalizeArray(source.notifications, HOME_MEMORY_MAX_NOTIFICATIONS),
     semanticObjects: normalizeSemanticObjects(source.semanticObjects),
+    semanticEntities: normalizeCerebrumEntityRegistry(source.semanticEntities),
     states: normalizeCurrentStates(source.states),
     reconciler: normalizeReconciler(source.reconciler)
   }
@@ -443,9 +461,13 @@ const resolveCerebrumStateTier = ({ observedAt, changedAt, observations, changes
 const applyCerebrumCurrentState = (target, {
   source,
   objectId,
+  semanticId,
   label,
   area,
   kind,
+  capability,
+  unit,
+  access,
   value,
   at,
   verified = false,
@@ -472,11 +494,15 @@ const applyCerebrumCurrentState = (target, {
   })
   const next = {
     key,
+    semanticId: clampText(semanticId || (existing && existing.semanticId), 600),
     source: normalizedSource,
     objectId: normalizedObjectId,
     label: clampText(label || (existing && existing.label) || normalizedObjectId, 240),
     area: clampText(area || (existing && existing.area), 120),
     kind: clampText(kind || (existing && existing.kind), 120),
+    capability: clampText(capability || (existing && existing.capability), 120),
+    unit: clampText(unit || (existing && existing.unit), 80),
+    access: clampText(access || (existing && existing.access), 80),
     value: normalizedValue,
     previousValue: changed ? existing.value : (existing && existing.previousValue) || '',
     observedAt: nowIso,
@@ -518,7 +544,7 @@ const updateCerebrumCurrentStates = (memory, observations = []) => {
   return finalizeCerebrumCurrentStates(target)
 }
 
-const registerCerebrumStateTarget = (memory, { source, objectId, label, area, kind, at } = {}) => {
+const registerCerebrumStateTarget = (memory, { source, objectId, semanticId, label, area, kind, capability, unit, access, at } = {}) => {
   const target = normalizeCerebrumHomeMemory(memory)
   const normalizedSource = clampText(source || 'unknown', 80)
   const normalizedObjectId = clampText(objectId, 240)
@@ -529,11 +555,15 @@ const registerCerebrumStateTarget = (memory, { source, objectId, label, area, ki
   const nowIso = Number.isNaN(now.getTime()) ? new Date().toISOString() : now.toISOString()
   target.states.push({
     key,
+    semanticId: clampText(semanticId, 600),
     source: normalizedSource,
     objectId: normalizedObjectId,
     label: clampText(label || normalizedObjectId, 240),
     area: clampText(area, 120),
     kind: clampText(kind, 120),
+    capability: clampText(capability, 120),
+    unit: clampText(unit, 80),
+    access: clampText(access, 80),
     value: '',
     previousValue: '',
     observedAt: '',
@@ -610,6 +640,7 @@ const normalizeHabitValue = value => {
 const updateCerebrumTemporalHabit = (memory, {
   source = 'unknown',
   objectId,
+  semanticId,
   label,
   area,
   kind,
@@ -655,6 +686,7 @@ const updateCerebrumTemporalHabit = (memory, {
     type: 'temporal_state_pattern',
     source: normalizedSource,
     objectId: normalizedObjectId,
+    semanticId: clampText(semanticId || (existing && existing.semanticId), 600),
     label: clampText(label || normalizedObjectId, 240),
     area: clampText(area, 80),
     kind: clampText(kind, 80),
@@ -671,13 +703,13 @@ const updateCerebrumTemporalHabit = (memory, {
     observationDays: observedDates.length,
     observationSpanDays: getHabitObservationSpanDays(observedDates),
     status: existing ? normalizeHabitStatus(existing.status) : 'learning',
-    proposalSessionId: existing && existing.proposalSessionId || '',
-    proposalMessage: existing && existing.proposalMessage || '',
-    proposedAt: existing && existing.proposedAt || '',
-    lastProposalAttemptAt: existing && existing.lastProposalAttemptAt || '',
-    decidedAt: existing && existing.decidedAt || '',
-    userMessage: existing && existing.userMessage || '',
-    userOverride: existing && existing.userOverride || null,
+    proposalSessionId: (existing && existing.proposalSessionId) || '',
+    proposalMessage: (existing && existing.proposalMessage) || '',
+    proposedAt: (existing && existing.proposedAt) || '',
+    lastProposalAttemptAt: (existing && existing.lastProposalAttemptAt) || '',
+    decidedAt: (existing && existing.decidedAt) || '',
+    userMessage: (existing && existing.userMessage) || '',
+    userOverride: (existing && existing.userOverride) || null,
     firstSeenAt: clampText(existing && existing.firstSeenAt ? existing.firstSeenAt : eventDate.toISOString(), 64),
     updatedAt: eventDate.toISOString()
   }
@@ -796,13 +828,22 @@ const buildCerebrumHomeMemoryMarkdown = ({ memory, maxKb } = {}) => {
     bounded.semanticObjects.forEach(item => {
       lines.push(`| ${escapeMarkdownCell(item.ga)} | ${escapeMarkdownCell(item.dpt)} | ${escapeMarkdownCell(item.kind)} | ${escapeMarkdownCell(item.area)} | ${Number(item.confidence || 0).toFixed(2)} | ${escapeMarkdownCell(item.label)} |`)
     })
+    lines.push('', '## Cross-integration entity registry', '')
+    lines.push('| Semantic ID | Label | Kind | Area | Capabilities | Native bindings |')
+    lines.push('|---|---|---|---|---|---|')
+    bounded.semanticEntities.forEach(item => {
+      const bindings = item.bindings.map(binding => `${binding.adapterId || binding.source}${binding.providerId ? `/${binding.providerId}` : ''}:${binding.objectId}`).join(', ')
+      lines.push(`| ${escapeMarkdownCell(item.id)} | ${escapeMarkdownCell(item.label)} | ${escapeMarkdownCell(item.kind)} | ${escapeMarkdownCell(item.area)} | ${escapeMarkdownCell(item.capabilities.join(', '))} | ${escapeMarkdownCell(bindings)} |`)
+    })
     lines.push('', '## Learned habits', '')
     if (!bounded.habits.length) lines.push('_No stable habit has been learned yet._')
     bounded.habits.forEach(item => {
       if (item.type === 'temporal_state_pattern') {
         const minute = Math.max(0, Math.min(1439, Math.round(item.userOverride && hasHabitTimeMinute(item.userOverride.timeMinute) ? Number(item.userOverride.timeMinute) : Number(item.averageMinuteOfDay) || 0)))
         const time = `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`
-        lines.push(`- [${escapeMarkdownCell(item.status || 'learning')}] ${escapeMarkdownCell(item.label || item.objectId)} usually becomes ${escapeMarkdownCell(item.userOverride && item.userOverride.value || item.value)} around ${time} on ${escapeMarkdownCell(item.userOverride && item.userOverride.dayType || item.dayType)}s; ${Number(item.samples || 0)} samples on ${Number(item.observationDays || 0)} distinct days across ${Number(item.observationSpanDays || 0)} days, confidence ${Number(item.confidence || 0).toFixed(2)}, deviation ${Number(item.deviationMinutes || 0).toFixed(1)} minutes.${item.proposedAt ? ` Proposed ${escapeMarkdownCell(item.proposedAt)}: ${escapeMarkdownCell(item.proposalMessage)}` : ''}${item.userOverride && item.userOverride.note ? ` User note: ${escapeMarkdownCell(item.userOverride.note)}` : ''}`)
+        const effectiveValue = (item.userOverride && item.userOverride.value) || item.value
+        const effectiveDayType = (item.userOverride && item.userOverride.dayType) || item.dayType
+        lines.push(`- [${escapeMarkdownCell(item.status || 'learning')}] ${escapeMarkdownCell(item.label || item.objectId)} usually becomes ${escapeMarkdownCell(effectiveValue)} around ${time} on ${escapeMarkdownCell(effectiveDayType)}s; ${Number(item.samples || 0)} samples on ${Number(item.observationDays || 0)} distinct days across ${Number(item.observationSpanDays || 0)} days, confidence ${Number(item.confidence || 0).toFixed(2)}, deviation ${Number(item.deviationMinutes || 0).toFixed(1)} minutes.${item.proposedAt ? ` Proposed ${escapeMarkdownCell(item.proposedAt)}: ${escapeMarkdownCell(item.proposalMessage)}` : ''}${item.userOverride && item.userOverride.note ? ` User note: ${escapeMarkdownCell(item.userOverride.note)}` : ''}`)
         return
       }
       lines.push(`- ${escapeMarkdownCell(item.label || item.ga)}: average open duration ${Number(item.averageMinutes || 0).toFixed(1)} minutes across ${Number(item.samples || 0)} observations; last ${Number(item.lastMinutes || 0).toFixed(1)} minutes.`)
@@ -814,10 +855,10 @@ const buildCerebrumHomeMemoryMarkdown = ({ memory, maxKb } = {}) => {
       lines.push(`- ${escapeMarkdownCell(item.at)} — ${escapeMarkdownCell(item.operation)} ${escapeMarkdownCell(item.habitId)}${item.userMessage ? `: ${escapeMarkdownCell(item.userMessage)}` : ''}${override}`)
     })
     lines.push('', '## Current state cache', '')
-    lines.push('| Source | Object | Value | Tier | Observed | Verified | Next refresh |')
-    lines.push('|---|---|---|---|---|---|---|')
+    lines.push('| Semantic ID | Source | Object | Value | Tier | Observed | Verified | Next refresh |')
+    lines.push('|---|---|---|---|---|---|---|---|')
     bounded.states.forEach(item => {
-      lines.push(`| ${escapeMarkdownCell(item.source)} | ${escapeMarkdownCell(item.label || item.objectId)} | ${escapeMarkdownCell(item.value)} | ${escapeMarkdownCell(item.tier)} | ${escapeMarkdownCell(item.observedAt)} | ${escapeMarkdownCell(item.verifiedAt)} | ${escapeMarkdownCell(item.nextRefreshAt)} |`)
+      lines.push(`| ${escapeMarkdownCell(item.semanticId)} | ${escapeMarkdownCell(item.source)} | ${escapeMarkdownCell(item.label || item.objectId)} | ${escapeMarkdownCell(item.value)} | ${escapeMarkdownCell(item.tier)} | ${escapeMarkdownCell(item.observedAt)} | ${escapeMarkdownCell(item.verifiedAt)} | ${escapeMarkdownCell(item.nextRefreshAt)} |`)
     })
     lines.push('', '## State reconciler', '')
     lines.push(`- Last tick: ${escapeMarkdownCell(bounded.reconciler.lastTickAt || 'never')}`)
@@ -827,6 +868,11 @@ const buildCerebrumHomeMemoryMarkdown = ({ memory, maxKb } = {}) => {
     if (!bounded.observations.length) lines.push('_No significant observation recorded._')
     bounded.observations.forEach(item => {
       lines.push(`- ${escapeMarkdownCell(item.at)} — ${escapeMarkdownCell(item.label || item.ga)}: ${escapeMarkdownCell(item.event || item.value || item.type)}`)
+    })
+    lines.push('', '## Observed episodes', '')
+    if (!bounded.episodes.length) lines.push('_No related sequence of observations recorded._')
+    bounded.episodes.forEach(item => {
+      lines.push(`- ${escapeMarkdownCell(item.startedAt)} → ${escapeMarkdownCell(item.endedAt)} — ${escapeMarkdownCell(item.summary || item.type)}; sources ${escapeMarkdownCell((item.sources || []).join(', ') || 'unknown')}; ${Number((item.observationIds || []).length)} observations; evidence ${escapeMarkdownCell((item.evidenceIds || []).join(', ') || 'none')}.`)
     })
     lines.push('', '## Proactive notification history', '')
     if (!bounded.notifications.length) lines.push('_No proactive notification sent._')
@@ -840,10 +886,12 @@ const buildCerebrumHomeMemoryMarkdown = ({ memory, maxKb } = {}) => {
   let markdown = render()
   while (Buffer.byteLength(markdown, 'utf8') > targetBytes) {
     if (bounded.observations.length) bounded.observations.shift()
+    else if (bounded.episodes.length) bounded.episodes.shift()
     else if (bounded.notifications.length) bounded.notifications.shift()
     else if (bounded.habitDecisions.length) bounded.habitDecisions.shift()
     else if (bounded.states.length) bounded.states.shift()
     else if (bounded.habits.length) bounded.habits.shift()
+    else if (bounded.semanticEntities.length) bounded.semanticEntities.shift()
     else if (bounded.semanticObjects.length) bounded.semanticObjects.pop()
     else break
     markdown = render()
@@ -876,7 +924,7 @@ const parseCerebrumHomeMemoryMarkdownStrict = markdown => {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== HOME_MEMORY_VERSION || !Array.isArray(parsed.habits)) {
     throw new Error('Invalid Cerebrum memory structure or version')
   }
-  for (const key of ['habits', 'habitDecisions', 'observations', 'notifications', 'semanticObjects', 'states']) {
+  for (const key of ['habits', 'habitDecisions', 'observations', 'episodes', 'notifications', 'semanticObjects', 'semanticEntities', 'states']) {
     if (parsed[key] !== undefined && (!Array.isArray(parsed[key]) || parsed[key].some(item => !item || typeof item !== 'object' || Array.isArray(item)))) {
       throw new Error(`Invalid Cerebrum memory collection: ${key}`)
     }
@@ -888,7 +936,7 @@ const buildCerebrumStateMemoryContext = ({ memory, question, maxStates = 80, max
   const target = normalizeCerebrumHomeMemory(memory)
   const tokens = normalizeText(question).split(' ').filter(token => token.length >= 2)
   const states = target.states.map(item => {
-    const search = normalizeText([item.objectId, item.label, item.area, item.kind, item.source].join(' '))
+    const search = normalizeText([item.semanticId, item.objectId, item.label, item.area, item.kind, item.capability, item.source].join(' '))
     const relevance = tokens.reduce((sum, token) => sum + (search.includes(token) ? token.length + 3 : 0), 0)
     const observedTs = Date.parse(item.observedAt || '') || 0
     const freshness = observedTs > 0 ? Math.max(0, 1 - ((now - observedTs) / (24 * 60 * 60 * 1000))) : 0
@@ -901,7 +949,7 @@ const buildCerebrumStateMemoryContext = ({ memory, question, maxStates = 80, max
     `Cached states: ${target.states.length}; selected: ${selected.length}; last reconciliation: ${target.reconciler.lastTickAt || 'never'}.`
   ]
   selected.forEach(item => {
-    lines.push(`${item.source}:${item.objectId} | ${item.label || item.objectId} | state=${item.value || 'unknown'} | tier=${item.tier} | observed=${item.observedAt || 'never'} | verified=${item.verifiedAt || 'never'}${item.area ? ` | area=${item.area}` : ''}`)
+    lines.push(`${item.source}:${item.objectId} | semanticId=${item.semanticId || 'unlinked'} | ${item.label || item.objectId} | state=${item.value || 'unknown'} | tier=${item.tier} | observed=${item.observedAt || 'never'} | verified=${item.verifiedAt || 'never'}${item.area ? ` | area=${item.area}` : ''}${item.capability ? ` | capability=${item.capability}` : ''}${item.unit ? ` | unit=${item.unit}` : ''}`)
   })
   const budget = Math.max(500, Math.min(50000, Number(maxChars) || 12000))
   while (Buffer.byteLength(lines.join('\n'), 'utf8') > budget && lines.length > 2) lines.pop()
@@ -990,6 +1038,8 @@ module.exports = {
   CEREBRUM_HABIT_MIN_OBSERVATION_SPAN_DAYS,
   CEREBRUM_HABIT_MIN_OBSERVED_DAYS,
   CEREBRUM_HABIT_MIN_SAMPLES,
+  CEREBRUM_ENTITY_REGISTRY_MAX_ENTITIES,
+  CEREBRUM_HOME_EPISODE_MAX_ITEMS,
   HOME_MEMORY_DEFAULT_KB,
   HOME_MEMORY_MAX_EDUCATION_CHARS,
   HOME_MEMORY_MAX_HABITS,

@@ -3,6 +3,7 @@ const path = require('path')
 const { queryCerebrumWorldMemory } = require('./cerebrumWorkingMemory')
 const { createCerebrumComfortGoals } = require('./cerebrumComfortGoals')
 const { recordBehaviorTransition, summarizeBehaviorPatterns } = require('./cerebrumBehaviorPatterns')
+const { linkCerebrumLearnedMemory, normalizeCerebrumEpisodes } = require('./cerebrumMemoryConsolidator')
 
 const MINUTE = 60000
 const HOUR = 60 * MINUTE
@@ -38,9 +39,13 @@ const entityKey = value => `${clip(value.source, 80)}:${clip(value.objectId, 240
 const normalizeObservation = state => ({
   source: clip(state.source, 80),
   objectId: clip(state.objectId, 240),
+  semanticId: clip(state.semanticId, 600),
   label: clip(state.label || state.objectId, 240),
   area: clip(state.area, 120),
   kind: clip(state.kind, 120),
+  capability: clip(state.capability, 120),
+  unit: clip(state.unit, 80),
+  access: clip(state.access, 80),
   value: valueOf(state.value),
   observedAt: iso(stamp(state.observedAt)),
   verifiedAt: Number.isFinite(stamp(state.verifiedAt)) ? iso(stamp(state.verifiedAt)) : '',
@@ -238,7 +243,7 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
     return situation
   }
   const episode = (situation, outcome, summary, at) => {
-    store.episodes.push({ id: id('episode'), situationId: situation.id, at: iso(at), summary: clip(summary, 1200), outcome, entityIds: [...situation.entityIds], evidenceIds: [...situation.evidenceIds] })
+    store.episodes.push({ id: id('episode'), type: 'autonomy_outcome', status: 'derived', hypothesis: false, origin: 'autonomy', situationId: situation.id, at: iso(at), startedAt: situation.createdAt, endedAt: iso(at), summary: clip(summary, 1200), outcome, entityIds: [...situation.entityIds], evidenceIds: [...situation.evidenceIds] })
   }
   const resolve = (situation, outcome, summary, at) => {
     situation.status = 'resolved'
@@ -263,7 +268,7 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
         // that recovered state to the older snapshot while sources reconnect.
         state = old
       }
-      const entity = { id: key, source: clip(state.source, 80), objectId: clip(state.objectId, 240), label: clip(state.label || state.objectId, 240), area: clip(state.area, 120), kind: clip(state.kind, 120), value: valueOf(state.value), observedAt: clip(state.observedAt, 64), verifiedAt: clip(state.verifiedAt, 64), changedAt: clip(state.changedAt, 64), refreshIntervalSeconds: Number(state.refreshIntervalSeconds) || 60, fresh: false, evidenceId: (old && old.evidenceId) || '' }
+      const entity = { id: key, source: clip(state.source, 80), objectId: clip(state.objectId, 240), semanticId: clip(state.semanticId, 600), label: clip(state.label || state.objectId, 240), area: clip(state.area, 120), kind: clip(state.kind, 120), capability: clip(state.capability, 120), unit: clip(state.unit, 80), access: clip(state.access, 80), value: valueOf(state.value), observedAt: clip(state.observedAt, 64), verifiedAt: clip(state.verifiedAt, 64), changedAt: clip(state.changedAt, 64), refreshIntervalSeconds: Number(state.refreshIntervalSeconds) || 60, fresh: false, evidenceId: (old && old.evidenceId) || '' }
       entity.fresh = isFresh(entity, at)
       const changed = old && old.value !== entity.value
       if (!old || changed || old.fresh !== entity.fresh) {
@@ -305,7 +310,11 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
       observed.set(key, entity)
     }
     store.entities = [...observed.values()].slice(-LIMITS.entities)
-    if (!partial) store.habits = (Array.isArray(snapshot.habits) ? snapshot.habits : []).slice(-80).map(habit => ({ id: clip(habit.id, 420), source: clip(habit.source, 80), objectId: clip(habit.objectId, 240), label: clip(habit.label, 240), area: clip(habit.area, 120), kind: clip(habit.kind, 120), value: valueOf(habit.value), status: clip(habit.status, 40), dayType: clip(habit.dayType, 40), averageMinuteOfDay: Number(habit.averageMinuteOfDay), deviationMinutes: Number(habit.deviationMinutes) || 0, confidence: Number(habit.confidence) || 0, userOverride: habit.userOverride ? { dayType: clip(habit.userOverride.dayType, 40), timeMinute: habit.userOverride.timeMinute, value: valueOf(habit.userOverride.value) } : null }))
+    if (!partial) store.habits = (Array.isArray(snapshot.habits) ? snapshot.habits : []).slice(-80).map(habit => ({ id: clip(habit.id, 420), source: clip(habit.source, 80), objectId: clip(habit.objectId, 240), semanticId: clip(habit.semanticId, 600), label: clip(habit.label, 240), area: clip(habit.area, 120), kind: clip(habit.kind, 120), value: valueOf(habit.value), status: clip(habit.status, 40), dayType: clip(habit.dayType, 40), averageMinuteOfDay: Number(habit.averageMinuteOfDay), deviationMinutes: Number(habit.deviationMinutes) || 0, confidence: Number(habit.confidence) || 0, evidenceIds: (Array.isArray(habit.evidenceIds) ? habit.evidenceIds : []).map(item => clip(item, 200)).slice(-32), userOverride: habit.userOverride ? { dayType: clip(habit.userOverride.dayType, 40), timeMinute: habit.userOverride.timeMinute, value: valueOf(habit.userOverride.value) } : null }))
+    if (!partial && Array.isArray(snapshot.episodes)) {
+      const autonomyEpisodes = store.episodes.filter(item => item.origin !== 'deterministic-observation-correlation')
+      store.episodes = [...autonomyEpisodes, ...normalizeCerebrumEpisodes(snapshot.episodes)].sort((left, right) => stamp(left.endedAt || left.at) - stamp(right.endedAt || right.at)).slice(-LIMITS.episodes)
+    }
     store.updatedAt = iso(at)
   }
   const checkExpectations = (at, finalize = true) => {
@@ -408,7 +417,11 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
     observe({ states: store.entities, habits }, at, false)
     checkExpectations(at, false)
   }
-  const worldSnapshot = () => ({ ...copy(store), patterns: summarizeBehaviorPatterns(store.patterns, now()) })
+  const worldSnapshot = () => {
+    const snapshot = copy(store)
+    const learned = linkCerebrumLearnedMemory({ habits: snapshot.habits, patterns: summarizeBehaviorPatterns(snapshot.patterns, now()) })
+    return { ...snapshot, habits: learned.habits, patterns: learned.patterns }
+  }
   const runTick = async () => {
     if (closed) return { ok: false, status: 'closed' }
     try {

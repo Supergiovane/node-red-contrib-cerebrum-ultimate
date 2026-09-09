@@ -1,3 +1,4 @@
+/* global describe, it */
 const { expect } = require('chai')
 const { EventEmitter } = require('events')
 const fs = require('fs')
@@ -6,14 +7,55 @@ const path = require('path')
 
 const {
   buildCerebrumLearningPromptContext,
+  buildCerebrumRuntimePromptContext,
   buildCerebrumHomeAssistantStateContext,
   getCerebrumHomeAutomationRegistry,
   inspectCerebrumLearningFlow,
+  inspectCerebrumRuntime,
   normalizeCerebrumFlowSendEvent,
   normalizeCerebrumHomeAutomationEvent
 } = require('../nodes/utils/cerebrumLearning')
+const { normalizeCerebrumAdapterHistoryEvent } = require('../nodes/utils/cerebrumEventHistory')
 
 describe('Cerebrum discovery and Home Assistant round trip', () => {
+  it('inventories installed, deployed and usable providers without exposing live RED objects', () => {
+    const flowNodes = [
+      { id: 'cerebrum', type: 'cerebrumUltimate', server: 'knx-config', wires: [] },
+      { id: 'matter', type: 'matter-device', wires: [] },
+      { id: 'disabled', type: 'disabled-device', disabled: true, wires: [] }
+    ]
+    const RED = {
+      nodes: {
+        eachNode: callback => flowNodes.forEach(callback),
+        getType: type => type === 'unused-installed-node' ? function InstalledNode () {} : undefined,
+        getNodeList: () => [
+          { id: 'matter/module', module: 'matter-module', version: '2.0.0', enabled: true, loaded: true, types: ['matter-device'] },
+          { id: 'disabled/module', module: 'disabled-module', version: '1.0.0', enabled: true, loaded: true, types: ['disabled-device'] },
+          { id: 'unused/module', module: 'unused-module', version: '1.0.0', enabled: true, loaded: true, types: ['unused-installed-node'] }
+        ]
+      }
+    }
+    const adapterRegistry = {
+      adapters: new Map([['home-assistant', { id: 'home-assistant', title: 'Home Assistant', access: 'read-write-confirmed', capabilities: ['events'] }]]),
+      providers: new Map([['ha-provider', { id: 'ha-provider', adapterId: 'home-assistant', isReady: () => true, listEntities: () => [], callService: () => {} }]])
+    }
+    const cameraRegistry = {
+      adapters: new Map([['unifi-protect', { id: 'unifi-protect', title: 'UniFi Protect', capabilities: ['smart-detect'] }]]),
+      providers: new Map([['protect-provider', { id: 'protect-provider', adapterId: 'unifi-protect', connected: true, listCameras: () => [], takeSnapshot: () => {} }]])
+    }
+    const snapshot = inspectCerebrumRuntime({ RED, currentNode: { id: 'cerebrum', type: 'cerebrumUltimate', serverKNX: { id: 'knx-config' }, _busConnectionState: 'connected' }, adapterRegistry, cameraRegistry, env: {} })
+
+    expect(snapshot.nodeTypes.find(item => item.type === 'unused-installed-node')).to.include({ installed: true, deployedCount: 0, usable: false })
+    expect(snapshot.nodeTypes.find(item => item.type === 'disabled-device')).to.include({ installed: true, deployedCount: 1, activeDeployedCount: 0, usable: false })
+    expect(snapshot.integrations.find(item => item.id === 'home-assistant')).to.include({ installed: true, deployed: true, usable: true, readyProviderCount: 1 })
+    expect(snapshot.integrations.find(item => item.id === 'unifi-protect')).to.include({ installed: true, deployed: true, usable: true, readyProviderCount: 1 })
+    expect(snapshot.integrations.find(item => item.id === 'knx')).to.include({ usable: true })
+    const context = buildCerebrumRuntimePromptContext(snapshot)
+    expect(context).to.include('unifi-protect')
+    expect(context).to.include('usable=true')
+    expect(context).to.include('unused-module')
+  })
+
   it('discovers flow logic, HUE, Matter and a complete ha-api round trip', () => {
     const flowNodes = [
       { id: 'ha-server', type: 'server', addon: true },
@@ -81,6 +123,25 @@ describe('Cerebrum discovery and Home Assistant round trip', () => {
       state: 'on',
       previousState: 'off'
     })
+  })
+
+  it('redacts integration credentials before events enter either local archive', () => {
+    const event = normalizeCerebrumAdapterHistoryEvent({
+      event: {
+        adapterId: 'unifi-protect',
+        eventType: 'motion',
+        cameraId: 'camera-1',
+        raw: {
+          camera: 'Ingresso',
+          password: 'never-store-this',
+          headers: { authorization: 'Bearer never-store-this' },
+          nested: { apiKey: 'never-store-this', useful: 'person' }
+        }
+      }
+    })
+
+    expect(event.details).to.deep.equal({ camera: 'Ingresso', nested: { useful: 'person' } })
+    expect(JSON.stringify(event)).not.to.include('never-store-this')
   })
 
   it('observes useful Node-RED messages without retaining secrets or binary content', () => {

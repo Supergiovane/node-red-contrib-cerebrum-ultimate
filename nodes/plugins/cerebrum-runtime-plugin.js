@@ -68,7 +68,9 @@ module.exports = RED => {
       registry.registerAdapter({
         id: ADAPTER_ID,
         title: 'Node-RED flow observer',
+        kind: 'runtime',
         capabilities: ['flow-events', 'hue-events', 'matter-events', 'home-assistant-events'],
+        operations: ['events'],
         access: 'observe'
       })
       registry.registerProvider(provider)

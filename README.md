@@ -95,6 +95,8 @@ The **Cerebrum** Web menu opens on an animated brain. Its six connected neurons 
 
 Observation, background reasoning and autonomous actions are built into Cerebrum, with no separate switches to enable. Background reasoning runs while the LLM assistant is enabled. Cerebrum collects device events, maintains current world state, consolidates observations into episodes and keeps track of situations that need another check. A chat request is one reason to think; incoming events and due situation checks are others.
 
+Native integration IDs remain the operational identity used for authorization and execution. Cerebrum also maintains a cross-integration entity registry above them: one semantic entity may have KNX, Home Assistant, HUE, Matter or UniFi bindings when an adapter supplies an explicit shared `semanticId`. Similar names or rooms alone never merge devices. State transitions and integration events become deterministic, evidence-linked observations before any LLM reasoning; hypotheses and correlated episodes remain distinguishable from those source facts.
+
 The persistent world model lives in `cerebrumultimatestorage/cerebrum/memory/cerebrum-world-model-NODEID.json`. The model receives a bounded working view of relevant entities, episodes and situations, rather than the complete memory file. Raw archives and learned home memory remain separate sources. This lets knowledge survive between reasoning passes without accumulating every previous pass in the prompt.
 
 In the node editor, **AI Assistant → Maximum managed context (KB)** controls the application context ceiling. Leave it at `0` to use the selected model's known or detected maximum automatically; enter a positive value to set a lower ceiling. For an otherwise unknown OpenAI-compatible model, the value declares the endpoint's effective context limit. Cerebrum never uses it to exceed a known or locally detected physical model window.
@@ -290,6 +292,12 @@ The conversational model has a read-only `historyActions` tool for the daily KNX
 
 Each pass accepts up to two queries with at most 200 returned telegrams per query, and the model can continue with additional, narrower history queries whenever the evidence requires them. There is no fixed number of history passes; unchanged query cycles trigger an uncertainty prompt. Results are bounded to the active model context and, like other prompt data, are sent to the configured AI provider.
 
+### Recorded camera events and snapshots
+
+Camera providers may expose `queryEvents()` and `takeEventSnapshot()` in addition to the existing live-event and current-snapshot operations. During an authorized chat, Cerebrum can search recorded events by camera, event/object type and ISO 8601 range, inspect an explicit continuation offset when more controller pages exist, then request the JPEG attached to an exact returned event. A request such as “show me the snapshot of the last detected movement” therefore performs recorded-event query → exact event selection → event snapshot; it never substitutes a current camera image.
+
+With `node-red-contrib-unifi-ultimate`, recorded history is enabled by the optional local **History user/password** in the selected UniFi Protect config node. The official Protect Integration API key supports live events and current snapshots but does not expose the recorded archive, so the UniFi config node owns the separate local session. Cerebrum receives only normalized event evidence and image bytes; credentials, cookies, private endpoints and raw controller responses remain inside the provider. Other camera packages can implement the same vendor-neutral methods.
+
 ### Local JavaScript automations
 
 In the Node-RED node editor, **History updates to LLM** defaults to **Only during user chat** (also for existing flows without this setting). Observation, raw history storage, current states, local learning and JavaScript callbacks continue without background model calls. An open Web page or a Telegram session ID is not an active chat: a user request authorizes only its own reasoning and tool follow-ups.
@@ -308,13 +316,13 @@ Functions run in a supervised QuickJS WebAssembly worker without access to Node,
 
 Deterministic local executions do not invoke the LLM. A function can explicitly use `assistant.run` at its deadline for fresh Web research, sensor reads and a generated reply or TTS announcement. A daily weather announcement therefore has a visible `.js` schedule and uses the model only when the task fires. `speak` sends prepared text directly to the existing TTS output. The model is also used to author/revise functions; the authoring API is only added to its context when needed. Legacy semantic schedules are preserved for inspection/cancellation but suspended; create their replacements as real `.js` functions. Autonomous LLM reasoning follows the configured history review interval. After updating this package, restart Node-RED and reload the Web page to load the new runtime and assets.
 
-### Privileged local JavaScript
+### Isolated local Node-RED runtime inspection
 
-The advanced **Allow the AI to run privileged local JavaScript** option is off by default. When enabled, the conversational model may generate a synchronous JavaScript function body that Cerebrum executes locally with direct access to the live `node` and `RED` runtime objects, plus the current `question` and `sessionId`. The returned JSON-compatible value is supplied to the model in a following pass so it can inspect Node-RED state before answering.
+The advanced **Allow the AI to inspect the local Node-RED runtime with JavaScript** option is off by default. Cerebrum itself reads Node-RED's registry locally and builds a sanitized capability inventory containing installed node sets, deployed flow nodes, registered home-automation/camera adapters, provider readiness and supported operations. When the option is enabled, the conversational model may query that immutable data-only snapshot with synchronous JavaScript through `runtime`, `node`, `RED.nodes.eachNode/getNode/getType/listTypes/listNodeSets`, `RED.integrations`, `question` and `sessionId`. Live Node-RED objects, context stores, provider functions, credentials, filesystem, network, deployment and message sending are not exposed to model-generated code.
 
-This feature is intentionally powerful and is **not a security sandbox**. Direct runtime access can mutate Node-RED state, reach capabilities exposed by installed nodes and, in practice, operate with the permissions of the Node-RED process. Enable it only with a model and instructions you trust. Prefer a local model when runtime data must remain local: execution results become part of the next model request and can therefore leave the system when a remote provider is selected. Cerebrum asks the model to inspect rather than mutate and omits obvious credential-like result fields, but neither measure is a security boundary.
+The JavaScript runs with a short timeout and without host references. Its input and bounded result are still model context, so prefer a local model when even the sanitized runtime inventory must remain local. The option is intended for ad-hoc filtering and correlation of the capability snapshot; ordinary integration discovery is added to Cerebrum's context automatically and does not require model-generated JavaScript.
 
-Execution is synchronous and bounded to one action per model pass, at most two execution passes, 12,000 source characters, 500 ms per script and a 64 KB serialized result. These limits protect responsiveness and context size; they do not restrict which `node` or `RED` methods the generated code can call.
+Execution is synchronous and bounded to one action per model pass, at most two execution passes, 12,000 source characters, 500 ms per script and a 64 KB serialized result. These limits protect responsiveness and context size; the available `node` and `RED` methods are also restricted to the read-only snapshot API listed above.
 
 ## Local memory and backup
 
@@ -355,7 +363,9 @@ const registry = getAdapterRegistry();
 registry.registerAdapter({
   id: "my-adapter",
   title: "My adapter",
+  kind: "home-automation",
   capabilities: ["states", "events"],
+  operations: ["events", "list-entities", "read-entity"],
   access: "observe",
 });
 registry.registerProvider({
@@ -363,6 +373,8 @@ registry.registerProvider({
   adapterId: "my-adapter",
   title: "My controller",
   capabilities: ["states"],
+  connected: true,
+  isReady: () => true,
   subscribe: (listener) => {
     // Return an unsubscribe function.
     return () => {};
@@ -370,7 +382,9 @@ registry.registerProvider({
 });
 ```
 
-Provider callbacks must catch their own I/O errors. Cerebrum also isolates provider, flow-hook, timer, storage and output failures so an adapter cannot terminate Node-RED.
+The versioned capability contract distinguishes an installed adapter from a deployed, connected, ready and actually usable provider. Standard operations are `events`, `list-entities`, `read-entity`, `list-services`, `write-entity`, `list-cameras`, `camera-snapshot`, `query-camera-events` and `camera-event-snapshot`; provider methods are detected from the corresponding `subscribe`, `listEntities`, `getEntity`, `listServices`, `callService`, `listCameras`, `takeSnapshot`, `queryEvents` and `takeEventSnapshot` functions. Write operations remain subject to Cerebrum authorization and confirmation rules: declaring an operation never grants permission to control a device.
+
+Provider callbacks must catch their own I/O errors. Providers should expose `connected`, `isReady()` and, when useful, a data-only `health` status. Cerebrum isolates provider, flow-hook, timer, storage and output failures so an adapter cannot terminate Node-RED. The runtime capability snapshot passed to reasoning contains only sanitized metadata and never exposes RED, node instances or provider functions.
 
 ## License
 

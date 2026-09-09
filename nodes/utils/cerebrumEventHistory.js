@@ -1,6 +1,7 @@
 const CEREBRUM_ADAPTER_HISTORY_MIN_HOURS = 24
 const CEREBRUM_HISTORY_DETAILS_MAX_CHARS = 12000
 const CEREBRUM_COMPACT_ARCHIVE_EXTENSION = 'knxctx'
+const CEREBRUM_HISTORY_SENSITIVE_KEY_RE = /(authorization|bearer|cookie|credential|password|passwd|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|headers?)/i
 
 const CEREBRUM_COMPACT_ARCHIVE_COLUMNS = Object.freeze({
   knx: Object.freeze([
@@ -49,7 +50,7 @@ const sanitizeHistoryValue = (value, depth = 0, seen = new Set()) => {
   const out = {}
   Object.keys(value).slice(0, 60).forEach(key => {
     const normalizedKey = clampText(key, 120)
-    if (!normalizedKey || /^(data|image|snapshot|buffer|base64)$/i.test(normalizedKey)) return
+    if (!normalizedKey || /^(data|image|snapshot|buffer|base64)$/i.test(normalizedKey) || CEREBRUM_HISTORY_SENSITIVE_KEY_RE.test(normalizedKey)) return
     out[normalizedKey] = sanitizeHistoryValue(value[key], depth + 1, seen)
   })
   seen.delete(value)
@@ -303,7 +304,7 @@ const formatCerebrumHistorySummaryForPrompt = summary => {
     ['objects', source.byObjectType],
     ['combinations', source.byCombination]
   ].forEach(([label, items]) => {
-    const entries = (Array.isArray(items) ? items : []).map(item => `${compactPromptScalar(item && item.key)}=${Number(item && item.count || 0)}`)
+    const entries = (Array.isArray(items) ? items : []).map(item => `${compactPromptScalar(item && item.key)}=${Number((item && item.count) || 0)}`)
     if (entries.length) lines.push(`${label}: ${entries.join(' | ')}`)
   })
   return lines.join('\n')

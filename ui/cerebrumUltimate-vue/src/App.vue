@@ -10460,12 +10460,39 @@ onBeforeUnmount(() => {
               :request="requestWorldInsight"
             />
             <div class="memory-section-toolbar">
-              <h4>Technical activity log · last three days <span v-if="state.cerebrumOperationsTruncated">({{ state.cerebrumOperationsItems.length }}/{{ state.cerebrumOperationsCounts.total }})</span></h4>
+              <h4>Technical activity log · retained history <span v-if="state.cerebrumOperationsTruncated">({{ state.cerebrumOperationsItems.length }}/{{ state.cerebrumOperationsCounts.total }})</span></h4>
               <button class="secondary-button" type="button" :disabled="!state.selectedNodeId || state.cerebrumOperationsLoading" @click="loadCerebrumOperations({ force: true })">{{ state.cerebrumOperationsLoading ? 'Loading...' : 'Refresh' }}</button>
             </div>
+            <div class="operations-toolbar">
+              <label class="flow-field operations-filter-field">
+                <span>Category</span>
+                <select v-model="state.cerebrumOperationsFilter">
+                  <option value="all">All operations</option>
+                  <option value="knx">KNX telegrams</option>
+                  <option value="llm">LLM requests</option>
+                  <option value="tool">Node tools</option>
+                  <option value="autonomous">Autonomous activities</option>
+                  <option value="system">System</option>
+                </select>
+              </label>
+              <label class="flow-field operations-filter-field">
+                <span>Status</span>
+                <select v-model="state.cerebrumOperationsStatusFilter">
+                  <option value="all">All statuses</option>
+                  <option v-for="status in cerebrumOperationStatusOptions" :key="status" :value="status">
+                    {{ operationStatusLabel(status) }}
+                  </option>
+                </select>
+              </label>
+              <label class="flow-field operations-search-field">
+                <span>Search operations</span>
+                <input v-model="state.cerebrumOperationsSearch" type="search" placeholder="Address, tool, device, operation..." />
+              </label>
+            </div>
+            <p v-if="state.cerebrumOperationsFrom" class="area-detail-subhead operations-range">{{ formatOperationsRangeSummary() }}</p>
             <p v-if="state.cerebrumOperationsError" role="alert">{{ state.cerebrumOperationsError }}</p>
             <CerebrumRecordLog
-              :items="state.cerebrumOperationsItems"
+              :items="filteredCerebrumOperations"
               :language="uiLanguage"
               :label="localizeUiText('Cerebrum Operations')"
             />

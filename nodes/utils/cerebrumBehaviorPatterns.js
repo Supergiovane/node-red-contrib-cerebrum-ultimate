@@ -110,6 +110,7 @@ const normalizePatterns = (patterns, window) => {
     result.push({
       id,
       entityId,
+      semanticId: text(source.semanticId, 600),
       source: text(source.source, 80),
       objectId: text(source.objectId, 240),
       label: text(source.label || source.objectId || entityId, 160),
@@ -180,9 +181,10 @@ const recordBehaviorTransition = (patterns, { entity, previous, at } = {}) => {
       (observed === timestamp(pattern.lastObserved) &&
        (pattern.lastTransitionKeys.includes(transitionKey) || pattern.lastTransitionKeys.length >= MAX_SAME_TIME_TRANSITIONS)))) return patterns
   if (!pattern) {
-    pattern = { id, entityId, source: '', objectId: '', label: '', area: '', kind: '', dayType: type, hour, categories: [], days: [], originObservations: [], lastTransitionKeys: [] }
+    pattern = { id, entityId, semanticId: '', source: '', objectId: '', label: '', area: '', kind: '', dayType: type, hour, categories: [], days: [], originObservations: [], lastTransitionKeys: [] }
     patterns.push(pattern)
   }
+  pattern.semanticId = text(entity.semanticId || pattern.semanticId, 600)
   for (const [field, limit] of [['source', 80], ['objectId', 240], ['label', 160], ['area', 120], ['kind', 120]]) pattern[field] = text(entity[field] || pattern[field], limit)
   const day = localDay(date)
   const iso = date.toISOString()
@@ -251,6 +253,7 @@ const summarizeBehaviorPatterns = (patterns, at) => {
     return {
       id: pattern.id,
       entityId: pattern.entityId,
+      semanticId: pattern.semanticId,
       source: pattern.source,
       objectId: pattern.objectId,
       label: pattern.label,
