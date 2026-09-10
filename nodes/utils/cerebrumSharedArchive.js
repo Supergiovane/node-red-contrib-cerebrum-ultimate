@@ -14,6 +14,13 @@ const PRUNE_BACKOFF_MS = 10
 const yieldDuringPrune = () => new Promise(resolve => setTimeout(resolve, PRUNE_BACKOFF_MS))
 const cancelledPruneResult = () => ({ removed: 0, reclaimedBytes: 0, cancelled: true })
 const isPruneCancelled = callback => typeof callback === 'function' && callback() === true
+const retentionView = stat => ({ dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs })
+const matchesRetentionView = (view, stat) => view && Object.keys(retentionView(stat)).every(key => view[key] === stat[key])
+const recordTime = record => {
+  const at = typeof record.at === 'string' ? Date.parse(record.at) : NaN
+  return Number.isFinite(at) ? at : null
+}
+const earlierTime = (left, right) => left === null ? right : right === null ? left : Math.min(left, right)
 
 function validateRecord (record, position) {
   const validIdentity = record?.version === 1
@@ -111,6 +118,43 @@ function createCerebrumSharedArchive (filePath) {
     } finally { fs.closeSync(fd) }
   }
 
+  // This disposable checkpoint only avoids a scan when the exact file version
+  // is known to contain no expired timestamps. Appends update the bound in RAM;
+  // clean shutdown saves it. A crash, external edit or restore invalidates it.
+  const retentionFile = `${filePath}.retention-state.json`
+  let retentionState
+  const loadRetentionState = stat => {
+    if (retentionState && matchesRetentionView(retentionState.view, stat)) return retentionState
+    retentionState = undefined
+    try {
+      if (fs.statSync(retentionFile).size > 4096) return
+      const saved = JSON.parse(fs.readFileSync(retentionFile, 'utf8'))
+      if (saved.version === 1 && (saved.oldestAt === null || Number.isFinite(saved.oldestAt)) && matchesRetentionView(saved.view, stat)) retentionState = saved
+    } catch (error) { /* A missing/stale cache requires a normal archive scan. */ }
+    return retentionState
+  }
+  if (fs.existsSync(filePath)) loadRetentionState(fs.statSync(filePath))
+
+  function checkpointRetention () {
+    const temporary = `${retentionFile}.${crypto.randomUUID()}.tmp`
+    try {
+      if (!retentionState || !matchesRetentionView(retentionState.view, fs.statSync(filePath))) return false
+      const fd = fs.openSync(temporary, 'wx', 0o600)
+      try {
+        fs.writeFileSync(fd, JSON.stringify(retentionState))
+        fs.fsyncSync(fd)
+      } finally { fs.closeSync(fd) }
+      fs.renameSync(temporary, retentionFile)
+      return true
+    } catch (error) {
+      // This is an optimization, never the authoritative archive or a reason
+      // to reject a successfully persisted event or prevent clean shutdown.
+      return false
+    } finally {
+      try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary) } catch (error) { /* optional cache */ }
+    }
+  }
+
   function appendMany (entries) {
     if (!Array.isArray(entries)) throw new TypeError('Shared memory archive batch must be an array')
     if (!entries.length) return []
@@ -127,14 +171,21 @@ function createCerebrumSharedArchive (filePath) {
     }))
     const fd = fs.openSync(filePath, 'a', 0o600)
     try {
-      const position = fs.fstatSync(fd).size
+      const initial = fs.fstatSync(fd)
+      const position = initial.size
+      let known = position === 0 || (retentionState && matchesRetentionView(retentionState.view, initial))
+      let oldestAt = position === 0 ? null : retentionState?.oldestAt
       let nextPosition = position
       const records = []
       const chunks = prepared.map(entry => {
         // IDs no longer depend on the current physical offset: compaction must
         // not redirect saved evidence references or reuse IDs of deleted records.
         const record = { version: 2, id: entry.id, offset: nextPosition, at: entry.at, kind: entry.kind, nodeId: entry.nodeId, channel: entry.channel, data: entry.data }
-        const bytes = Buffer.from(`${stringify(record)}\n`)
+        const serialized = stringify(record)
+        // Nonstandard caller metadata (for example Date.toJSON) and omitted
+        // data must go through the normal validating scan before being cached.
+        if (![record.at, record.kind, record.nodeId, record.channel].every(value => typeof value === 'string') || !serialized.includes(',"data":')) known = false
+        const bytes = Buffer.from(`${serialized}\n`)
         records.push(record)
         nextPosition += bytes.length
         return bytes
@@ -157,6 +208,10 @@ function createCerebrumSharedArchive (filePath) {
         }
         throw error
       }
+      if (known) {
+        for (const record of records) oldestAt = earlierTime(oldestAt, recordTime(record))
+        retentionState = { version: 1, view: retentionView(fs.fstatSync(fd)), oldestAt }
+      } else retentionState = undefined
       return records
     } finally { fs.closeSync(fd) }
   }
@@ -205,32 +260,55 @@ function createCerebrumSharedArchive (filePath) {
     let outputBytes = 0
     try {
       const initial = fs.fstatSync(source)
+      const known = loadRetentionState(initial)
+      if (known && (known.oldestAt === null || known.oldestAt >= cutoff)) {
+        checkpointRetention()
+        return { removed: 0, reclaimedBytes: 0 }
+      }
       const expired = record => {
-        const at = typeof record.at === 'string' ? Date.parse(record.at) : NaN
+        const at = recordTime(record)
         // Unknown timestamps are not evidence of expiry.
-        return Number.isFinite(at) && at < cutoff
+        return at !== null && at < cutoff
       }
       let needsCompaction = false
+      let oldestAt = null
       let lastYield = 0
       for (const { line, position } of readArchiveLines(source, 0, initial.size)) {
         const record = JSON.parse(line)
         validateRecord(record, position)
         if (expired(record)) { needsCompaction = true; break }
+        oldestAt = earlierTime(oldestAt, recordTime(record))
         if (position - lastYield >= PRUNE_YIELD_BYTES) {
           lastYield = position
           await yieldDuringPrune()
           if (isPruneCancelled(isCancelled)) return cancelledPruneResult()
         }
       }
-      // Do not rewrite gigabytes of retained data every hour when nothing has
-      // expired. In chronological archives the first expired row is near the start.
-      if (!needsCompaction) return { removed: 0, reclaimedBytes: 0 }
+      if (!needsCompaction) {
+        // Include appends made while the scan yielded, even backdated ones from
+        // another instance. Finish this tail and save its bound in one turn.
+        const current = fs.statSync(filePath)
+        if (!sameFile(initial, current) || current.size < initial.size) throw new Error('Shared memory archive replaced during retention; cleanup deferred')
+        for (const { line, position } of readArchiveLines(source, initial.size, current.size)) {
+          const record = JSON.parse(line)
+          validateRecord(record, position)
+          if (expired(record)) { needsCompaction = true; break }
+          oldestAt = earlierTime(oldestAt, recordTime(record))
+        }
+        if (!needsCompaction) {
+          retentionState = { version: 1, view: retentionView(current), oldestAt }
+          checkpointRetention()
+          return { removed: 0, reclaimedBytes: 0 }
+        }
+      }
       if (isPruneCancelled(isCancelled)) return cancelledPruneResult()
       target = fs.openSync(temporary, 'wx', 0o600)
+      oldestAt = null
       const copy = ({ line, position }) => {
         const record = JSON.parse(line)
         validateRecord(record, position)
         if (expired(record)) { removed++; return }
+        oldestAt = earlierTime(oldestAt, recordTime(record))
         const bytes = Buffer.from(`${stringify({ ...record, version: 2, offset: outputBytes })}\n`)
         let written = 0
         while (written < bytes.length) written += fs.writeSync(target, bytes, written, bytes.length - written)
@@ -256,6 +334,8 @@ function createCerebrumSharedArchive (filePath) {
       fs.closeSync(target)
       target = undefined
       fs.renameSync(temporary, filePath)
+      retentionState = { version: 1, view: retentionView(fs.statSync(filePath)), oldestAt }
+      checkpointRetention()
       return { removed, reclaimedBytes: current.size - outputBytes }
     } finally {
       fs.closeSync(source)
@@ -334,7 +414,7 @@ function createCerebrumSharedArchive (filePath) {
     return { ok: true, items, totalMatches: matches, offset: start, nextOffset: start + items.length < matches ? start + items.length : null }
   }
 
-  return { filePath, recoveredBytes, append, appendMany, query, snapshotBytes, snapshot, prune }
+  return { filePath, recoveredBytes, append, appendMany, query, snapshotBytes, snapshot, prune, checkpointRetention }
 }
 
 module.exports = { createCerebrumSharedArchive, validateCerebrumSharedArchive }

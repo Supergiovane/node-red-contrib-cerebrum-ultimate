@@ -217,7 +217,7 @@ const CEREBRUM_TRAFFIC_DEFAULTS = Object.freeze({
 
 const PROACTIVE_EDUCATION_RETRY_MINUTES = 15
 const CEREBRUM_STATE_TICK_MS = 30 * 1000
-const CEREBRUM_HOME_MEMORY_SAVE_MS = 10 * 1000
+const CEREBRUM_HOME_MEMORY_SAVE_MS = 60 * 1000
 const CEREBRUM_BUS_STATUS_POLL_MS = 5 * 1000
 const CEREBRUM_TRANSITION_MAX_EDGES = 500
 const CEREBRUM_RATE_MAX_SERIES = 300
@@ -18961,6 +18961,7 @@ module.exports = function (RED) {
           } catch (error) { failures.push(error) }
         }
         try { await flushBackupArchiveWrites() } catch (error) { failures.push(error) }
+        node._sharedMemoryArchive?.checkpointRetention()
         if (failures.length) throw new Error(failures.map(error => error.message || error).join('; '))
       }).then(() => finishClose(), error => finishClose(error))
       function finishClose (error) {

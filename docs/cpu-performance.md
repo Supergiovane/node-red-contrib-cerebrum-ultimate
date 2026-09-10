@@ -13,7 +13,7 @@ Measured locally on Node.js 24.13.0, with the Node CPU profiler enabled for both
 | Repeated values | 7.738 | 2.509 | 68% |
 | Changing values | 19.430 | 5.817 | 70% |
 
-These are process CPU measurements for synthetic traffic, not the CPU percentage of the deployed Proxmox VM. Disk synchronization still contributes to elapsed time. Actual utilization depends on event rate, catalog size, storage and the other work running in Node-RED. Measure the deployed process after installing this build and restarting Node-RED.
+These are process CPU measurements for synthetic traffic, not the CPU percentage of the deployed Proxmox VM. Disk synchronization still contributes to elapsed time. Actual utilization depends on event rate, catalog size, storage and the other work running in Node-RED. The later SSH investigation below measures the deployed process separately.
 
 Run from the repository with dependencies installed:
 
@@ -45,7 +45,7 @@ Measured locally on Node.js 24.13.0, comparing commit `a40f263` with this change
 | Retained JavaScript heap after GC | 167.8 MiB | 25.2 MiB |
 | Sampled peak process RSS | 427.9 MiB | 291.8 MiB |
 
-The benchmark verified all 3,000 raw telegrams, 1,800 observations and their evidence references. Heap retention fell about 85%; sampled peak RSS fell about 32%. The script samples memory every 50 telegrams and after verification, so the reported peaks are sampled maxima. `--expose-gc` permits one final collection in the benchmark to distinguish retained objects from temporary allocations; production code does not force garbage collection. Process RSS and JavaScript heap are different from Proxmox's total VM memory reading. The VM's idle CPU/RAM behavior still needs measurement after installing the build and restarting Node-RED.
+The benchmark verified all 3,000 raw telegrams, 1,800 observations and their evidence references. Heap retention fell about 85%; sampled peak RSS fell about 32%. The script samples memory every 50 telegrams and after verification, so the reported peaks are sampled maxima. `--expose-gc` permits one final collection in the benchmark to distinguish retained objects from temporary allocations; production code does not force garbage collection. Process RSS and JavaScript heap are different from Proxmox's total VM memory reading; see the separate deployed measurements below.
 
 ```sh
 node --expose-gc --max-old-space-size=512 scripts/benchmark-ingestion.js 600 1200
@@ -55,7 +55,7 @@ node --expose-gc --max-old-space-size=512 scripts/benchmark-ingestion.js 600 120
 
 | Work | Previous cadence | Current cadence |
 | --- | --- | --- |
-| Derived home-memory Markdown checkpoint during traffic | 1.5 seconds | 10 seconds |
+| Derived home-memory Markdown checkpoint during traffic | 1.5 seconds, then 10 seconds in 0.3.6 | 60 seconds |
 | Local state/world-model check and periodic-review eligibility | 15 seconds | 30 seconds |
 | AI Education file polling | 10 seconds | 30 seconds |
 | KNX connection fallback polling | 1 second | 5 seconds, with a configured gateway |
@@ -89,3 +89,57 @@ node --expose-gc --max-old-space-size=768 scripts/benchmark-snapshot.js 192 4 ev
 ```
 
 Arguments are approximate history size in MiB (up to 512), image size in MiB (up to 6), and `event` (default) or `current`. Sampling occurs at file-read, model/provider and JSON-serialization boundaries. With `--expose-gc`, the benchmark collects before and after the request; production code does not force GC. No real cameras, model APIs or user storage are accessed.
+
+## Diagnosing a rising Proxmox memory percentage
+
+On September 10, live checks of the affected 2 GiB VM between 10:07 and 10:10 CEST found available memory at approximately 1,244 → 1,215 → 1,292 MiB and file cache at 1,203 → 1,205 → 1,207 MiB, despite Proxmox memory readings near 87–89%. Cumulative swap-in and swap-out counters stayed unchanged at 20 KiB each. These are guest-wide measurements, not Node-RED process RSS. They establish that the VM had substantial available memory at those times; they do not identify which process populated the cache or rule out a separate process leak at another time. Two Proxmox CPU readings were 8.50% and 9.65% of one vCPU; attributing that utilization requires process-level measurements.
+
+Linux distinguishes completely free memory from `MemAvailable`, which estimates how much can be used by applications without swapping and includes reclaimable memory. File reads can fill page cache without retaining the file in the JavaScript heap. See the [Linux `/proc/meminfo` documentation](https://www.kernel.org/doc/html/latest/filesystems/proc.html) and [QEMU guest memory statistics](https://www.qemu.org/docs/master/interop/virtio-balloon-stats.html). Do not clear caches, force GC or change the VM's allocation merely to lower the displayed percentage.
+
+In unpatched 0.3.6, the shared-archive retention check starts 60 seconds after Cerebrum initialization and scans the archive even when no records have expired. A local scan of a synthetic 384 MiB shared archive took 68.5 seconds, with sampled process RSS at 124–128 MiB and no forced GC. A separate six-minute run with 600 synthetic KNX sensors and about eight events/second settled at roughly 235–240 MiB RSS after warm-up. Both used Node.js 24.13.0 with a 512 MiB old-space limit; neither substitutes for measuring the deployed Node-RED process and its actual integrations.
+
+For process-level diagnosis, copy the standalone `scripts/diagnose-memory.js` file to the Linux VM (or use a repository checkout there) and run it as the Node-RED process owner:
+
+```sh
+node scripts/diagnose-memory.js auto 360 > /tmp/cerebrum-memory.jsonl
+```
+
+It samples `/proc` every 20 seconds for six minutes and exits. It reports process RSS, anonymous/file-backed memory, swap, cumulative I/O, and guest available memory/cache. It does not read flow or archive contents, call a model, request a camera snapshot, force collection, or restart the service. If automatic process detection finds zero or multiple candidates, replace `auto` with the Node-RED PID. Run it while the reported growth is occurring. The script has no dependencies and is a repository diagnostic, not an automatically running Cerebrum timer.
+
+When guest login is unavailable but Proxmox already receives balloon statistics, its VM **Monitor** can provide a read-only guest-wide check:
+
+```text
+info qom-tree /machine/peripheral
+qom-get /machine/peripheral/balloon0 guest-stats
+```
+
+Use the balloon device path actually listed by the first command. Check that `last-update` advances; compare `stat-available-memory`, `stat-disk-caches` and swap counters across samples. Memory values are bytes; unsupported counters may appear as `-1` or an unsigned all-ones value. This does not require installing or enabling the QEMU guest agent, but existing balloon statistics support is required.
+
+## SSH investigation and retention checkpoint
+
+The September 10 SSH investigation found Node.js 22.23.2 running Cerebrum 0.3.6, with the preceding ingestion and snapshot fixes already installed. The common JSONL archive occupied 3.67 GB, while the derived home-memory Markdown was about 1.36 MB. The configured history retention was 20 days. No chat or snapshot requests were needed for the measurements.
+
+Bounded samples at 25 positions across the archive predominantly contained older `context` records, including `home.observations`, state projections and world-model projections from September 7–9. In a separate 2 MiB sample spanning 109.5 seconds on September 8, 3,061 `context:home.observations` records included 2,978 exact repetitions of already sampled `data` objects. This confirms substantial duplication in that historical window; it is not an exact whole-file breakdown. The latest 8 MiB spanned approximately 44 minutes on September 10 and contained no `context:home.observations` records. Current code already excludes reconstructible projections and fixes observation snapshot identities. Those fixes prevent repeated writes going forward; they do not retroactively remove old archive records or change their evidence IDs.
+
+During the six-minute baseline at 10:48–10:54 CEST, Node-RED RSS ranged from 516.9 to 538.9 MiB, guest available memory from 1,204.2 to 1,236.6 MiB, and process swap remained zero. Node-RED wrote 80.3 MiB to storage while the common archive grew by 1.11 MiB and the daily KNX archive by 0.13 MiB. CPU averaged 4.67% of one CPU in the final three minutes, after profiling had stopped. These measure the complete Node-RED process with live integrations, not Cerebrum in isolation. A separate two-minute main-thread profile identified repeated synchronous persistence and derived-memory normalization; its wall time includes disk waits and is not a CPU-utilization percentage.
+
+The follow-up patch spaces derived home-memory checkpoints to 60 seconds. Explicit edits, habit-learning checkpoints and shutdown persistence keep their existing behavior; raw event and observation appends still flush synchronously. This reduces repeated normalization and full Markdown writes during continuous traffic without postponing the raw archive.
+
+Retention now keeps the oldest valid timestamp alongside an exact archive fingerprint (device, inode, size, modification and change times). The advisory sidecar, `cerebrum-memory.jsonl.retention-state.json`, is plain JSON. Appends update the timestamp bound in memory; completed scans and clean shutdown save it atomically. If the bound proves no record has expired, retention skips reading the archive. A missing, malformed or stale checkpoint, external changes, unsaved writes after a crash, or expired timestamps fall back to the existing validating scan and configured retention. The first scan of an existing archive is still required. Unknown timestamps are retained, and a backdated tail appended during scanning is included before publishing the checkpoint. Failure to save this optional file does not reject archived events.
+
+A local 384 MiB archive probe with the patch took 74.4 seconds for its first scan, then 6 milliseconds and zero archive bytes read for retention on a newly opened instance. This uses the same 64 KiB streaming reader and 10 ms cooperative backoff; the optimization removes unnecessary repeat scans rather than making a required full scan faster. Regression tests cover restart reuse, aging, shorter retention, backdated appends, concurrent tails, external edits and optional-checkpoint failures. The complete suite passed 330 tests, runtime loading and lint checks.
+
+On the VM, the first required scan completed at 11:16:22 CEST. While scanning, Node-RED read approximately 110 MiB every 20 seconds and the guest kept more than 1.1 GiB available. A clean restart at 11:17:28 saved and reused the checkpoint. The retention check at 11:18:33 completed without another full scan: cumulative Node-RED reads remained near 68 MiB for startup and reached only 71.4 MiB by the end of the six-minute observation window. Those totals include all Node-RED file reads, not just Cerebrum. The existing Linux page cache was left intact.
+
+| Live measurement | Before this follow-up patch | After patch and clean restart |
+| --- | ---: | ---: |
+| Six-minute observation window, CEST | 10:48–10:54 | 11:17:48–11:23:48 |
+| CPU mean in final three minutes, one CPU | 4.67% | 4.39% |
+| CPU range in final three minutes | 3.00–5.90% | 2.95–5.59% |
+| Process RSS, MiB | 516.9–538.9 | 420.7–476.3 |
+| Guest available memory, MiB | 1,204.2–1,236.6 | 1,293.4–1,364.1 |
+| Process swap, MiB | 0 | 0 |
+| Process disk writes, MiB | 80.3 | 42.6 |
+| KNX records appended to daily history | 894 | 921 |
+
+Disk writes fell 47% with comparable live KNX traffic. Steady-state CPU changed only slightly; the larger CPU/I/O benefit is avoiding unnecessary startup and daily scans (the configured timer runs every 24 hours). RSS after a fresh restart is not an hour-long steady-state heap comparison. The observed windows show substantial available guest memory and no process swapping; they do not establish a 24-hour maximum. Events, observations and configured retention remain active. Node-RED is running with the two patched JavaScript files; original copies are preserved on the VM in `/home/pi/cerebrum-code-backup-20260910`. Temporary profiling and measurement processes were stopped, and the loopback Node inspector was closed.

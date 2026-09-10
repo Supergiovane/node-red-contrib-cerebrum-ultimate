@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.7 — 2026-09-10
+
+- Avoid repeated full shared-archive scans when no records have expired, using an advisory timestamp checkpoint that is updated during appends and saved after retention checks and clean shutdown. Missing or stale checkpoints fall back to the validating scan; configured retention and evidence references are preserved. Added regression coverage for restart reuse, backdated appends, concurrent writes and checkpoint failures.
+- Space derived home-memory Markdown saves from 10 to 60 seconds to reduce normalization and disk writes during live traffic. Raw events and observations remain immediately archived; explicit saves and shutdown persistence retain their existing behavior.
+- Add a read-only Linux memory diagnostic and document live VM measurements, including reclaimable file cache, historical duplicate records and a 47% reduction in disk writes across comparable six-minute traffic windows. See [CPU and memory measurements](docs/cpu-performance.md).
+
 ## 0.3.6 — 2026-09-09
 
 - Reduce snapshot/chat memory spikes by reading KNX, adapter and operation history in 64 KiB chunks instead of loading whole daily files and splitting them into arrays. Preserve full-range aggregate counts and select top counts without duplicating the complete counter table. Encode camera bytes as Base64 only in the sidebar HTTP response; Telegram/Node-RED still receive the original binary image. Added snapshot-request measurements and regression coverage for history boundaries, totals and image delivery.

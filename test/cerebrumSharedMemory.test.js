@@ -63,7 +63,7 @@ describe('Cerebrum shared household memory', () => {
         { kind: 'adapter', channel: 'unifi', at: '2026-09-09T10:00:01.000Z', data: { camera: 'Ingresso', icon: '🏠' } },
         { kind: 'observation', nodeId: 'cerebrum-1', at: '2026-09-09T10:00:02.000Z', data: { text: 'Movimento' } }
       ])
-      expect(calls).to.deep.equal({ open: 1, fstat: 1, write: 1, fsync: 1 })
+      expect(calls).to.deep.equal({ open: 1, fstat: 2, write: 1, fsync: 1 })
       expect(records.map(record => record.kind)).to.deep.equal(['knx', 'adapter', 'observation'])
       expect(new Set(records.map(record => record.id)).size).to.equal(records.length)
       let position = 0
@@ -211,7 +211,7 @@ describe('Cerebrum shared household memory', () => {
     expect(() => validateCerebrumSharedArchive({ filePath: archive.filePath })).not.to.throw()
     expect((await archive.query()).items.map(item => item.id)).to.deep.equal(retained.map(record => record.id).reverse())
     for (const record of removed) expect((await archive.query({ operation: 'get', text: record.id })).ok).to.equal(false)
-    expect(fs.readdirSync(root)).to.deep.equal(['common.jsonl'])
+    expect(fs.readdirSync(root)).to.deep.equal(['common.jsonl', 'common.jsonl.retention-state.json'])
   })
 
   it('compacts legacy offsets without changing retained IDs and invalidates old search snapshots', async () => {
@@ -256,6 +256,9 @@ describe('Cerebrum shared household memory', () => {
       at: '2026-09-08T12:00:00Z',
       data: { index, text: 'x'.repeat(2048) }
     })))
+    // An archive from a previous process without a valid checkpoint needs its
+    // initial scan; archives whose timestamp bound is known skip that work.
+    const reopened = createCerebrumSharedArchive(archive.filePath)
     const originalSetTimeout = global.setTimeout
     const delays = []
     try {
@@ -263,13 +266,100 @@ describe('Cerebrum shared household memory', () => {
         delays.push(delay)
         return originalSetTimeout(callback, 0, ...args)
       }
-      expect(await archive.prune({ retentionDays: 30, now: Date.parse('2026-09-09T12:00:00Z') })).to.deep.equal({ removed: 0, reclaimedBytes: 0 })
+      expect(await reopened.prune({ retentionDays: 30, now: Date.parse('2026-09-09T12:00:00Z') })).to.deep.equal({ removed: 0, reclaimedBytes: 0 })
     } finally {
       global.setTimeout = originalSetTimeout
     }
     expect(delays.length).to.be.greaterThan(1)
     expect(new Set(delays)).to.deep.equal(new Set([10]))
     expect(() => validateCerebrumSharedArchive({ filePath: archive.filePath })).not.to.throw()
+  })
+
+  it('skips archive reads after a clean checkpoint and still applies shorter retention to backdated appends', async () => {
+    const filePath = path.join(root, 'common.jsonl')
+    let archive = createCerebrumSharedArchive(filePath)
+    const recent = archive.append({ kind: 'knx', at: '2026-09-08T12:00:00Z', data: { value: 1 } })
+    expect(archive.checkpointRetention()).to.equal(true)
+    archive = createCerebrumSharedArchive(filePath)
+    const older = archive.append({ kind: 'conversation', at: '2026-08-25T12:00:00Z', data: { text: 'backdated' } })
+    expect(archive.checkpointRetention()).to.equal(true)
+    archive = createCerebrumSharedArchive(filePath)
+    const read = fs.readSync
+    try {
+      fs.readSync = () => { throw new Error('Retained archive should not be read') }
+      expect(await archive.prune({ retentionDays: 30, now: Date.parse('2026-09-10T12:00:00Z') })).to.deep.equal({ removed: 0, reclaimedBytes: 0 })
+    } finally { fs.readSync = read }
+    expect((await archive.prune({ retentionDays: 10, now: Date.parse('2026-09-10T12:00:00Z') })).removed).to.equal(1)
+    expect((await archive.query({ operation: 'get', text: older.id })).ok).to.equal(false)
+    expect((await archive.query({ operation: 'get', text: recent.id })).ok).to.equal(true)
+    expect((await archive.prune({ retentionDays: 10, now: Date.parse('2026-09-20T12:00:00Z') })).removed).to.equal(1)
+  })
+
+  it('invalidates the timestamp checkpoint on external edits and writes from another instance', async () => {
+    const filePath = path.join(root, 'common.jsonl')
+    const archive = createCerebrumSharedArchive(filePath)
+    archive.append({ kind: 'knx', at: '2026-09-08T12:00:00Z', data: { value: 1 } })
+    expect(archive.checkpointRetention()).to.equal(true)
+    const original = fs.readFileSync(filePath, 'utf8')
+    fs.writeFileSync(filePath, original.replace('2026-09-08', '2026-08-01'))
+    fs.utimesSync(filePath, new Date(0), new Date(0))
+    const reopened = createCerebrumSharedArchive(filePath)
+    expect((await reopened.prune({ retentionDays: 30, now: Date.parse('2026-09-10T12:00:00Z') })).removed).to.equal(1)
+    const recent = reopened.append({ kind: 'knx', at: '2026-09-08T12:00:00Z', data: { value: 2 } })
+    expect(reopened.checkpointRetention()).to.equal(true)
+    const other = createCerebrumSharedArchive(filePath)
+    other.append({ kind: 'knx', at: '2025-01-01T00:00:00Z', data: { value: 3 } })
+    expect((await reopened.prune({ retentionDays: 30, now: Date.parse('2026-09-10T12:00:00Z') })).removed).to.equal(1)
+    expect((await reopened.query()).items.map(item => item.id)).to.deep.equal([recent.id])
+  })
+
+  it('checks a concurrently appended tail before caching a previously unknown archive', async () => {
+    const filePath = path.join(root, 'common.jsonl')
+    const writer = createCerebrumSharedArchive(filePath)
+    writer.appendMany(Array.from({ length: 80 }, (_, index) => ({ kind: 'context', at: '2026-09-08T12:00:00Z', data: { index, text: 'x'.repeat(2048) } })))
+    const archive = createCerebrumSharedArchive(filePath)
+    const pending = archive.prune({ retentionDays: 30, now: Date.parse('2026-09-10T12:00:00Z') })
+    writer.append({ kind: 'knx', at: '2025-01-01T00:00:00Z', data: { value: 3 } })
+    expect((await pending).removed).to.equal(1)
+    expect((await archive.query()).totalMatches).to.equal(80)
+    const reopened = createCerebrumSharedArchive(filePath)
+    const read = fs.readSync
+    try {
+      fs.readSync = () => { throw new Error('Completed scan should have a reusable checkpoint') }
+      await reopened.prune({ retentionDays: 30, now: Date.parse('2026-09-10T12:00:00Z') })
+    } finally { fs.readSync = read }
+    expect(() => validateCerebrumSharedArchive({ filePath })).not.to.throw()
+  })
+
+  it('treats the retention checkpoint as optional and validates nonstandard serialized records normally', async () => {
+    const archive = createCerebrumSharedArchive(path.join(root, 'common.jsonl'))
+    const saved = archive.append({ kind: 'knx', at: '2026-09-08T12:00:00Z', data: { value: 1 } })
+    const rename = fs.renameSync
+    try {
+      fs.renameSync = () => { throw new Error('Cache is unwritable') }
+      expect(archive.checkpointRetention()).to.equal(false)
+      expect(await archive.prune({ retentionDays: 30, now: Date.parse('2026-09-10T12:00:00Z') })).to.deep.equal({ removed: 0, reclaimedBytes: 0 })
+    } finally { fs.renameSync = rename }
+    expect(fs.readdirSync(root)).to.deep.equal(['common.jsonl'])
+    expect((await archive.query({ operation: 'get', text: saved.id })).ok).to.equal(true)
+    archive.append({ kind: 'knx', at: new Date('2025-01-01'), data: { value: 2 } })
+    expect((await archive.prune({ retentionDays: 30, now: Date.parse('2026-09-10T12:00:00Z') })).removed).to.equal(1)
+    archive.append({ kind: 'knx', data: { toJSON: () => undefined } })
+    await rejects(archive.prune({ retentionDays: 30, now: Date.parse('2026-09-10T12:00:00Z') }), /Invalid shared memory/)
+  })
+
+  it('includes retained backdated tail records in a cached timestamp bound without compaction', async () => {
+    const filePath = path.join(root, 'common.jsonl')
+    const writer = createCerebrumSharedArchive(filePath)
+    writer.appendMany(Array.from({ length: 80 }, () => ({ kind: 'knx', at: '2026-09-08T12:00:00Z', data: { text: 'x'.repeat(2048) } })))
+    const archive = createCerebrumSharedArchive(filePath)
+    const pending = archive.prune({ retentionDays: 30, now: Date.parse('2026-09-10T12:00:00Z') })
+    const tail = writer.append({ kind: 'knx', at: '2026-08-25T12:00:00Z', data: { value: 3 } })
+    expect((await pending).removed).to.equal(0)
+    const reopened = createCerebrumSharedArchive(filePath)
+    expect((await reopened.prune({ retentionDays: 10, now: Date.parse('2026-09-10T12:00:00Z') })).removed).to.equal(1)
+    expect((await reopened.query({ operation: 'get', text: tail.id })).ok).to.equal(false)
+    expect((await reopened.query()).totalMatches).to.equal(80)
   })
 
   it('cancels compaction cooperatively without replacing the original or leaving a temporary file', async () => {

@@ -116,7 +116,7 @@ describe('Cerebrum background resource use', function () {
     }
     const first = captureTimers(() => node.handleSend(telegram('1/2/3', 20)))
     const timer = node._homeMemoryWriteTimer
-    assert.equal(first.timers.get(timer).delay, 10000)
+    assert.equal(first.timers.get(timer).delay, 60000)
     node.handleSend(telegram('1/2/3', 21))
     assert.equal(node._homeMemoryWriteTimer, timer, 'Traffic must not move the first save deadline')
     const archive = records()
