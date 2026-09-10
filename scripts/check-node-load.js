@@ -6,7 +6,6 @@ const path = require('path')
 const vm = require('vm')
 
 const registeredNodes = new Map()
-const registeredPlugins = new Map()
 const noopRoute = () => {}
 const RED = {
   auth: { needsPermission: () => (req, res, next) => { if (next) next() } },
@@ -17,22 +16,17 @@ const RED = {
     getNode: () => undefined,
     registerType: (type, constructor) => registeredNodes.set(type, constructor)
   },
-  plugins: {
-    registerPlugin: (id, definition) => registeredPlugins.set(id, definition)
-  },
   settings: { userDir: process.cwd() }
 }
 
 const root = path.resolve(__dirname, '..')
 require(path.join(root, 'nodes', 'cerebrumUltimate'))(RED)
 require(path.join(root, 'nodes', 'cerebrumFunction'))(RED)
-require(path.join(root, 'nodes', 'plugins', 'cerebrum-runtime-plugin'))(RED)
 
 assert(registeredNodes.has('cerebrumUltimate'))
 assert(registeredNodes.has('cerebrum-function'))
 assert(!registeredNodes.has('function'))
 assert(!registeredNodes.has('cerebrumHomeAssistant'))
-assert(registeredPlugins.has('cerebrumUltimateRuntime'))
 
 const editorFiles = ['nodes/cerebrumUltimate.html', 'nodes/cerebrumFunction.html']
 let editorScriptCount = 0

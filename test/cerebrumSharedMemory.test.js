@@ -249,6 +249,57 @@ describe('Cerebrum shared household memory', () => {
     expect(() => validateCerebrumSharedArchive({ filePath })).not.to.throw()
   })
 
+  it('backs off with a bounded timer while scanning retained archive data', async () => {
+    const archive = createCerebrumSharedArchive(path.join(root, 'common.jsonl'))
+    archive.appendMany(Array.from({ length: 80 }, (_, index) => ({
+      kind: 'context',
+      at: '2026-09-08T12:00:00Z',
+      data: { index, text: 'x'.repeat(2048) }
+    })))
+    const originalSetTimeout = global.setTimeout
+    const delays = []
+    try {
+      global.setTimeout = (callback, delay, ...args) => {
+        delays.push(delay)
+        return originalSetTimeout(callback, 0, ...args)
+      }
+      expect(await archive.prune({ retentionDays: 30, now: Date.parse('2026-09-09T12:00:00Z') })).to.deep.equal({ removed: 0, reclaimedBytes: 0 })
+    } finally {
+      global.setTimeout = originalSetTimeout
+    }
+    expect(delays.length).to.be.greaterThan(1)
+    expect(new Set(delays)).to.deep.equal(new Set([10]))
+    expect(() => validateCerebrumSharedArchive({ filePath: archive.filePath })).not.to.throw()
+  })
+
+  it('cancels compaction cooperatively without replacing the original or leaving a temporary file', async () => {
+    const archive = createCerebrumSharedArchive(path.join(root, 'common.jsonl'))
+    archive.appendMany(Array.from({ length: 80 }, (_, index) => ({
+      kind: 'context',
+      at: '2025-01-01T00:00:00Z',
+      data: { index, text: 'x'.repeat(2048) }
+    })))
+    const original = fs.readFileSync(archive.filePath)
+    const originalSetTimeout = global.setTimeout
+    let cancelled = false
+    try {
+      global.setTimeout = (callback, delay, ...args) => {
+        cancelled = true
+        return originalSetTimeout(callback, 0, ...args)
+      }
+      expect(await archive.prune({
+        retentionDays: 30,
+        now: Date.parse('2026-09-09T12:00:00Z'),
+        isCancelled: () => cancelled
+      })).to.deep.equal({ removed: 0, reclaimedBytes: 0, cancelled: true })
+    } finally {
+      global.setTimeout = originalSetTimeout
+    }
+    expect(fs.readFileSync(archive.filePath)).to.deep.equal(original)
+    expect(fs.readdirSync(root)).to.deep.equal(['common.jsonl'])
+    expect(() => validateCerebrumSharedArchive({ filePath: archive.filePath })).not.to.throw()
+  })
+
   it('keeps the original intact on corruption or failed replacement and cleans up temporary files', async () => {
     const archive = createCerebrumSharedArchive(path.join(root, 'common.jsonl'))
     archive.append({ kind: 'knx', at: '2025-01-01', data: { text: 'old' } })

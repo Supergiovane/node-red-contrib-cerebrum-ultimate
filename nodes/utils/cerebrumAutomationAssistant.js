@@ -1,9 +1,10 @@
 'use strict'
 
-// Scheduled semantic work shares existing retrieval, Web and TTS integrations.
-// Only reads, speech and the final reply are dispatched here, never model writes
-// or changes to memories, schedules, functions or camera watches.
-async function runCerebrumAutomationAssistant ({ instruction, isCancelled, reason, research, read, speak, notify }) {
+// Scheduled semantic work shares existing retrieval, Web, camera and TTS
+// integrations. Only reads, read-only snapshots, speech and the final reply are
+// dispatched here, never model writes or changes to memories, schedules,
+// functions or camera watches.
+async function runCerebrumAutomationAssistant ({ instruction, isCancelled, reason, research, read, camera, speak, notify }) {
   const assertCurrent = () => { if (isCancelled()) throw new Error('Automation execution was cancelled') }
   let webResults = []
   let response = await reason({ question: instruction })
@@ -32,7 +33,22 @@ async function runCerebrumAutomationAssistant ({ instruction, isCancelled, reaso
       continue
     }
     assertCurrent()
-    if (response.speechActions?.length) await speak(response.speechActions)
+    const cameraActions = (Array.isArray(response.cameraActions) ? response.cameraActions : [])
+      .filter(action => action && ['snapshot', 'event_snapshot'].includes(action.type))
+    if (cameraActions.length) {
+      if (cameraActions.length !== 1 || cameraActions.length !== response.cameraActions.length) {
+        throw new Error('Scheduled assistant work permits one read-only camera snapshot action')
+      }
+      if (typeof camera !== 'function') throw new Error('Camera snapshots are unavailable to scheduled assistant work')
+      await camera({
+        actions: cameraActions,
+        reply: response.content || response.reply || '',
+        language: response.language || '',
+        isCancelled
+      })
+    } else if (response.cameraActions?.length) {
+      throw new Error('Scheduled assistant work cannot create or change camera watches')
+    } else if (response.speechActions?.length) await speak(response.speechActions)
     else if (response.content || response.reply) await notify(response.content || response.reply)
     else throw new Error('The assistant produced no announcement or explanation')
     return

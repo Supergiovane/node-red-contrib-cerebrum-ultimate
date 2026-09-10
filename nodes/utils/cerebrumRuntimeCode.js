@@ -1,4 +1,5 @@
 const vm = require('vm')
+const { isCerebrumCompatibleNodeSet } = require('./cerebrumLearning')
 
 const CEREBRUM_CODE_MAX_ACTIONS = 1
 const CEREBRUM_CODE_MAX_ROUNDS = 2
@@ -7,7 +8,6 @@ const CEREBRUM_CODE_MAX_OUTPUT_BYTES = 64 * 1024
 const CEREBRUM_CODE_TIMEOUT_MS = 500
 
 const SENSITIVE_RESULT_KEY_RE = /(authorization|bearer|cookie|credential|password|passwd|secret|token|api[-_]?key|access[-_]?key|private[-_]?key)/i
-const SENSITIVE_RUNTIME_KEY_RE = new RegExp(`${SENSITIVE_RESULT_KEY_RE.source}|headers?|base64|image|buffer|binary|raw`, 'i')
 
 const clampText = (value, maxChars) => String(value === undefined || value === null ? '' : value)
   // eslint-disable-next-line no-control-regex
@@ -85,47 +85,6 @@ const normalizeRuntimeCodeResult = (value, { depth = 0, seen = new WeakSet() } =
   return result
 }
 
-const sanitizeRuntimeSnapshotValue = (value, { depth = 0, seen = new WeakSet() } = {}) => {
-  if (value === null || value === undefined) return value === undefined ? null : value
-  if (typeof value === 'string') return clampText(value, 1000)
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'bigint') return String(value)
-  if (typeof value !== 'object' || Buffer.isBuffer(value) || depth >= 5 || seen.has(value)) return null
-  seen.add(value)
-  if (Array.isArray(value)) {
-    const result = value.slice(0, 4000).map(item => sanitizeRuntimeSnapshotValue(item, { depth: depth + 1, seen }))
-    seen.delete(value)
-    return result
-  }
-  const result = {}
-  Object.keys(value).slice(0, 500).forEach(key => {
-    const safeKey = clampText(key, 160)
-    if (!safeKey || SENSITIVE_RUNTIME_KEY_RE.test(safeKey)) return
-    let item
-    try { item = sanitizeRuntimeSnapshotValue(value[key], { depth: depth + 1, seen }) } catch (error) { item = null }
-    if (item !== undefined) result[safeKey] = item
-  })
-  seen.delete(value)
-  return result
-}
-
-const summarizeRuntimeNode = value => {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-  return {
-    id: clampText(source.id, 200),
-    type: clampText(source.type, 160),
-    name: clampText(source.name || source.label || source.type, 240),
-    tabId: clampText(source.tabId || source.z, 200),
-    disabled: source.disabled === true,
-    wireTargets: Array.from(new Set((Array.isArray(source.wireTargets)
-      ? source.wireTargets
-      : Array.isArray(source.wires) ? source.wires.flatMap(output => Array.isArray(output) ? output : []) : [])
-      .map(item => clampText(item, 200))
-      .filter(Boolean))).slice(0, 80)
-  }
-}
-
 const summarizeRuntimeNodeSet = value => {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   return {
@@ -142,45 +101,83 @@ const summarizeRuntimeNodeSet = value => {
   }
 }
 
-/** Resolve all live Node-RED information before entering the VM. The returned
- * object contains data only: no providers, runtime nodes, callbacks or context
- * stores can cross the isolation boundary. */
-const buildCerebrumRuntimeInspectionSnapshot = ({ runtimeSnapshot, node, RED } = {}) => {
-  const supplied = sanitizeRuntimeSnapshotValue(runtimeSnapshot && typeof runtimeSnapshot === 'object' ? runtimeSnapshot : {})
-  const deployed = []
-  if (!Array.isArray(supplied.nodes) || !supplied.nodes.length) {
-    try {
-      if (RED && RED.nodes && typeof RED.nodes.eachNode === 'function') RED.nodes.eachNode(item => deployed.push(summarizeRuntimeNode(item)))
-    } catch (error) { /* retain the partial data-only view */ }
+const summarizeRuntimeList = (value, maxItems = 500) => Array.from(new Set((Array.isArray(value) ? value : [])
+  .map(item => clampText(item && typeof item === 'object' ? item.id : item, 240))
+  .filter(Boolean)))
+  .slice(0, Math.max(0, Number(maxItems) || 0))
+
+const summarizeRuntimeIntegration = value => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const id = clampText(source.id, 120)
+  if (!id) return null
+  return {
+    id,
+    title: clampText(source.title || id, 240),
+    kinds: summarizeRuntimeList(source.kinds, 24),
+    capabilities: summarizeRuntimeList(source.capabilities, 100),
+    operations: summarizeRuntimeList(source.operations, 100),
+    access: summarizeRuntimeList(source.access, 24),
+    providerIds: summarizeRuntimeList(source.providerIds, 100),
+    providerCount: Math.max(0, Number(source.providerCount) || 0),
+    connectedProviderCount: Math.max(0, Number(source.connectedProviderCount) || 0),
+    readyProviderCount: Math.max(0, Number(source.readyProviderCount) || 0),
+    installed: source.installed === true,
+    deployed: source.deployed === true,
+    usable: source.usable === true,
+    health: clampText(source.health, 40),
+    healthReasons: summarizeRuntimeList(source.healthReasons, 100)
   }
-  let nodeSets = Array.isArray(supplied.nodeSets) ? supplied.nodeSets.map(summarizeRuntimeNodeSet) : []
+}
+
+/** Build the immutable model inventory before entering the VM. getNodeList is
+ * the only RED API consulted. Deployed nodes, wiring and runtime objects are
+ * deliberately ignored even when an older caller supplies them. */
+const buildCerebrumRuntimeInspectionSnapshot = ({ runtimeSnapshot, RED } = {}) => {
+  const supplied = runtimeSnapshot && typeof runtimeSnapshot === 'object' && !Array.isArray(runtimeSnapshot) ? runtimeSnapshot : {}
+  let nodeSets = Array.isArray(supplied.nodeSets)
+    ? supplied.nodeSets.slice(0, 5000).map(summarizeRuntimeNodeSet).filter(isCerebrumCompatibleNodeSet).slice(0, 1000)
+    : []
   if (!nodeSets.length) {
     try {
       const list = RED && RED.nodes && typeof RED.nodes.getNodeList === 'function' ? RED.nodes.getNodeList() : []
-      if (Array.isArray(list)) nodeSets = list.slice(0, 1000).map(summarizeRuntimeNodeSet)
+      if (Array.isArray(list)) nodeSets = list.slice(0, 5000).map(summarizeRuntimeNodeSet).filter(isCerebrumCompatibleNodeSet).slice(0, 1000)
     } catch (error) { /* installed inventory is optional */ }
   }
-  const nodes = (Array.isArray(supplied.nodes) && supplied.nodes.length ? supplied.nodes : deployed).map(summarizeRuntimeNode)
-  const nodeTypes = Array.isArray(supplied.nodeTypes) ? supplied.nodeTypes : Array.from(new Set(nodes.map(item => item.type).filter(Boolean))).map(type => ({ type, installed: true, deployedCount: nodes.filter(node => node.type === type).length, usable: true }))
-  return sanitizeRuntimeSnapshotValue({
+  const nodeTypesByName = new Map()
+  nodeSets.forEach(nodeSet => {
+    nodeSet.types.forEach(type => {
+      const normalizedType = clampText(type, 160)
+      if (!normalizedType) return
+      nodeTypesByName.set(normalizedType, {
+        type: normalizedType,
+        module: nodeSet.module,
+        version: nodeSet.version,
+        installed: true,
+        enabled: nodeSet.enabled,
+        loaded: nodeSet.loaded,
+        usable: nodeSet.enabled && nodeSet.loaded
+      })
+    })
+  })
+  const nodeTypes = Array.from(nodeTypesByName.values()).sort((left, right) => left.type.localeCompare(right.type))
+  const integrations = (Array.isArray(supplied.integrations) ? supplied.integrations : [])
+    .slice(0, 500)
+    .map(summarizeRuntimeIntegration)
+    .filter(Boolean)
+  return {
     version: 1,
-    capturedAt: supplied.capturedAt || new Date().toISOString(),
-    currentNode: supplied.currentNode || summarizeRuntimeNode(node),
-    installedNodeSetCount: Number(supplied.installedNodeSetCount) || nodeSets.length,
-    installedTypeCount: Number(supplied.installedTypeCount) || nodeTypes.filter(item => item && item.installed !== false).length,
-    flowNodeCount: Number(supplied.flowNodeCount) || nodes.length,
+    capturedAt: clampText(supplied.capturedAt || new Date().toISOString(), 64),
+    inventoryOnly: true,
+    installedNodeSetCount: nodeSets.length,
+    installedTypeCount: nodeTypes.length,
     nodeSets,
     nodeTypes,
-    nodes,
-    integrations: Array.isArray(supplied.integrations) ? supplied.integrations : [],
-    registries: supplied.registries || {},
-    discovery: supplied.discovery || {}
-  })
+    integrations
+  }
 }
 
 const executeCerebrumRuntimeCode = ({
   action,
-  node,
   RED,
   runtimeSnapshot,
   question = '',
@@ -199,7 +196,7 @@ const executeCerebrumRuntimeCode = ({
   const candidate = normalized.accepted[0]
   const startedAt = Date.now()
   try {
-    const snapshot = buildCerebrumRuntimeInspectionSnapshot({ runtimeSnapshot, node, RED })
+    const snapshot = buildCerebrumRuntimeInspectionSnapshot({ runtimeSnapshot, RED })
     const snapshotJson = JSON.stringify(snapshot)
     const context = vm.createContext(Object.create(null), {
       name: 'cerebrum-llm-runtime-code',
@@ -216,18 +213,8 @@ const __freeze = value => {
   return Object.freeze(value);
 };
 const runtime = __freeze(JSON.parse(${JSON.stringify(snapshotJson)}));
-const node = runtime.currentNode;
 const RED = __freeze({
   nodes: {
-    eachNode: callback => runtime.nodes.forEach(item => callback(__clone(item))),
-    getNode: id => {
-      const found = runtime.nodes.find(item => item.id === String(id));
-      return found ? __clone(found) : null;
-    },
-    getType: type => {
-      const found = runtime.nodeTypes.find(item => item.type === String(type));
-      return found ? __clone(found) : null;
-    },
     listTypes: () => __clone(runtime.nodeTypes),
     listNodeSets: () => __clone(runtime.nodeSets)
   },

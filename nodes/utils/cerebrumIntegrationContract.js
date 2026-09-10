@@ -216,20 +216,34 @@ const inspectCerebrumIntegrationProvider = ({ provider, manifest, kind = 'home-a
   const adapterId = text(readProviderValue(provider, 'adapterId') || (manifest && manifest.id), 120)
   if (!id || !adapterId) return null
   const operations = inferCerebrumProviderOperations(provider, manifest)
-  const connected = readProviderValue(provider, 'connected') !== false
+  const declaredConnected = readProviderValue(provider, 'connected')
   const declaredReady = readProviderValue(provider, 'ready')
   const readinessCheck = readProviderValue(provider, 'isReady')
-  let ready = connected
-  if (typeof declaredReady === 'boolean') ready = connected && declaredReady
+  let readinessReported = typeof declaredReady === 'boolean'
+  let readinessValue = declaredReady === true
   if (typeof readinessCheck === 'function') {
-    try { ready = connected && readinessCheck.call(provider) === true } catch (error) { ready = false }
+    readinessReported = true
+    try { readinessValue = readinessCheck.call(provider) === true } catch (error) { readinessValue = false }
   }
   const providerHealth = readProviderValue(provider, 'health')
   const declaredHealth = providerHealth && typeof providerHealth === 'object' && !Array.isArray(providerHealth)
     ? normalizeHealthStatus(readProviderValue(providerHealth, 'status'))
     : normalizeHealthStatus(readProviderValue(provider, 'healthStatus'))
+  const connectedReported = typeof declaredConnected === 'boolean'
+  const healthReported = !!declaredHealth
+  const connected = connectedReported
+    ? declaredConnected
+    : readinessReported
+      ? readinessValue
+      : healthReported && declaredHealth !== 'unavailable'
+  const ready = connected && (readinessReported
+    ? readinessValue
+    : connectedReported
+      ? declaredConnected
+      : healthReported && declaredHealth !== 'unavailable')
   const reportedError = !!(readProviderValue(provider, 'lastError') || readProviderValue(provider, 'error'))
   const reasons = []
+  if (!connectedReported && !readinessReported && !healthReported) reasons.push('provider_readiness_unknown')
   if (!connected) reasons.push('provider_disconnected')
   if (!ready) reasons.push('provider_not_ready')
   if (!operations.length) reasons.push('no_supported_operations')
@@ -246,7 +260,7 @@ const inspectCerebrumIntegrationProvider = ({ provider, manifest, kind = 'home-a
     kind: text((manifest && manifest.kind) || kind, 120),
     connected,
     ready,
-    usable: connected && ready && operations.length > 0,
+    usable: connected && ready && operations.length > 0 && declaredHealth !== 'unavailable',
     health,
     healthReasons: uniqueText(reasons, 12),
     lastSeenAt: Number.isNaN(lastSeen.getTime()) ? '' : lastSeen.toISOString(),

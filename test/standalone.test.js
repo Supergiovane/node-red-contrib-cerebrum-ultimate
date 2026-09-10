@@ -27,15 +27,77 @@ const {
   buildCerebrumStateRefreshMessage,
   buildCerebrumUniversalMessage,
   isCerebrumCameraProviderSelected,
+  isCerebrumUnifiProtectSource,
   isCerebrumUnifiProtectFlowMessage,
   redactCerebrumTransientPromptSections,
+  readRecentCerebrumCompactHistoryFile,
+  resolveCerebrumCameraHistoryCredentials,
+  resolveCerebrumCameraProviderEventRetention,
   sanitizeCerebrumConversationMetadataForArchive,
+  shouldSubscribeToCerebrumCameraProviderEvents,
+  shouldArchiveCerebrumSnapshotCollection,
   shouldPersistCerebrumCameraProviderEvents,
   summarizeCerebrumCameraHistoryAuditResult,
   normalizeCerebrumEtsAccessConfiguration
 } = require('../nodes/cerebrumUltimate').__test
 
 describe('Cerebrum Ultimate standalone package', () => {
+  it('archives source evidence and durable knowledge but not reconstructible working projections', () => {
+    for (const collection of [
+      'home.version',
+      'home.createdAt',
+      'home.updatedAt',
+      'home.reconciler',
+      'home.states',
+      'home.semanticEntities',
+      'home.observations',
+      'world.version',
+      'world.sequence',
+      'world.createdAt',
+      'world.updatedAt',
+      'world.lastTickAt',
+      'world.lastReasonAt',
+      'world.lastDailyAt',
+      'world.lastError',
+      'world.observationSequence',
+      'world.entities',
+      'world.evidence',
+      'world.patterns'
+    ]) {
+      expect(shouldArchiveCerebrumSnapshotCollection(collection)).to.equal(false)
+    }
+    for (const collection of ['home.habits', 'home.episodes', 'world.habits', 'world.goals', 'world.knowledge', 'chat.turns']) {
+      expect(shouldArchiveCerebrumSnapshotCollection(collection)).to.equal(true)
+    }
+  })
+
+  it('restores a recent working window from the archive tail', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-history-tail-'))
+    const filePath = path.join(root, 'busy.knxctx')
+    const start = Date.parse('2026-09-09T10:00:00.000Z')
+    const rows = Array.from({ length: 12000 }, (_, index) => JSON.stringify({
+      ts: start + index * 1000,
+      payload: `telegram-${index}`
+    })).join('\n') + '\n'
+    fs.writeFileSync(filePath, rows)
+    let parsed = 0
+    try {
+      const records = readRecentCerebrumCompactHistoryFile({
+        filePath,
+        fromTs: start + 11990 * 1000,
+        toTs: start + 12000 * 1000,
+        parseLine: line => { parsed++; return JSON.parse(line) }
+      })
+      expect(records.map(item => item.payload).sort()).to.have.members(
+        Array.from({ length: 10 }, (_, index) => `telegram-${11990 + index}`)
+      )
+      expect(parsed).to.be.lessThan(4000)
+      expect(records).to.have.length(10)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps transient camera-history evidence out of local prompt debug copies', () => {
     const evidence = '[CH1] providerId=protect-1 | eventId=motion-secret | snapshot=available'
     const actualPrompt = `CAMERA HISTORY TOOL RESULTS:\n${evidence}\nReturn the JSON object now.`
@@ -52,8 +114,40 @@ describe('Cerebrum Ultimate standalone package', () => {
       cerebrumUltimate: '/nodes/cerebrumUltimate.js',
       cerebrumFunction: '/nodes/cerebrumFunction.js'
     })
+    expect(manifest['node-red']).not.to.have.property('plugins')
     expect(manifest.dependencies).not.to.have.property('knxultimate')
     expect(manifest.dependencies).not.to.have.property('node-red-contrib-knx-ultimate')
+  })
+
+  it('enforces the inventory-only RED access boundary outside Cerebrum Function', () => {
+    const productionFiles = [
+      path.join(packageRoot, 'nodes', 'cerebrumUltimate.js'),
+      ...fs.readdirSync(path.join(packageRoot, 'nodes', 'utils'))
+        .filter(name => name.endsWith('.js'))
+        .map(name => path.join(packageRoot, 'nodes', 'utils', name))
+    ]
+    const forbidden = /\bRED\.(?:hooks|plugins)\b|\bRED\.nodes\.(?:eachNode|getCredentials|getType|linkcallTargets)\b/
+    productionFiles.forEach(filePath => {
+      expect(fs.readFileSync(filePath, 'utf8'), path.relative(packageRoot, filePath)).not.to.match(forbidden)
+    })
+
+    const mainSource = fs.readFileSync(path.join(packageRoot, 'nodes', 'cerebrumUltimate.js'), 'utf8')
+    expect(mainSource.match(/\bRED\.nodes\.getNode\(/g) || []).to.have.length(2)
+    expect(mainSource).to.include('RED.nodes.getNode(config.server)')
+    expect(mainSource).to.include('RED.nodes.getNode(node.unifiProtectConfigId)')
+
+    const inventoryReaders = productionFiles
+      .filter(filePath => /\bRED\.nodes\.getNodeList\b/.test(fs.readFileSync(filePath, 'utf8')))
+      .map(filePath => path.relative(packageRoot, filePath))
+      .sort()
+    expect(inventoryReaders).to.deep.equal([
+      'nodes/utils/cerebrumBackup.js',
+      'nodes/utils/cerebrumLearning.js',
+      'nodes/utils/cerebrumRuntimeCode.js'
+    ])
+
+    const editorSource = fs.readFileSync(path.join(packageRoot, 'nodes', 'cerebrumUltimate.html'), 'utf8')
+    expect(editorSource).not.to.match(/\bRED\.nodes\.(?:eachNode|getNode|getNodeList|getType|linkcallTargets)\b/)
   })
 
   it('keeps localized chat onboarding and read-only suggestions available', () => {
@@ -170,6 +264,11 @@ describe('Cerebrum Ultimate standalone package', () => {
   })
 
   it('keeps UniFi Protect live events and camera media out of durable memory', () => {
+    expect(isCerebrumUnifiProtectSource({ id: 'unifi-ultimate:controller-1' })).to.equal(true)
+    expect(isCerebrumUnifiProtectSource({ type: 'unifi-protect-config' })).to.equal(true)
+    expect(isCerebrumUnifiProtectSource({ packageName: 'node-red-contrib-unifi-ultimate' })).to.equal(true)
+    expect(isCerebrumUnifiProtectSource({ source: 'unifi-protect' })).to.equal(true)
+    expect(isCerebrumUnifiProtectSource({ source: 'ordinary-camera' })).to.equal(false)
     expect(isCerebrumUnifiProtectFlowMessage({
       payload: { motion: true },
       details: { unifiProtect: { deviceType: 'camera', deviceId: 'camera-1' } }
@@ -191,25 +290,48 @@ describe('Cerebrum Ultimate standalone package', () => {
       event: { source: 'unifi-ultimate' }
     })).to.equal(false)
     expect(shouldPersistCerebrumCameraProviderEvents({
+      provider: { id: 'protect-main', type: 'unifi-protect-provider' }
+    })).to.equal(false)
+    expect(shouldPersistCerebrumCameraProviderEvents({
+      provider: { id: 'protect-main' },
+      event: { package: 'node-red-contrib-unifi-ultimate' }
+    })).to.equal(false)
+    expect(shouldPersistCerebrumCameraProviderEvents({
       provider: { adapterId: 'future-camera', eventRetention: 'none' }
     })).to.equal(false)
     expect(shouldPersistCerebrumCameraProviderEvents({
       provider: { adapterId: 'ordinary-camera' }
     })).to.equal(true)
+    const sourceOwnedProvider = { adapterId: 'unifi-protect', subscribe: () => () => {} }
+    expect(resolveCerebrumCameraProviderEventRetention({ provider: sourceOwnedProvider })).to.equal('none')
+    expect(shouldSubscribeToCerebrumCameraProviderEvents({
+      provider: sourceOwnedProvider,
+      cameraWatches: []
+    })).to.equal(false)
+    expect(shouldSubscribeToCerebrumCameraProviderEvents({
+      provider: sourceOwnedProvider,
+      cameraWatches: [{ id: 'watch-1' }]
+    })).to.equal(true)
+    expect(shouldSubscribeToCerebrumCameraProviderEvents({
+      provider: sourceOwnedProvider,
+      cameraWatches: [],
+      automationEventFilters: [{ source: 'unifi-ultimate', event: 'motion' }]
+    })).to.equal(true)
 
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
     const metadata = {
       type: 'camera_notification',
-      event: { eventId: 'protect-event-1', eventType: 'motion', raw: { verbose: true } },
+      event: { source: 'unifi-ultimate', eventId: 'protect-event-1', eventType: 'motion', raw: { verbose: true } },
       image: { data: jpeg, mediaType: 'image/jpeg', filename: 'motion.jpg' }
     }
     const archived = sanitizeCerebrumConversationMetadataForArchive(metadata)
-    expect(archived.event).to.deep.equal({ eventId: 'protect-event-1', eventType: 'motion' })
-    expect(archived.image).to.deep.equal({
-      mediaType: 'image/jpeg',
-      filename: 'motion.jpg',
-      byteLength: 4,
-      stored: false
+    expect(archived).to.deep.equal({
+      image: {
+        mediaType: 'image/jpeg',
+        filename: 'motion.jpg',
+        byteLength: 4,
+        stored: false
+      }
     })
     expect(metadata.event.raw).to.deep.equal({ verbose: true })
     expect(metadata.image.data).to.equal(jpeg)
@@ -250,6 +372,52 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(editor).to.include('outputs: 6')
     expect(editor).to.include("case 5: return this._('cerebrumUltimate.outputs.homeAssistant')")
     expect(editor).to.include('RED.nodes.registerType(\'cerebrumUltimate\'')
+  })
+
+  it('stores UniFi history credentials on each Cerebrum node', () => {
+    const editor = fs.readFileSync(path.join(packageRoot, 'nodes', 'cerebrumUltimate.html'), 'utf8')
+    const runtime = fs.readFileSync(path.join(packageRoot, 'nodes', 'cerebrumUltimate.js'), 'utf8')
+    expect(editor).to.include('unifiHistoryUsername: { type: "text" }')
+    expect(editor).to.include('unifiHistoryPassword: { type: "password" }')
+    const unifiCard = editor.match(/<details id="cerebrum-compatible-unifi"[\s\S]*?<\/details>/)
+    expect(unifiCard).not.to.equal(null)
+    expect(unifiCard[0]).to.include('id="node-input-unifiHistoryUsername"')
+    expect(unifiCard[0]).to.include('type="password" id="node-input-unifiHistoryPassword"')
+    expect(unifiCard[0].indexOf('id="node-input-unifiProtectConfig"')).to.be.lessThan(unifiCard[0].indexOf('id="node-input-unifiHistoryUsername"'))
+    expect(unifiCard[0].indexOf('id="node-input-unifiHistoryUsername"')).to.be.lessThan(unifiCard[0].indexOf('id="node-input-unifiHistoryPassword"'))
+    expect(editor).not.to.include('credentials/unifi-protect-config/')
+    expect(editor).not.to.include('_applyUnifiHistoryCredentialDraft')
+    expect(runtime).to.include("unifiHistoryUsername: { type: 'text' }")
+    expect(runtime).to.include("unifiHistoryPassword: { type: 'password' }")
+    expect(runtime).to.include('resolveHistoryCredentials: resolveCameraHistoryCredentials')
+    expect(runtime).to.include('historyQueryScope: node.id')
+    expect(runtime).to.include('}, {\n              historyCredentials: resolveCameraHistoryCredentials({')
+    expect(runtime).to.include('CEREBRUM_CAMERA_EVENT_SNAPSHOT_TIMEOUT_MS = 3 * 60 * 1000')
+  })
+
+  it('releases a complete Cerebrum history credential pair only to UniFi Protect', () => {
+    const credentials = {
+      unifiHistoryUsername: 'local-user',
+      unifiHistoryPassword: 'local-password'
+    }
+    expect(resolveCerebrumCameraHistoryCredentials({
+      provider: { adapterId: 'unifi-ultimate', historyCredentialsMode: 'per_call' },
+      providerId: 'unifi-ultimate:controller-1',
+      credentials
+    })).to.deep.equal({ username: 'local-user', password: 'local-password' })
+    expect(resolveCerebrumCameraHistoryCredentials({
+      provider: { adapterId: 'other-camera' },
+      providerId: 'other-camera:controller-1',
+      credentials
+    })).to.equal(undefined)
+    expect(resolveCerebrumCameraHistoryCredentials({
+      provider: { adapterId: 'unifi-ultimate', historyCredentialsMode: 'per_call' },
+      credentials: { unifiHistoryUsername: 'local-user' }
+    })).to.equal(undefined)
+    expect(resolveCerebrumCameraHistoryCredentials({
+      provider: { adapterId: 'unifi-ultimate' },
+      credentials
+    })).to.equal(undefined)
   })
 
   it('provides an independent operation-status filter and color for every audit outcome', () => {
@@ -312,15 +480,15 @@ describe('Cerebrum Ultimate standalone package', () => {
     })).to.equal(true)
   })
 
-  it('summarizes KNX, UniFi and flow integrations in one compatible-node list', () => {
+  it('summarizes only installed -ultimate packages and dedicated camera providers', () => {
     const summary = buildCerebrumCompatibleNodeSummary({
       cameraAdapters: [{ id: 'unifi-ultimate', title: 'UniFi Ultimate / Protect', providerCount: 2, usedProviderCount: 1, cameraCount: 3 }],
-      cerebrumDiscovery: {
-        hue: { nodeCount: 2 },
-        matter: { nodeCount: 1 },
-        homeAssistant: { packageDetected: true, ready: false, recommendationCode: 'wire_round_trip', apiNodes: [{}], cerebrumNodes: [{}] }
-      },
-      wiring: { outputs: [{ id: 'ttsUltimate', connected: true, connectionCount: 1 }] },
+      installedNodeSets: [
+        { module: 'node-red-contrib-knx-ultimate', version: '4.0.0', enabled: true, loaded: true, types: ['knxUltimate-config'] },
+        { module: 'node-red-contrib-unifi-ultimate', version: '3.0.0', enabled: true, loaded: true, types: ['unifi-protect-config'] },
+        { module: 'node-red-contrib-tts-ultimate', version: '2.0.0', enabled: true, loaded: true, types: ['ttsUltimate'] },
+        { module: 'unrelated-package', version: '9.0.0', enabled: true, loaded: true, types: ['function'] }
+      ],
       selectedKnxConfigId: 'knx-a',
       selectedUnifiConfigId: 'protect-a',
       knxConfigTypeAvailable: true,
@@ -329,11 +497,9 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(summary.map(item => item.id)).to.include.members([
       'knx-ultimate',
       'unifi-ultimate',
-      'hue',
-      'matter',
-      'home-assistant',
       'tts-ultimate'
     ])
+    expect(summary.map(item => item.packageName)).not.to.include('unrelated-package')
     expect(summary.find(item => item.id === 'unifi-ultimate')).to.include({ configured: true, usedInChat: true, providerCount: 2, usedProviderCount: 1, cameraCount: 3 })
   })
 

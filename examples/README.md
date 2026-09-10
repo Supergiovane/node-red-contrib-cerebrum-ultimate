@@ -12,7 +12,6 @@ Start with **01 - First Conversation**. Open the Cerebrum node, configure an AI 
 4. Shared memory and separate chat routing
 5. Reminders and monitors
 6. Web intelligence
-7. Observe ordinary flow events
 8. Home Assistant round trip
 9. Telegram chat
 10. TTS announcements
@@ -32,7 +31,9 @@ Some examples need an additional package:
 - TTS: `node-red-contrib-tts-ultimate`
 - KNX: `node-red-contrib-knx-ultimate`
 
-Cerebrum itself remains independent from all of them.
+Cerebrum itself remains independent from all of them. It inventories compatible
+installed `-ultimate` packages, but it neither scans deployed flows nor attaches
+a global observer to Node-RED messages.
 
 ## Safety
 

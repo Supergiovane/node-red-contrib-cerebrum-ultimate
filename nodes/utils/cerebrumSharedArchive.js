@@ -9,6 +9,11 @@ const { StringDecoder } = require('string_decoder')
 const pendingPrunes = new Map()
 const recordIdPattern = /^m(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/
 const sameFile = (left, right) => left.dev === right.dev && left.ino === right.ino
+const PRUNE_YIELD_BYTES = 65536
+const PRUNE_BACKOFF_MS = 10
+const yieldDuringPrune = () => new Promise(resolve => setTimeout(resolve, PRUNE_BACKOFF_MS))
+const cancelledPruneResult = () => ({ removed: 0, reclaimedBytes: 0, cancelled: true })
+const isPruneCancelled = callback => typeof callback === 'function' && callback() === true
 
 function validateRecord (record, position) {
   const validIdentity = record?.version === 1
@@ -179,16 +184,18 @@ function createCerebrumSharedArchive (filePath) {
     if (locations.size > 128) locations.delete(locations.keys().next().value)
   }
 
-  function prune ({ retentionDays, now = Date.now() } = {}) {
+  function prune ({ retentionDays, now = Date.now(), isCancelled } = {}) {
     if (!Number.isInteger(retentionDays) || retentionDays < 1 || !Number.isFinite(now)) return Promise.reject(new Error('Invalid shared memory retention'))
+    if (isPruneCancelled(isCancelled)) return Promise.resolve(cancelledPruneResult())
     const running = pendingPrunes.get(filePath)
-    if (running) return running.retentionDays <= retentionDays ? running.promise : running.promise.then(() => prune({ retentionDays, now }))
-    const pending = compact(retentionDays, now).finally(() => pendingPrunes.delete(filePath))
+    if (running) return running.retentionDays <= retentionDays ? running.promise : running.promise.then(() => prune({ retentionDays, now, isCancelled }))
+    const pending = compact(retentionDays, now, isCancelled).finally(() => pendingPrunes.delete(filePath))
     pendingPrunes.set(filePath, { retentionDays, promise: pending })
     return pending
   }
 
-  async function compact (retentionDays, now) {
+  async function compact (retentionDays, now, isCancelled) {
+    if (isPruneCancelled(isCancelled)) return cancelledPruneResult()
     if (!fs.existsSync(filePath)) return { removed: 0, reclaimedBytes: 0 }
     const cutoff = now - retentionDays * 86400000
     const temporary = `${filePath}.retention-${crypto.randomUUID()}.tmp`
@@ -209,14 +216,16 @@ function createCerebrumSharedArchive (filePath) {
         const record = JSON.parse(line)
         validateRecord(record, position)
         if (expired(record)) { needsCompaction = true; break }
-        if (position - lastYield >= 65536) {
+        if (position - lastYield >= PRUNE_YIELD_BYTES) {
           lastYield = position
-          await new Promise(resolve => setImmediate(resolve))
+          await yieldDuringPrune()
+          if (isPruneCancelled(isCancelled)) return cancelledPruneResult()
         }
       }
       // Do not rewrite gigabytes of retained data every hour when nothing has
       // expired. In chronological archives the first expired row is near the start.
       if (!needsCompaction) return { removed: 0, reclaimedBytes: 0 }
+      if (isPruneCancelled(isCancelled)) return cancelledPruneResult()
       target = fs.openSync(temporary, 'wx', 0o600)
       const copy = ({ line, position }) => {
         const record = JSON.parse(line)
@@ -230,9 +239,10 @@ function createCerebrumSharedArchive (filePath) {
       lastYield = 0
       for (const entry of readArchiveLines(source, 0, initial.size)) {
         copy(entry)
-        if (entry.position - lastYield >= 65536) {
+        if (entry.position - lastYield >= PRUNE_YIELD_BYTES) {
           lastYield = entry.position
-          await new Promise(resolve => setImmediate(resolve))
+          await yieldDuringPrune()
+          if (isPruneCancelled(isCancelled)) return cancelledPruneResult()
         }
       }
       // Appends are synchronous. Copy the newly appended tail and rename in one
@@ -240,6 +250,7 @@ function createCerebrumSharedArchive (filePath) {
       const current = fs.statSync(filePath)
       if (!sameFile(initial, current) || current.size < initial.size) throw new Error('Shared memory archive replaced during retention; cleanup deferred')
       for (const entry of readArchiveLines(source, initial.size, current.size)) copy(entry)
+      if (isPruneCancelled(isCancelled)) return cancelledPruneResult()
       if (!removed) return { removed: 0, reclaimedBytes: 0 }
       fs.fsyncSync(target)
       fs.closeSync(target)

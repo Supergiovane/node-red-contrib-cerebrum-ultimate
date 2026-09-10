@@ -6,34 +6,33 @@ const os = require('os')
 const path = require('path')
 
 const {
-  buildCerebrumLearningPromptContext,
   buildCerebrumRuntimePromptContext,
   buildCerebrumHomeAssistantStateContext,
   getCerebrumHomeAutomationRegistry,
-  inspectCerebrumLearningFlow,
   inspectCerebrumRuntime,
-  normalizeCerebrumFlowSendEvent,
   normalizeCerebrumHomeAutomationEvent
 } = require('../nodes/utils/cerebrumLearning')
 const { normalizeCerebrumAdapterHistoryEvent } = require('../nodes/utils/cerebrumEventHistory')
-const { hasCerebrumTransientMessageOrigin } = require('../nodes/utils/cerebrumTransientMessageOrigins')
 
 describe('Cerebrum discovery and Home Assistant round trip', () => {
-  it('inventories installed, deployed and usable providers without exposing live RED objects', () => {
-    const flowNodes = [
-      { id: 'cerebrum', type: 'cerebrumUltimate', server: 'knx-config', wires: [] },
-      { id: 'matter', type: 'matter-device', wires: [] },
-      { id: 'disabled', type: 'disabled-device', disabled: true, wires: [] }
-    ]
+  it('inventories only compatible installed packages through getNodeList and keeps provider readiness', () => {
+    let getNodeListCalls = 0
     const RED = {
       nodes: {
-        eachNode: callback => flowNodes.forEach(callback),
-        getType: type => type === 'unused-installed-node' ? function InstalledNode () {} : undefined,
-        getNodeList: () => [
-          { id: 'matter/module', module: 'matter-module', version: '2.0.0', enabled: true, loaded: true, types: ['matter-device'] },
-          { id: 'disabled/module', module: 'disabled-module', version: '1.0.0', enabled: true, loaded: true, types: ['disabled-device'] },
-          { id: 'unused/module', module: 'unused-module', version: '1.0.0', enabled: true, loaded: true, types: ['unused-installed-node'] }
-        ]
+        eachNode: () => { throw new Error('eachNode must not be used for inventory') },
+        getNode: () => { throw new Error('getNode must not be used for inventory') },
+        getType: () => { throw new Error('getType must not be used for inventory') },
+        getNodeList: () => {
+          getNodeListCalls += 1
+          return [
+            { id: 'knx/module', module: 'node-red-contrib-knx-ultimate', version: '4.0.0', enabled: true, loaded: true, types: ['knxUltimate', 'knxUltimate-config'] },
+            { id: 'protect/module', module: 'node-red-contrib-unifi-ultimate', version: '3.1.0', enabled: true, loaded: true, types: ['unifi-protect-config', 'unifi-protect-device'] },
+            { id: 'ha/module', module: 'node-red-contrib-home-assistant-websocket', version: '0.80.0', enabled: true, loaded: true, types: ['ha-api'] },
+            { id: 'type-only/module', module: 'type-only-module', version: '1.0.0', enabled: true, loaded: true, types: ['vendorUltimateBridge'] },
+            { id: 'disabled/module', module: 'node-red-contrib-disabled-ultimate', version: '1.0.0', enabled: false, loaded: true, types: ['disabledUltimateDevice'] },
+            { id: 'unrelated/module', module: 'unrelated-module', version: '9.9.9', enabled: true, loaded: true, types: ['function', 'inject'] }
+          ]
+        }
       }
     }
     const adapterRegistry = {
@@ -41,63 +40,41 @@ describe('Cerebrum discovery and Home Assistant round trip', () => {
       providers: new Map([['ha-provider', { id: 'ha-provider', adapterId: 'home-assistant', isReady: () => true, listEntities: () => [], callService: () => {} }]])
     }
     const cameraRegistry = {
-      adapters: new Map([['unifi-protect', { id: 'unifi-protect', title: 'UniFi Protect', capabilities: ['smart-detect'] }]]),
-      providers: new Map([['protect-provider', { id: 'protect-provider', adapterId: 'unifi-protect', connected: true, listCameras: () => [], takeSnapshot: () => {} }]])
+      adapters: new Map([['unifi-ultimate', { id: 'unifi-ultimate', title: 'UniFi Protect', capabilities: ['smart-detect'] }]]),
+      providers: new Map([['protect-provider', { id: 'protect-provider', adapterId: 'unifi-ultimate', connected: true, listCameras: () => [], takeSnapshot: () => {} }]])
     }
-    const snapshot = inspectCerebrumRuntime({ RED, currentNode: { id: 'cerebrum', type: 'cerebrumUltimate', serverKNX: { id: 'knx-config' }, _busConnectionState: 'connected' }, adapterRegistry, cameraRegistry, env: {} })
+    const snapshot = inspectCerebrumRuntime({
+      RED,
+      currentNode: { id: 'cerebrum', type: 'cerebrumUltimate', serverKNX: { id: 'knx-config' }, _busConnectionState: 'connected' },
+      flowNodes: [{ id: 'must-not-leak', type: 'function', wires: [['also-secret']] }],
+      adapterRegistry,
+      cameraRegistry,
+      env: {}
+    })
 
-    expect(snapshot.nodeTypes.find(item => item.type === 'unused-installed-node')).to.include({ installed: true, deployedCount: 0, usable: false })
-    expect(snapshot.nodeTypes.find(item => item.type === 'disabled-device')).to.include({ installed: true, deployedCount: 1, activeDeployedCount: 0, usable: false })
+    expect(getNodeListCalls).to.equal(1)
+    expect(snapshot.inventoryOnly).to.equal(true)
+    expect(snapshot.nodeSets.map(item => item.module)).to.have.members([
+      'node-red-contrib-knx-ultimate',
+      'node-red-contrib-unifi-ultimate',
+      'node-red-contrib-disabled-ultimate'
+    ])
+    expect(snapshot.nodeTypes.some(item => item.type === 'vendorultimatebridge')).to.equal(false)
+    expect(snapshot.nodeTypes.find(item => item.type === 'disabledultimatedevice')).to.include({ installed: true, usable: false })
+    expect(snapshot.nodeTypes.some(item => item.type === 'function')).to.equal(false)
+    expect(snapshot.nodeTypes[0]).not.to.have.property('deployedCount')
+    expect(snapshot).not.to.have.any.keys('nodes', 'currentNode', 'flowNodeCount', 'discovery')
+    expect(JSON.stringify(snapshot)).not.to.include('must-not-leak')
+    expect(JSON.stringify(snapshot)).not.to.include('unrelated-module')
     expect(snapshot.integrations.find(item => item.id === 'home-assistant')).to.include({ installed: true, deployed: true, usable: true, readyProviderCount: 1 })
-    expect(snapshot.integrations.find(item => item.id === 'unifi-protect')).to.include({ installed: true, deployed: true, usable: true, readyProviderCount: 1 })
+    expect(snapshot.integrations.find(item => item.id === 'unifi-ultimate')).to.include({ installed: true, deployed: true, usable: true, readyProviderCount: 1 })
     expect(snapshot.integrations.find(item => item.id === 'knx')).to.include({ usable: true })
     const context = buildCerebrumRuntimePromptContext(snapshot)
-    expect(context).to.include('unifi-protect')
+    expect(context).to.include('unifi-ultimate')
     expect(context).to.include('usable=true')
-    expect(context).to.include('unused-module')
-  })
-
-  it('discovers flow logic, HUE, Matter and a complete ha-api round trip', () => {
-    const flowNodes = [
-      { id: 'ha-server', type: 'server', addon: true },
-      { id: 'cerebrum', type: 'cerebrumUltimate', wires: [[], [], [], [], [], ['ha-api']] },
-      { id: 'ha-api', type: 'ha-api', wires: [['cerebrum']] },
-      { id: 'ha-events', type: 'server-state-changed', wires: [['cerebrum']] },
-      { id: 'logic', type: 'function', func: 'return msg', wires: [] },
-      { id: 'hue', type: 'knxUltimateHueController', wires: [] },
-      { id: 'matter', type: 'knxUltimateMatterControllerDevice', wires: [] }
-    ]
-    const snapshot = inspectCerebrumLearningFlow({ flowNodes, env: {} })
-
-    expect(snapshot.logicNodeCount).to.equal(1)
-    expect(snapshot.hue.nodeCount).to.equal(1)
-    expect(snapshot.matter.nodeCount).to.equal(1)
-    expect(snapshot.homeAssistant).to.include({
-      addonDetected: true,
-      apiNodePresent: true,
-      cerebrumNodePresent: true,
-      roundTripWired: true,
-      ready: true,
-      recommendationCode: 'ready'
-    })
-    expect(snapshot.tools.map(tool => tool.id)).to.include.members([
-      'hue.flow-events',
-      'matter.flow-events',
-      'node-red.flow-logic',
-      'home-assistant.api',
-      'home-assistant.events'
-    ])
-    expect(buildCerebrumLearningPromptContext(snapshot)).to.include('CEREBRUM FLOW DISCOVERY')
-  })
-
-  it('recommends ha-api when the Home Assistant add-on is detected', () => {
-    const snapshot = inspectCerebrumLearningFlow({ flowNodes: [], env: { SUPERVISOR_TOKEN: 'present' } })
-    expect(snapshot.homeAssistant).to.include({
-      addonDetected: true,
-      apiNodePresent: false,
-      ready: false,
-      recommendationCode: 'add_ha_api'
-    })
+    expect(context).not.to.include('node-red-contrib-home-assistant-websocket')
+    expect(context).not.to.include('deployed flow nodes')
+    expect(context).not.to.include('unrelated-module')
   })
 
   it('normalizes Home Assistant state events without retaining the raw message', () => {
@@ -145,92 +122,9 @@ describe('Cerebrum discovery and Home Assistant round trip', () => {
     expect(JSON.stringify(event)).not.to.include('never-store-this')
   })
 
-  it('observes useful Node-RED messages without retaining secrets or binary content', () => {
-    const event = normalizeCerebrumFlowSendEvent({
-      source: { node: { id: 'logic-1', type: 'function', name: 'Evening logic', z: 'tab-1' } },
-      destination: { node: { id: 'hue-1', type: 'knxUltimateHueLight' } },
-      msg: {
-        topic: 'living-room',
-        payload: {
-          brightness: 42,
-          access_token: 'must-not-leak',
-          image: Buffer.from('must-not-leak'),
-          nested: { active: true }
-        }
-      }
-    }, { at: '2026-09-01T08:30:00.000Z' })
-
-    expect(event).to.include({
-      adapterId: 'node-red-flow',
-      eventType: 'flow_message',
-      resourceId: 'logic-1',
-      resourceType: 'function'
-    })
-    expect(event.details.payload).to.deep.equal({ brightness: 42, nested: { active: true } })
-    expect(JSON.stringify(event)).not.to.include('must-not-leak')
-  })
-
-  it('registers a passive runtime hook and publishes filtered flow events', () => {
-    let pluginDefinition
-    let hook
-    const RED = {
-      plugins: {
-        registerPlugin (id, definition) {
-          expect(id).to.equal('cerebrumUltimateRuntime')
-          pluginDefinition = definition
-        }
-      },
-      hooks: {
-        add (id, callback) {
-          expect(id).to.equal('onSend.cerebrumUltimate')
-          hook = callback
-        },
-        remove () {}
-      }
-    }
-    require('../nodes/plugins/cerebrum-runtime-plugin')(RED)
-    pluginDefinition.onadd()
-    const provider = getCerebrumHomeAutomationRegistry().providers.get('cerebrum-ultimate:runtime')
-    const received = []
-    const unsubscribe = provider.subscribe(event => received.push(event))
-
-    hook([{
-      source: { node: { id: 'matter-1', type: 'knxUltimateMatterControllerDevice', name: 'Matter light' } },
-      msg: { payload: { on: true } }
-    }])
-    hook([{
-      source: { node: { id: 'protect-1', type: 'unifi-protect-device', name: 'Ingresso' } },
-      msg: {
-        _msgid: 'protect-message-1',
-        payload: { deviceName: 'Ingresso', event: { type: 'motion' } },
-        details: { unifiProtect: { source: 'events', deviceId: 'camera-1', eventType: 'motion' } }
-      }
-    }])
-    hook([{
-      source: { node: { id: 'logic-1', type: 'function', name: 'Protect relay' } },
-      msg: { _msgid: 'protect-message-1', payload: { motion: true } }
-    }])
-    expect(hasCerebrumTransientMessageOrigin({
-      messageId: 'protect-message-1',
-      source: 'unifi-protect'
-    })).to.equal(true)
-    hook([{
-      source: { node: { id: 'logic-2', type: 'change', name: 'Protect transform' } },
-      msg: {
-        _msgid: 'protect-message-2',
-        payload: { motion: true },
-        details: { unifiProtect: { source: 'events', deviceId: 'camera-1' } }
-      }
-    }])
-    hook([{
-      source: { node: { id: 'debug-1', type: 'debug', name: 'Not observed' } },
-      msg: { payload: 'ignored' }
-    }])
-
-    expect(received).to.have.length(1)
-    expect(received[0]).to.include({ adapterId: 'matter', eventType: 'state_changed', resourceId: 'matter-1', state: '{"on":true}' })
-    unsubscribe()
-    getCerebrumHomeAutomationRegistry().unregisterProvider('cerebrum-ultimate:runtime')
+  it('keeps Node-RED access inventory-only and ships no runtime observer', () => {
+    expect(fs.existsSync(path.join(__dirname, '..', 'nodes', 'plugins', 'cerebrum-runtime-plugin.js'))).to.equal(false)
+    expect(require('../nodes/utils/cerebrumLearning')).not.to.have.property('normalizeCerebrumFlowSendEvent')
   })
 
   it('builds a bounded request-relevant read-only Home Assistant state catalog', () => {

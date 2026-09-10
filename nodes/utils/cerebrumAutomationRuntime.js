@@ -11,6 +11,8 @@ const clone = value => JSON.parse(JSON.stringify(value))
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex')
 const idOk = id => typeof id === 'string' && id.length > 0 && id.length <= 200 && !/[\u0000-\u001f]/.test(id) // eslint-disable-line no-control-regex
 const entityOk = id => idOk(id) && /^[a-z][a-z0-9-]*:.+/.test(id)
+const MAX_TIMER_DELAY_MS = 0x7fffffff
+const clockFormatters = new Map()
 
 function parseAutomationCheckpoint (content) {
   if (typeof content !== 'string' || Buffer.byteLength(content) > 2 * 1024 * 1024) throw fail('Automation checkpoint exceeds 2 MiB')
@@ -101,13 +103,100 @@ function validateProgram (program) {
   return program
 }
 
-const localClock = (rule, now) => {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: rule.timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now)
-  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
-  return { day: `${values.year}-${values.month}-${values.day}`, time: `${values.hour}:${values.minute}` }
+const clockFormatter = timeZone => {
+  if (!clockFormatters.has(timeZone)) {
+    if (clockFormatters.size >= 128) clockFormatters.clear()
+    clockFormatters.set(timeZone, new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    }))
+  }
+  return clockFormatters.get(timeZone)
 }
 
-function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {}, states = () => ({}), authorize = () => {}, write = async () => {}, notify = async () => {}, speak = async () => { throw fail('TTS is unavailable') }, assistant = async () => { throw fail('Assistant execution is unavailable') }, education = () => '', now = Date.now, intervalMs = 1000 }) {
+const zonedClockParts = (timeZone, now) => {
+  const parts = clockFormatter(timeZone).formatToParts(now)
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    dayOfMonth: Number(values.day),
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+    day: `${values.year}-${values.month}-${values.day}`,
+    time: `${values.hour}:${values.minute}`
+  }
+}
+
+const localClock = (rule, now) => zonedClockParts(rule.timeZone, now)
+
+const zonedOffsetAt = (timeZone, timestamp) => {
+  const minuteTimestamp = Math.floor(timestamp / 60000) * 60000
+  const parts = zonedClockParts(timeZone, minuteTimestamp)
+  return Date.UTC(parts.year, parts.month - 1, parts.dayOfMonth, parts.hour, parts.minute) - minuteTimestamp
+}
+
+// Resolve a civil minute without assuming a fixed UTC offset. Sampling both
+// sides of the date captures normal, half-hour and DST offsets; validating the
+// candidates rejects a civil minute skipped by a forward clock transition.
+const resolveZonedMinuteCandidates = ({ timeZone, year, month, dayOfMonth, hour, minute }) => {
+  const intended = Date.UTC(year, month - 1, dayOfMonth, hour, minute)
+  const offsets = new Set()
+  for (const hours of [-48, -36, -24, -12, 0, 12, 24, 36, 48]) {
+    offsets.add(zonedOffsetAt(timeZone, intended + (hours * 60 * 60 * 1000)))
+  }
+  return [...offsets]
+    .map(offset => intended - offset)
+    .filter(candidate => {
+      const actual = zonedClockParts(timeZone, candidate)
+      return actual.year === year && actual.month === month && actual.dayOfMonth === dayOfMonth && actual.hour === hour && actual.minute === minute
+    })
+    .sort((left, right) => left - right)
+}
+
+const nextDailyDeadline = (rule, entry, timestamp) => {
+  const current = zonedClockParts(rule.timeZone, timestamp)
+  if (entry.cursors?.[rule.id] !== current.day && current.time === rule.at) return timestamp
+  const [hour, minute] = rule.at.split(':').map(Number)
+  const localDate = Date.UTC(current.year, current.month - 1, current.dayOfMonth)
+  for (let offset = 0; offset < 8; offset++) {
+    const date = new Date(localDate + (offset * 24 * 60 * 60 * 1000))
+    const year = date.getUTCFullYear()
+    const month = date.getUTCMonth() + 1
+    const dayOfMonth = date.getUTCDate()
+    const day = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(dayOfMonth).padStart(2, '0')}`
+    if (entry.cursors?.[rule.id] === day) continue
+    // A daily rule is never replayed after its civil minute has passed. This
+    // also matters during a backward DST transition: restarting at 02:40 in
+    // the first 02:00 hour must not run 02:30 in the repeated hour.
+    if (offset === 0 && current.time > rule.at) continue
+    const candidate = resolveZonedMinuteCandidates({ timeZone: rule.timeZone, year, month, dayOfMonth, hour, minute })
+      .find(value => value >= timestamp)
+    if (candidate !== undefined) return candidate
+  }
+  return Number.POSITIVE_INFINITY
+}
+
+const nextRuleDeadline = (rule, entry, timestamp) => {
+  if (rule.kind === 'daily') return nextDailyDeadline(rule, entry, timestamp)
+  if (rule.kind === 'every') {
+    const cursor = entry.cursors?.[rule.id]
+    return Number.isSafeInteger(cursor) ? Math.max(timestamp, cursor) : timestamp
+  }
+  if (rule.kind === 'at') return entry.cursors?.[rule.id] ? Number.POSITIVE_INFINITY : Math.max(timestamp, rule.timestamp)
+  if (rule.kind === 'timer') {
+    const deadline = entry.timers?.[rule.id]
+    return Number.isSafeInteger(deadline) ? Math.max(timestamp, deadline) : Number.POSITIVE_INFINITY
+  }
+  return Number.POSITIVE_INFINITY
+}
+
+function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {}, states = () => ({}), authorize = () => {}, write = async () => {}, notify = async () => {}, speak = async () => { throw fail('TTS is unavailable') }, assistant = async () => { throw fail('Assistant execution is unavailable') }, education = () => '', now = Date.now, intervalMs = 1000, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, onEventFiltersChanged = null }) {
   const interpreter = createInterpreter()
   let closed = false
   let checkpoint = { version: 1, entries: {} }
@@ -123,6 +212,93 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
   const initializing = new Set()
   const edits = new Map()
   const archivedEntries = new Map()
+  const automaticScheduling = Number(intervalMs) > 0
+  let schedulerTimer = null
+  let schedulerDeadline = 0
+  let tickInFlight = null
+  let schedulerRearmPending = false
+  let eventFilterNotificationQueued = false
+  let lastEventFilterFingerprint = '[]'
+
+  const registrationsFor = (name, entry) => programs.get(name)?.registrations || (Array.isArray(entry.rules) ? entry.rules : [])
+  const eventFilters = () => {
+    const filters = []
+    for (const [name, entry] of Object.entries(entries)) {
+      if (entry.status !== 'active') continue
+      for (const rule of registrationsFor(name, entry)) {
+        if (rule.kind === 'event') filters.push({ ...clone(rule.filter), automation: name, handlerId: rule.id, kind: 'event' })
+        if (rule.kind === 'state') {
+          const bySource = new Map()
+          for (const entityId of rule.entityIds) {
+            const separator = entityId.indexOf(':')
+            const source = entityId.slice(0, separator)
+            if (!bySource.has(source)) bySource.set(source, [])
+            bySource.get(source).push(entityId)
+          }
+          for (const [source, entityIds] of bySource) filters.push({ automation: name, handlerId: rule.id, kind: 'state', source, entityIds: [...entityIds] })
+        }
+      }
+    }
+    return filters.sort((left, right) => `${left.source}\u0000${left.automation}\u0000${left.handlerId}`.localeCompare(`${right.source}\u0000${right.automation}\u0000${right.handlerId}`))
+  }
+  const eventSources = () => [...new Set(eventFilters().map(item => item.source))].sort()
+  const scheduleEventFiltersChanged = () => {
+    if (closed || eventFilterNotificationQueued || typeof onEventFiltersChanged !== 'function') return
+    eventFilterNotificationQueued = true
+    queueMicrotask(() => {
+      eventFilterNotificationQueued = false
+      if (closed) return
+      const filters = eventFilters()
+      const fingerprint = JSON.stringify(filters)
+      if (fingerprint === lastEventFilterFingerprint) return
+      lastEventFilterFingerprint = fingerprint
+      try {
+        Promise.resolve(onEventFiltersChanged({ filters, sources: [...new Set(filters.map(item => item.source))].sort() })).catch(() => {})
+      } catch (error) { /* integration refresh failures must not affect automation state */ }
+    })
+  }
+  const nextWakeAt = () => {
+    const timestamp = now()
+    let deadline = Number.POSITIVE_INFINITY
+    for (const [name, entry] of Object.entries(entries)) {
+      if (entry.status !== 'active') continue
+      if (!programs.has(name)) return timestamp
+      for (const rule of registrationsFor(name, entry)) deadline = Math.min(deadline, nextRuleDeadline(rule, entry, timestamp))
+    }
+    return deadline
+  }
+  const clearScheduler = () => {
+    if (schedulerTimer !== null) clearTimeoutFn(schedulerTimer)
+    schedulerTimer = null
+    schedulerDeadline = 0
+  }
+  function requestSchedulerRearm () {
+    if (!automaticScheduling || closed) return
+    if (tickInFlight) {
+      schedulerRearmPending = true
+      return
+    }
+    schedulerRearmPending = false
+    clearScheduler()
+    const deadline = nextWakeAt()
+    if (!Number.isFinite(deadline)) return
+    schedulerDeadline = deadline
+    const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, deadline - now()))
+    schedulerTimer = setTimeoutFn(() => {
+      schedulerTimer = null
+      const expectedDeadline = schedulerDeadline
+      schedulerDeadline = 0
+      if (closed) return
+      // A very distant deadline is split only because Node timers have a
+      // finite range. Re-arm without touching source files or authority.
+      if (now() < expectedDeadline) {
+        requestSchedulerRearm()
+        return
+      }
+      return tick().catch(() => {})
+    }, delay)
+    schedulerTimer?.unref?.()
+  }
   const persist = () => {
     checkAutomationPath(filePath)
     const snapshot = { version: 1, entries, compilation }
@@ -158,6 +334,8 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     entries[name].error = String(error.message || error)
     programs.delete(name)
     persist()
+    requestSchedulerRearm()
+    scheduleEventFiltersChanged()
   }
   const detail = file => {
     const entry = entries[file.name]
@@ -209,6 +387,8 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     }
     persist()
     programs.set(name, { source: file.content, ...program })
+    requestSchedulerRearm()
+    scheduleEventFiltersChanged()
     return read({ name })
   }
   const pause = options => {
@@ -222,6 +402,8 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     for (const rule of entry.rules || []) if (rule.kind === 'every') delete entry.cursors?.[rule.id]
     programs.delete(file.name)
     persist()
+    requestSchedulerRearm()
+    scheduleEventFiltersChanged()
     return read({ name: file.name })
   }
   const manage = async options => {
@@ -233,6 +415,8 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
       files.remove(options)
       entries[file.name] = { status: 'deleted', generation: entry.generation, description: entry.description || '', deletedAt: new Date(now()).toISOString() }
       persist()
+      requestSchedulerRearm()
+      scheduleEventFiltersChanged()
       return { name: file.name, status: 'deleted' }
     }
     // Explicit user resumption accepts current education, while retaining the
@@ -279,6 +463,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
       const generation = entries[file.name].generation
       try { return await activate(file.name, context) } catch (error) { if (entries[file.name]?.generation === generation) setError(file.name, error); throw error }
     }
+    requestSchedulerRearm()
     return read({ name: file.name })
   }
   const run = async (name, handler, event, occurrence) => {
@@ -323,6 +508,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
       entry.timers = timers
       entry.lastRunAt = new Date(now()).toISOString()
       persist()
+      requestSchedulerRearm()
       for (const effect of result.effects) {
         if (!current(name, generation)) return
         if (!['write', 'notify', 'speak', 'assistant'].includes(effect.kind)) continue
@@ -365,7 +551,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
       }
     }
   }
-  const tick = async () => {
+  const tickCore = async () => {
     if (closed) return
     for (const [name, entry] of Object.entries(entries)) {
       if (entry.status !== 'active') continue
@@ -380,6 +566,18 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
       const program = programs.get(name)
       if (!program || entry.status !== 'active' || closed) continue
       try {
+        const timestamp = now()
+        const hasDueRule = program.registrations.some(rule => {
+          if (rule.kind === 'daily') {
+            const clock = localClock(rule, timestamp)
+            return clock.time >= rule.at && entry.cursors[rule.id] !== clock.day
+          }
+          if (rule.kind === 'every') return timestamp >= entry.cursors[rule.id]
+          if (rule.kind === 'at') return !entry.cursors[rule.id] && timestamp >= rule.timestamp
+          if (rule.kind === 'timer') return entry.timers[rule.id] && timestamp >= entry.timers[rule.id]
+          return false
+        })
+        if (!hasDueRule) continue
         if (files.read({ name }).revision !== entry.revision) throw fail('Source changed outside Cerebrum. Review it and resume.')
         checkAuthority(entry)
         for (const rule of program.registrations) {
@@ -415,8 +613,16 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
       } catch (error) { setError(name, error) }
     }
   }
-  const timer = intervalMs > 0 ? setInterval(() => { tick().catch(() => {}) }, intervalMs) : null
-  timer?.unref()
+  const tick = () => {
+    if (closed) return Promise.resolve()
+    if (tickInFlight) return tickInFlight
+    tickInFlight = tickCore().finally(() => {
+      tickInFlight = null
+      if (schedulerRearmPending || automaticScheduling) requestSchedulerRearm()
+    })
+    return tickInFlight
+  }
+  requestSchedulerRearm()
   return {
     list,
     read,
@@ -424,12 +630,20 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     manage,
     ingest,
     tick,
+    eventFilters,
+    eventSources,
     compilationStatus: () => clone(compilation),
     setCompilationStatus: value => { available(); compilation = clone(value); archive({ phase: 'education_compilation', ...compilation }); persist(); return clone(compilation) },
     summary: () => Object.entries(entries).map(([name, entry]) => ({ name, status: entry.status, description: entry.description, revision: entry.revision })),
     drain: async () => { await Promise.all([...jobs.values()].map(queue => queue.promise)) },
-    close: async () => { closed = true; clearInterval(timer); programs.clear(); await interpreter.close(); await Promise.allSettled([...jobs.values()].map(queue => queue.promise)) }
+    close: async () => {
+      closed = true
+      clearScheduler()
+      programs.clear()
+      await interpreter.close()
+      await Promise.allSettled([tickInFlight, ...[...jobs.values()].map(queue => queue.promise)].filter(Boolean))
+    }
   }
 }
 
-module.exports = { createCerebrumAutomationRuntime, createInterpreter, validateProgram, parseAutomationCheckpoint }
+module.exports = { createCerebrumAutomationRuntime, createInterpreter, validateProgram, parseAutomationCheckpoint, nextDailyDeadline, nextRuleDeadline }

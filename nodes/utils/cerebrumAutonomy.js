@@ -10,6 +10,9 @@ const HOUR = 60 * MINUTE
 const LIMITS = Object.freeze({ entities: 600, situations: 100, evidence: 1200, episodes: 300, expectations: 160, actionHistory: 144, reasonsPerHour: 24, effectsPerHour: 6 })
 const MAX_STORE_BYTES = 8 * 1024 * 1024
 const MAX_JOURNAL_BYTES = 8 * 1024 * 1024
+const JOURNAL_BATCH_MAX_RECORDS = 64
+const JOURNAL_BATCH_MAX_BYTES = 256 * 1024
+const JOURNAL_FLUSH_DELAY_MS = 250
 const observationJournalPath = filePath => `${filePath}.observations.jsonl`
 const validateCerebrumAutonomyStore = store => {
   if (!store || store.version !== 1 || !Number.isSafeInteger(store.sequence) || store.sequence < 0 ||
@@ -117,7 +120,7 @@ const isFresh = (entity, now) => {
 
 // This store contains bounded working knowledge. The original home/event archives
 // remain owned by their existing stores and are never trimmed by this engine.
-const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notify, research, archiveSnapshot = () => {}, researchEnabled = () => false, enabled = () => true, now = Date.now, log = () => {} }) => {
+const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notify, research, archiveSnapshot = () => {}, researchEnabled = () => false, enabled = () => true, now = Date.now, log = () => {}, journalBatchMaxRecords = JOURNAL_BATCH_MAX_RECORDS, journalBatchMaxBytes = JOURNAL_BATCH_MAX_BYTES, journalFlushMs = JOURNAL_FLUSH_DELAY_MS, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout }) => {
   if (!filePath || typeof readSnapshot !== 'function' || typeof reason !== 'function') throw new Error('Autonomy requires filePath, readSnapshot and reason')
   let store
   let checkpointPresent = false
@@ -136,11 +139,16 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
   let closed = false
   let inFlight = null
   let lastPersistedRevision = loadedPersistenceRevision
-  let lastArchivedRevision = ''
+  // A loaded checkpoint was archived before its durable replacement. Do not
+  // replay the complete world merely because this process has restarted.
+  let lastArchivedRevision = loadedPersistenceRevision
   const journalPath = observationJournalPath(filePath)
   let pendingStates = []
   let journalBytes = 0
   let journalNeedsCompaction = false
+  let journalWriteBuffer = []
+  let journalWriteBufferBytes = 0
+  let journalFlushTimer = null
   let nextObservationSequence = store.observationSequence
   let journalFailed = false
   let journalRecoveryMessage = ''
@@ -187,6 +195,73 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
     try { log(store.lastError) } catch (_) {}
   }
   if (journalRecoveryMessage) report(journalRecoveryMessage)
+  const maxJournalBatchRecords = Math.max(1, Math.min(LIMITS.evidence, Math.floor(Number(journalBatchMaxRecords) || JOURNAL_BATCH_MAX_RECORDS)))
+  const maxJournalBatchBytes = Math.max(4096, Math.min(MAX_JOURNAL_BYTES, Math.floor(Number(journalBatchMaxBytes) || JOURNAL_BATCH_MAX_BYTES)))
+  const journalFlushDelay = Math.max(0, Math.min(60000, Math.floor(Number(journalFlushMs) || 0)))
+  const clearJournalFlushTimer = () => {
+    if (journalFlushTimer !== null) clearTimeoutFn(journalFlushTimer)
+    journalFlushTimer = null
+  }
+  const rewriteJournal = () => {
+    const journal = pendingStates.map(entry => JSON.stringify(entry) + '\n').join('')
+    writeAtomic(journalPath, journal)
+    journalBytes = Buffer.byteLength(journal, 'utf8')
+    journalNeedsCompaction = false
+    journalWriteBuffer = []
+    journalWriteBufferBytes = 0
+  }
+  const flushJournalBuffer = () => {
+    clearJournalFlushTimer()
+    if (!journalWriteBuffer.length) return false
+    try {
+      // If the durable journal still contains entries already represented by
+      // the checkpoint, replace it with the exact pending queue. This also
+      // includes every not-yet-appended item in the in-memory batch.
+      if (journalNeedsCompaction) {
+        rewriteJournal()
+        return true
+      }
+      fs.mkdirSync(path.dirname(journalPath), { recursive: true })
+      const existed = fs.existsSync(journalPath)
+      const fd = fs.openSync(journalPath, 'a', 0o600)
+      const position = fs.fstatSync(fd).size
+      const bytes = Buffer.from(journalWriteBuffer.map(entry => JSON.stringify(entry) + '\n').join(''))
+      let written = 0
+      try {
+        while (written < bytes.length) {
+          const length = fs.writeSync(fd, bytes, written, bytes.length - written)
+          if (!Number.isInteger(length) || length <= 0) throw new Error('Unable to append autonomy observation batch')
+          written += length
+        }
+        fs.fsyncSync(fd)
+      } catch (error) {
+        try {
+          fs.ftruncateSync(fd, position)
+          fs.fsyncSync(fd)
+        } catch (rollbackError) {
+          throw new AggregateError([error, rollbackError], 'Unable to append or roll back autonomy observation batch')
+        }
+        throw error
+      } finally { fs.closeSync(fd) }
+      if (!existed) syncDirectory(path.dirname(journalPath))
+      journalBytes += bytes.length
+      journalWriteBuffer = []
+      journalWriteBufferBytes = 0
+      return true
+    } catch (error) {
+      journalFailed = true
+      report(`Autonomy observation persistence failed; effects paused: ${error.message}`)
+      throw error
+    }
+  }
+  const scheduleJournalFlush = () => {
+    if (!journalFlushDelay || journalFlushTimer !== null || journalFailed || !journalWriteBuffer.length) return
+    journalFlushTimer = setTimeoutFn(() => {
+      journalFlushTimer = null
+      try { flushJournalBuffer() } catch (error) { /* failure is retained in runtime state */ }
+    }, journalFlushDelay)
+    journalFlushTimer?.unref?.()
+  }
   const trim = () => {
     let changed = false
     const assign = (key, value) => {
@@ -247,10 +322,7 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
       if (journalNeedsCompaction) {
         // Commit the applied sequence with the derived knowledge FIRST. If a
         // restart happens before compaction, old journal entries are skipped.
-        const journal = pendingStates.map(entry => JSON.stringify(entry) + '\n').join('')
-        writeAtomic(journalPath, journal)
-        journalBytes = Buffer.byteLength(journal, 'utf8')
-        journalNeedsCompaction = false
+        rewriteJournal()
       }
     } catch (error) {
       throw new Error(`Autonomy persistence failed; effects aborted: ${error.message}`)
@@ -459,6 +531,7 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
     if (closed) return { ok: false, status: 'closed' }
     try {
       if (journalFailed) throw new Error('Observation journal save failed; autonomous effects remain paused')
+      flushJournalBuffer()
       let at = now()
       const incoming = await readSnapshot()
       if (closed) return { ok: true, status: 'cancelled' }
@@ -499,6 +572,7 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
       const latest = await readSnapshot()
       if (closed || !enabled()) return { ok: true, status: 'cancelled' }
       if (journalFailed) throw new Error('Observation journal save failed; autonomous effects remain paused')
+      flushJournalBuffer()
       at = now()
       drainObservations(at, latest.habits)
       observe(latest, at)
@@ -576,33 +650,27 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
     ingestState: state => {
       if (closed || !state || !state.source || !state.objectId || !Number.isFinite(stamp(state.observedAt))) return false
       if (journalFailed) return false
-      let fd
       try {
         const sequence = nextObservationSequence + 1
         if (!Number.isSafeInteger(sequence)) throw new Error('Autonomy observation sequence exhausted')
         const entry = { sequence, state: normalizeObservation(state) }
         const content = JSON.stringify(entry) + '\n'
         const bytes = Buffer.byteLength(content, 'utf8')
-        if (pendingStates.length >= LIMITS.evidence || journalBytes + bytes > MAX_JOURNAL_BYTES) {
+        if (pendingStates.length >= LIMITS.evidence || journalBytes + journalWriteBufferBytes + bytes > MAX_JOURNAL_BYTES) {
           // A long LLM/network request cannot cause a full queue to drop state
           // transitions: compact locally without making another model call.
+          flushJournalBuffer()
           drainObservations(now())
           persist()
-        } else if (journalNeedsCompaction) persist()
-        fs.mkdirSync(path.dirname(journalPath), { recursive: true })
-        const existed = fs.existsSync(journalPath)
-        fd = fs.openSync(journalPath, 'a', 0o600)
-        fs.writeFileSync(fd, content, 'utf8')
-        fs.fsyncSync(fd)
-        fs.closeSync(fd)
-        fd = undefined
-        if (!existed) syncDirectory(path.dirname(journalPath))
+        }
         nextObservationSequence = sequence
-        journalBytes += bytes
         pendingStates.push(entry)
+        journalWriteBuffer.push(entry)
+        journalWriteBufferBytes += bytes
+        if (journalWriteBuffer.length >= maxJournalBatchRecords || journalWriteBufferBytes >= maxJournalBatchBytes) flushJournalBuffer()
+        else scheduleJournalFlush()
         return true
       } catch (error) {
-        if (fd !== undefined) { try { fs.closeSync(fd) } catch (_) {} }
         // Do not append after a possibly partial write or dispatch effects with
         // an incomplete local history. The existing files remain recoverable.
         journalFailed = true
@@ -611,13 +679,16 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
       }
     },
     snapshot: worldSnapshot,
+    checkpointSnapshot: () => copy(store),
     query: options => queryCerebrumWorldMemory({ world: worldSnapshot(), ...options }),
     checkpoint: () => {
+      if (!journalFailed) flushJournalBuffer()
       drainObservations(now())
       persist()
     },
     reset: () => {
       if (inFlight) throw new Error('Cannot reset autonomy while a tick is running')
+      if (!journalFailed) flushJournalBuffer()
       drainObservations(now())
       // Reset derived attention only. Durable effects remain to prevent replay.
       store.situations = store.situations.filter(item => ['claimed', 'verifying'].includes(item.status))
@@ -632,10 +703,14 @@ const createCerebrumAutonomy = ({ filePath, readSnapshot, reason, execute, notif
     },
     close: async () => {
       closed = true
+      clearJournalFlushTimer()
       const errors = []
       // Node-RED may enforce its shutdown timeout before a provider responds.
       // Save all accepted observations BEFORE waiting for outstanding network
       // work, then save any completion/verification result once it settles.
+      try { if (!journalFailed) flushJournalBuffer() } catch (error) { errors.push(error) }
+      // Even a failed journal append must not prevent the atomic world
+      // checkpoint from rescuing every observation still held in memory.
       try {
         drainObservations(now())
         persist()

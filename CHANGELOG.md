@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.2 — 2026-09-09
+## 0.3.3 — 2026-09-09
 
 - Added a versioned, integration-neutral runtime capability contract with sanitized health, readiness and supported-operation snapshots for RED, KNX, Home Assistant, UniFi/camera and third-party adapters. Capability discovery does not grant device authority.
 - Added persistent deterministic episodes derived from evidence-linked observations across integrations, plus non-destructive links between compatible habit and behaviour-pattern views.

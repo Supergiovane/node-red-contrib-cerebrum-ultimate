@@ -49,9 +49,11 @@ describe('Cerebrum integration capability contract', () => {
     expect(unavailable).to.include({ usable: false, health: 'unavailable' })
     expect(unavailable.healthReasons).to.include('provider_disconnected')
     expect(empty.healthReasons).to.include('no_supported_operations')
-    expect(inspectCerebrumIntegrationProvider({
+    const unknown = inspectCerebrumIntegrationProvider({
       provider: { id: 'unifi-main', adapterId: 'unifi', error: new Error('socket'), listCameras: () => [] }
-    }).health).to.equal('degraded')
+    })
+    expect(unknown).to.include({ connected: false, ready: false, usable: false, health: 'unavailable' })
+    expect(unknown.healthReasons).to.include('provider_readiness_unknown')
   })
 
   it('keeps write operations marked as authorized and confirmed', () => {

@@ -35,6 +35,9 @@ describe('Persistent Cerebrum autonomy', () => {
     reason: async input => { reasons.push(input); return decide(input) },
     execute: async input => { executions.push(input); return dispatch(input) },
     notify: async input => { notifications.push(input); return deliver(input) },
+    // Unit tests drive explicit ticks/checkpoints. Production keeps the short
+    // delayed flush enabled so sparse traffic also reaches disk promptly.
+    journalFlushMs: 0,
     ...overrides
   })
 
@@ -112,6 +115,44 @@ describe('Persistent Cerebrum autonomy', () => {
     expect(archived).to.have.length(archivedBefore + 1)
   })
 
+  it('uses a restored checkpoint as the raw archive baseline', async () => {
+    enabled = false
+    habits = [{
+      id: 'habit-kitchen-light',
+      source: 'homeassistant',
+      objectId: 'light.kitchen',
+      label: 'Kitchen light',
+      area: 'kitchen',
+      kind: 'light',
+      value: 'false',
+      status: 'learning',
+      dayType: 'weekday',
+      averageMinuteOfDay: 480,
+      deviationMinutes: 5,
+      confidence: 0.8,
+      evidenceIds: []
+    }]
+    await runtime.tick()
+    currentTime += 1000
+    states = [state({ value: 'false' })]
+    await runtime.tick()
+    const checkpoint = runtime.checkpointSnapshot()
+    expect(checkpoint.habits).to.have.length(1)
+    expect(checkpoint.patterns).to.have.length(1)
+
+    const archived = []
+    runtime = makeRuntime({ archiveSnapshot: world => archived.push(JSON.parse(JSON.stringify(world))) })
+    expect(runtime.checkpointSnapshot()).to.deep.equal(checkpoint)
+    currentTime += 15 * 1000
+    await runtime.tick()
+    expect(archived).to.deep.equal([])
+
+    currentTime += 1000
+    states = [state({ value: 'true' })]
+    await runtime.tick()
+    expect(archived).to.have.length(1)
+  })
+
   it('retains rapid observed transitions even when the next snapshot has the original value', async () => {
     enabled = false
     states = [state({ value: 'false' })]
@@ -125,6 +166,71 @@ describe('Persistent Cerebrum autonomy', () => {
     expect(runtime.snapshot().evidence.filter(item => item.type === 'state_changed').map(item => item.value)).to.deep.equal(['true', 'false'])
     expect(runtime.snapshot().situations.filter(item => item.key === 'area:kitchen')).to.have.length(1)
     expect(runtime.snapshot().entities[0].value).to.equal('false')
+  })
+
+  it('writes and fsyncs one bounded journal batch instead of every ingested state', async () => {
+    enabled = false
+    runtime = makeRuntime({ journalBatchMaxRecords: 8 })
+    states = []
+    // Create the journal before measuring so directory durability is outside
+    // the steady-state append counters.
+    for (let i = 0; i < 8; i++) {
+      currentTime += 10
+      expect(runtime.ingestState(state({ objectId: `light.seed-${i}`, value: String(i) }))).to.equal(true)
+    }
+
+    const originals = {
+      openSync: fs.openSync,
+      writeSync: fs.writeSync,
+      fsyncSync: fs.fsyncSync,
+      closeSync: fs.closeSync
+    }
+    const calls = { open: 0, write: 0, fsync: 0, close: 0 }
+    fs.openSync = function (...args) { calls.open++; return originals.openSync.apply(this, args) }
+    fs.writeSync = function (...args) { calls.write++; return originals.writeSync.apply(this, args) }
+    fs.fsyncSync = function (...args) { calls.fsync++; return originals.fsyncSync.apply(this, args) }
+    fs.closeSync = function (...args) { calls.close++; return originals.closeSync.apply(this, args) }
+    try {
+      for (let i = 0; i < 7; i++) {
+        currentTime += 10
+        expect(runtime.ingestState(state({ objectId: `light.pending-${i}`, value: String(i) }))).to.equal(true)
+      }
+      expect(calls).to.deep.equal({ open: 0, write: 0, fsync: 0, close: 0 })
+      currentTime += 10
+      expect(runtime.ingestState(state({ objectId: 'light.pending-7', value: '7' }))).to.equal(true)
+      expect(calls).to.deep.equal({ open: 1, write: 1, fsync: 1, close: 1 })
+    } finally {
+      Object.assign(fs, originals)
+    }
+
+    await runtime.tick()
+    expect(fs.readFileSync(observationJournalPath(path.join(directory, 'autonomy.json')), 'utf8')).to.equal('')
+    expect(runtime.snapshot().observationSequence).to.equal(16)
+  })
+
+  it('flushes a sparse journal batch after a short bounded durability window', async () => {
+    enabled = false
+    let scheduled
+    let cleared = false
+    runtime = makeRuntime({
+      journalFlushMs: 250,
+      setTimeoutFn: (callback, delay) => {
+        scheduled = { callback, delay, unref () {} }
+        return scheduled
+      },
+      clearTimeoutFn: handle => { if (handle === scheduled) cleared = true }
+    })
+    currentTime += 10
+    expect(runtime.ingestState(state({ value: 'false' }))).to.equal(true)
+    expect(scheduled.delay).to.equal(250)
+    expect(fs.existsSync(observationJournalPath(path.join(directory, 'autonomy.json')))).to.equal(false)
+
+    scheduled.callback()
+    expect(cleared).to.equal(false)
+    const journal = fs.readFileSync(observationJournalPath(path.join(directory, 'autonomy.json')), 'utf8')
+    expect(journal.trim().split('\n')).to.have.length(1)
+    await runtime.tick()
+    expect(fs.readFileSync(observationJournalPath(path.join(directory, 'autonomy.json')), 'utf8')).to.equal('')
   })
 
   it('imports durable observation episodes without confusing them with autonomy outcomes', async () => {
@@ -150,6 +256,7 @@ describe('Persistent Cerebrum autonomy', () => {
 
   it('saves observations before a tick and replays a restart journal exactly once without rewinding newer state', async () => {
     enabled = false
+    runtime = makeRuntime({ journalBatchMaxRecords: 2 })
     states = [state({ value: 'false' })]
     await runtime.tick()
     const filePath = path.join(directory, 'autonomy.json')
@@ -213,8 +320,38 @@ describe('Persistent Cerebrum autonomy', () => {
     expect(runtime.snapshot().entities[0].value).to.equal('false')
   })
 
+  it('rescues buffered observations in the checkpoint when the close-time journal append fails', async () => {
+    enabled = false
+    states = [state({ value: 'true' })]
+    await runtime.tick()
+    currentTime += 1000
+    expect(runtime.ingestState(state({ value: 'false' }))).to.equal(true)
+    const filePath = path.join(directory, 'autonomy.json')
+    const journalPath = observationJournalPath(filePath)
+    const originalOpen = fs.openSync
+    fs.openSync = function (target, flags, ...args) {
+      if (target === journalPath && flags === 'a') throw new Error('simulated journal append failure')
+      return originalOpen.call(this, target, flags, ...args)
+    }
+    let failure
+    try {
+      await runtime.close()
+    } catch (error) {
+      failure = error
+    } finally {
+      fs.openSync = originalOpen
+    }
+    expect(failure).to.be.instanceOf(Error)
+    expect(failure.message).to.include('simulated journal append failure')
+    const saved = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    expect(saved.entities[0].value).to.equal('false')
+    expect(saved.evidence.some(item => item.type === 'state_changed' && item.value === 'false')).to.equal(true)
+    expect(fs.readFileSync(journalPath, 'utf8')).to.equal('')
+  })
+
   it('recovers complete journal records from a torn append and preserves the original bytes', async () => {
     enabled = false
+    runtime = makeRuntime({ journalBatchMaxRecords: 1 })
     states = [state({ value: 'false' })]
     await runtime.tick()
     currentTime += 1000
@@ -237,6 +374,7 @@ describe('Persistent Cerebrum autonomy', () => {
 
   it('refuses complete malformed or semantically invalid journal records without replacing them', async () => {
     enabled = false
+    runtime = makeRuntime({ journalBatchMaxRecords: 1 })
     await runtime.tick()
     currentTime += 1000
     expect(runtime.ingestState(state({ value: 'false' }))).to.equal(true)
@@ -462,8 +600,8 @@ describe('Persistent Cerebrum autonomy', () => {
   })
 
   it('bounds attention, effects, evidence, and query output during an event storm', async function () {
-    // This deliberately crosses the 1,200-record queue bound with real fsyncs.
-    // Its runtime depends on storage latency, not just JavaScript CPU time.
+    // This deliberately crosses the 1,200-record queue bound and therefore
+    // exercises bounded journal batches plus an intermediate compaction.
     this.timeout(15000)
     enabled = false
     states = []

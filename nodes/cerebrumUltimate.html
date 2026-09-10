@@ -16,8 +16,7 @@
         min-width: 0;
     }
 
-    #cerebrum-local-context-status,
-    .cerebrum-prompt-context-hint {
+    #cerebrum-local-context-status {
         width: 100%;
         max-width: 720px;
         min-width: 0;
@@ -31,10 +30,6 @@
 
     #cerebrum-local-context-status {
         margin: -8px 0 12px;
-    }
-
-    .cerebrum-prompt-context-hint {
-        margin: 6px 0 0;
     }
 
     #cerebrum-ollama-install-row>label {
@@ -285,6 +280,13 @@
         min-width: 0;
     }
 
+    .cerebrum-compatible-config-hint {
+        margin: 0 0 8px 120px;
+        color: var(--red-ui-secondary-text-color, #777);
+        font-size: 12px;
+        line-height: 1.4;
+    }
+
     .cerebrum-chat-context-metric {
         margin-top: 6px;
         font-weight: 600;
@@ -371,7 +373,9 @@
             chatOutputCode: { value: "" }
         },
         credentials: {
-            llmApiKey: { type: "password" }
+            llmApiKey: { type: "password" },
+            unifiHistoryUsername: { type: "text" },
+            unifiHistoryPassword: { type: "password" }
         },
         inputs: 1,
         outputs: 6,
@@ -724,19 +728,16 @@
             };
             configureChatAdapterPicker.call(node);
 
-            const isEditorNodeTypeAvailable = (type) => {
-                try { return !!(RED.nodes && typeof RED.nodes.getType === "function" && RED.nodes.getType(type)); } catch (error) { return false; }
-            };
             const configIntegrationRows = {
                 "knx-ultimate": {
                     selector: "#cerebrum-compatible-knx",
                     input: "#node-input-server",
-                    available: () => isEditorNodeTypeAvailable("knxUltimate-config") || !!savedKnxGatewayId
+                    available: () => !!savedKnxGatewayId
                 },
                 "unifi-ultimate": {
                     selector: "#cerebrum-compatible-unifi",
                     input: "#node-input-unifiProtectConfig",
-                    available: () => isEditorNodeTypeAvailable("unifi-protect-config") || !!savedUnifiProtectConfigId
+                    available: () => !!savedUnifiProtectConfigId
                 }
             };
             Object.keys(configIntegrationRows).forEach(function (id) {
@@ -931,7 +932,7 @@
                 const sourceLabels = {
                     knxTraffic: t("cerebrumUltimate.messages.chatContextSourceKnxTraffic", "Derived KNX analysis plus the latest exact events from the default 20-minute or explicit interval, automatically bounded for the active local-model window."),
                     adapterHistory: t("cerebrumUltimate.messages.chatContextSourceAdapterHistory", "Latest exact adapter events from the same interval, automatically bounded for the active local-model window."),
-                    etsProject: t("cerebrumUltimate.messages.chatContextSourceEtsProject", "Complete selected semantic ETS catalog for cloud models. Local models receive the full catalog when it fits; otherwise they receive a window-sized manifest and exact model-requested details. Function source only for explicit code review."),
+                    etsProject: t("cerebrumUltimate.messages.chatContextSourceEtsProject", "Complete selected semantic ETS catalog for cloud models. Local models receive the full catalog when it fits; otherwise they receive a window-sized manifest and exact model-requested details."),
                     memoryEducation: t("cerebrumUltimate.messages.chatContextSourceMemoryEducation", "Session context, AI Education, bounded home memory and active plans."),
                     cameras: t("cerebrumUltimate.messages.chatContextSourceCameras", "Detected cameras and their available capabilities.")
                 };
@@ -1595,6 +1596,15 @@
                             <label for="node-input-unifiProtectConfig"><i class="fa fa-video-camera"></i> <span data-i18n="cerebrumUltimate.properties.unifiProtectConfig"></span></label>
                             <input type="text" id="node-input-unifiProtectConfig" style="width:70%;">
                         </div>
+                        <div class="form-row cerebrum-compatible-config-field">
+                            <label for="node-input-unifiHistoryUsername"><i class="fa fa-user"></i> <span data-i18n="cerebrumUltimate.properties.unifiHistoryUsername"></span></label>
+                            <input type="text" id="node-input-unifiHistoryUsername" autocomplete="username" data-i18n="[placeholder]cerebrumUltimate.properties.unifiHistoryUsername" style="width:70%;">
+                        </div>
+                        <div class="form-row cerebrum-compatible-config-field">
+                            <label for="node-input-unifiHistoryPassword"><i class="fa fa-lock"></i> <span data-i18n="cerebrumUltimate.properties.unifiHistoryPassword"></span></label>
+                            <input type="password" id="node-input-unifiHistoryPassword" autocomplete="current-password" data-i18n="[placeholder]cerebrumUltimate.properties.unifiHistoryPassword" style="width:70%;">
+                        </div>
+                        <p class="cerebrum-compatible-config-hint" data-i18n="cerebrumUltimate.messages.unifiHistoryCredentialsHint"></p>
                     </details>
                 </div>
                 <div id="cerebrum-detected-adapters-list"></div>
@@ -1666,12 +1676,10 @@
                         <option value="xhigh" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.xhigh"></option>
                         <option value="max" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.max"></option>
                     </select>
-                    <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.reasoningEffortHint"></div>
                 </div>
                 <div class="form-row">
                     <label  for="node-input-llmMaxContextKb"><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.properties.llmMaxContextKb"></span></label>
                     <input style="width:100px" type="number" id="node-input-llmMaxContextKb" min="0" step="1">
-                    <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.maxContextKbHint"></div>
                 </div>
                 <div class="form-row">
                     <label for="node-input-llmBackgroundMode"><i class="fa fa-clock-o"></i> <span data-i18n="cerebrumUltimate.properties.llmBackgroundMode"></span></label>
@@ -1685,7 +1693,6 @@
                     <input id="node-input-llmBackgroundIntervalMinutes" type="number" min="1" max="10080" step="1" list="cerebrum-llm-intervals" style="width:120px">
                     <datalist id="cerebrum-llm-intervals"><option value="60">1 h</option><option value="360">6 h</option><option value="1440">1 d</option><option value="10080">7 d</option></datalist>
                 </div>
-                <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.llmPolicyHint"></div>
                 <input type="hidden" id="node-input-llmContextLength">
                 <div id="cerebrum-local-context-status" style="display:none;"></div>
                 <div class="form-row" id="cerebrum-local-context-row" style="display:none;">
@@ -1700,7 +1707,6 @@
                         <option value="131072" data-context-tokens="131072" data-i18n="cerebrumUltimate.selectlists.localContext.k128"></option>
                         <option value="262144" data-context-tokens="262144" data-i18n="cerebrumUltimate.selectlists.localContext.k256"></option>
                     </select>
-                    <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.localContextHint"></div>
                 </div>
                 <div class="form-row">
                     <input type="checkbox" id="node-input-llmAllowKnxCommands" style="display:inline-block; width:auto; vertical-align:top;">
@@ -1741,8 +1747,7 @@
             <div class="form-row">
                 <label style="width:290px" for="cerebrum-ai-education-content"><i class="fa fa-graduation-cap"></i> <span data-i18n="cerebrumUltimate.properties.aiEducation"></span></label>
                 <textarea id="cerebrum-ai-education-content" maxlength="16000" disabled style="width:100%; min-height:180px; box-sizing:border-box;" data-i18n="[placeholder]cerebrumUltimate.placeholder.aiEducation"></textarea>
-                <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.aiEducationFileHelp"></div>
-                <div id="cerebrum-ai-education-status" role="status" aria-live="polite" class="cerebrum-prompt-context-hint"></div>
+                <div id="cerebrum-ai-education-status" role="status" aria-live="polite"></div>
             </div>
 
         </div>
@@ -1751,13 +1756,11 @@
             <div class="form-row">
                 <input type="checkbox" id="node-input-webAccessEnabled" style="display:inline-block; width:auto; vertical-align:top;">
                 <label style="width:auto" for="node-input-webAccessEnabled">&nbsp;&nbsp;<span data-i18n="cerebrumUltimate.properties.webAccessEnabled"></span></label>
-                <!-- <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.webAccessHint"></div> -->
             </div>
             <div id="cerebrum-web-access-settings">
                 <div class="form-row">
                     <label  for="node-input-webMaxCallsPerHour"><i class="fa fa-tachometer"></i> <span data-i18n="cerebrumUltimate.properties.webMaxCallsPerHour"></span></label>
                     <input type="number" id="node-input-webMaxCallsPerHour" min="1" max="60" step="1" style="width:100px;">
-                    <!-- <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.webBudgetHint"></div> -->
                 </div>
             </div>
         </div>
@@ -1767,7 +1770,6 @@
                 <div class="form-row">
                     <input type="checkbox" id="node-input-llmAllowRuntimeCode" style="display:inline-block; width:auto; vertical-align:top;">
                     <label style="width:auto" for="node-input-llmAllowRuntimeCode">&nbsp;&nbsp;<span data-i18n="cerebrumUltimate.properties.llmAllowRuntimeCode"></span></label>
-                    <div class="cerebrum-prompt-context-hint" data-i18n="cerebrumUltimate.messages.runtimeCodeHint"></div>
                 </div>
                 <div class="form-row">
                     <label  for="node-input-llmBaseUrl"><i class="fa fa-link"></i> <span data-i18n="cerebrumUltimate.properties.llmBaseUrl"></span></label>

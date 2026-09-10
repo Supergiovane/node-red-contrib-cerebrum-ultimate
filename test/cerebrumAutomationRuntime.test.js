@@ -5,7 +5,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { createCerebrumAutomationFiles } = require('../nodes/utils/cerebrumAutomationFiles')
-const { createCerebrumAutomationRuntime, createInterpreter } = require('../nodes/utils/cerebrumAutomationRuntime')
+const { createCerebrumAutomationRuntime, createInterpreter, nextDailyDeadline, nextRuleDeadline } = require('../nodes/utils/cerebrumAutomationRuntime')
 const { executeAutomationAction } = require('../nodes/utils/cerebrumAutomationTool')
 
 describe('Persistent local JavaScript automations', function () {
@@ -28,6 +28,24 @@ describe('Persistent local JavaScript automations', function () {
   const manage = operation => runtime.manage({ ...runtime.read({ name: 'rule.js' }), operation })
   const step = async milliseconds => { at += milliseconds; await runtime.tick(); await runtime.drain() }
   const event = { source: 'knx', objectId: '1/2/3', event: 'GroupValue_Response', value: true, changed: true }
+  const fakeScheduler = () => {
+    let sequence = 0
+    const pending = new Map()
+    const setTimeoutFn = (callback, delay) => {
+      const handle = { id: ++sequence, callback, delay, unref () {} }
+      pending.set(handle.id, handle)
+      return handle
+    }
+    const clearTimeoutFn = handle => { if (handle) pending.delete(handle.id) }
+    const next = () => [...pending.values()].sort((left, right) => left.delay - right.delay)[0]
+    const fire = async (handle = next()) => {
+      assert.ok(handle, 'expected an armed scheduler deadline')
+      pending.delete(handle.id)
+      at += handle.delay
+      await handle.callback()
+    }
+    return { pending, setTimeoutFn, clearTimeoutFn, next, fire }
+  }
   beforeEach(() => {
     root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-local-js-')))
     files = createCerebrumAutomationFiles({ directory: path.join(root, 'sources') })
@@ -73,6 +91,120 @@ describe('Persistent local JavaScript automations', function () {
     assert.equal(speech[0].text, 'Diciotto gradi Celsius')
     await manage('pause'); assert.equal(tasks[0].isCancelled(), true)
     await step(86400000); assert.equal(tasks.length, 1)
+  })
+
+  it('arms one event-driven timer at the next deadline and validates source changes only when due', async () => {
+    await runtime.close()
+    const scheduler = fakeScheduler()
+    let sourceReads = 0
+    const monitoredFiles = {
+      ...files,
+      read: options => { sourceReads++; return files.read(options) }
+    }
+    runtime = make({ files: monitoredFiles, intervalMs: 1, setTimeoutFn: scheduler.setTimeoutFn, clearTimeoutFn: scheduler.clearTimeoutFn })
+    await create('module.exports = c => c.schedule.every("future", 60000, () => c.notify("due"))')
+    assert.equal(scheduler.pending.size, 1)
+    assert.equal(scheduler.next().delay, 60000)
+    const readsAfterActivation = sourceReads
+
+    const file = files.read({ name: 'rule.js' })
+    fs.writeFileSync(file.path, file.content.replace('"due"', '"external"'))
+    await scheduler.fire()
+    await runtime.drain()
+    assert.equal(messages.length, 0)
+    assert.match(runtime.read({ name: 'rule.js' }).error, /Source changed/)
+    assert.ok(sourceReads > readsAfterActivation)
+    assert.equal(scheduler.pending.size, 0)
+  })
+
+  it('keeps event-only automations asleep, exposes copied filters, and rearms when an event creates a timer', async () => {
+    await runtime.close()
+    const scheduler = fakeScheduler()
+    runtime = make({ intervalMs: 1, setTimeoutFn: scheduler.setTimeoutFn, clearTimeoutFn: scheduler.clearTimeoutFn })
+    await create('module.exports = c => { c.onEvent("camera", {source:"unifi-ultimate",objectId:"camera-1",event:"motion"}, () => {}); c.onState("observe", ["knx:1/2/3"], () => c.timers.ensureAt("later", c.now()+10000)); c.timers.define("later", () => c.notify("timer")) }')
+    assert.equal(scheduler.pending.size, 0)
+    assert.deepEqual(runtime.eventSources(), ['knx', 'unifi-ultimate'])
+    const filters = runtime.eventFilters()
+    assert.deepEqual(filters.map(item => ({ kind: item.kind, source: item.source })), [
+      { kind: 'state', source: 'knx' },
+      { kind: 'event', source: 'unifi-ultimate' }
+    ])
+    filters[0].source = 'tampered'
+    filters[0].entityIds.push('knx:9/9/9')
+    assert.deepEqual(runtime.eventSources(), ['knx', 'unifi-ultimate'])
+
+    runtime.ingest(event)
+    await runtime.drain()
+    assert.equal(scheduler.pending.size, 1)
+    assert.equal(scheduler.next().delay, 10000)
+    await scheduler.fire()
+    await runtime.drain()
+    assert.equal(messages[0].text, 'timer')
+    assert.equal(scheduler.pending.size, 0)
+  })
+
+  it('notifies event-filter changes asynchronously, deduplicates them, and isolates callback failures', async () => {
+    await runtime.close()
+    const scheduler = fakeScheduler()
+    const changes = []
+    runtime = make({
+      intervalMs: 1,
+      setTimeoutFn: scheduler.setTimeoutFn,
+      clearTimeoutFn: scheduler.clearTimeoutFn,
+      onEventFiltersChanged: snapshot => {
+        changes.push(snapshot)
+        if (changes.length === 1) throw new Error('consumer unavailable')
+      }
+    })
+    await create('module.exports = c => c.onEvent("camera", {source:"unifi-ultimate",event:"motion"}, () => {})')
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(changes.map(change => change.sources), [['unifi-ultimate']])
+    assert.deepEqual(runtime.eventSources(), ['unifi-ultimate'])
+
+    await manage('pause')
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(changes.map(change => change.sources), [['unifi-ultimate'], []])
+    await manage('resume')
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(changes.map(change => change.sources), [['unifi-ultimate'], [], ['unifi-ultimate']])
+
+    const file = files.read({ name: 'rule.js' })
+    fs.writeFileSync(file.path, file.content.replace('motion', 'external'))
+    runtime.ingest({ source: 'unifi-ultimate', event: 'motion' })
+    await runtime.drain()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(changes.map(change => change.sources), [['unifi-ultimate'], [], ['unifi-ultimate'], []])
+    assert.match(runtime.read({ name: 'rule.js' }).error, /Source changed/)
+
+    await manage('delete')
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(changes.length, 4)
+  })
+
+  it('computes exact civil deadlines across repeated and missing DST minutes', () => {
+    const rule = { id: 'night', kind: 'daily', at: '02:30', timeZone: 'Europe/Rome' }
+    const firstFallOccurrence = Date.parse('2026-10-25T00:30:00Z')
+    assert.equal(nextDailyDeadline(rule, { cursors: { night: '' } }, Date.parse('2026-10-25T00:29:00Z')), firstFallOccurrence)
+    assert.equal(nextDailyDeadline(rule, { cursors: { night: '' } }, Date.parse('2026-10-25T00:40:00Z')), Date.parse('2026-10-26T01:30:00Z'))
+    assert.equal(nextDailyDeadline(rule, { cursors: { night: '' } }, Date.parse('2026-10-25T01:20:00Z')), Date.parse('2026-10-25T01:30:00Z'))
+    assert.equal(nextDailyDeadline(rule, { cursors: { night: '2026-10-25' } }, firstFallOccurrence), Date.parse('2026-10-26T01:30:00Z'))
+    assert.equal(nextDailyDeadline(rule, { cursors: { night: '' } }, Date.parse('2026-03-29T00:29:00Z')), Date.parse('2026-03-30T00:30:00Z'))
+
+    const timestamp = Date.parse('2026-09-08T19:00:00Z')
+    assert.equal(nextRuleDeadline({ id: 'every', kind: 'every', milliseconds: 60000 }, { cursors: { every: timestamp + 5000 } }, timestamp), timestamp + 5000)
+    assert.equal(nextRuleDeadline({ id: 'once', kind: 'at', timestamp: timestamp + 3000 }, { cursors: {} }, timestamp), timestamp + 3000)
+    assert.equal(nextRuleDeadline({ id: 'later', kind: 'timer' }, { timers: { later: timestamp + 1000 } }, timestamp), timestamp + 1000)
+    assert.equal(nextRuleDeadline({ id: 'event', kind: 'event' }, {}, timestamp), Number.POSITIVE_INFINITY)
+  })
+
+  it('cancels a pending deadline when the runtime closes', async () => {
+    await runtime.close()
+    const scheduler = fakeScheduler()
+    runtime = make({ intervalMs: 1, setTimeoutFn: scheduler.setTimeoutFn, clearTimeoutFn: scheduler.clearTimeoutFn })
+    await create('module.exports = c => c.schedule.every("future", 60000, () => c.notify("due"))')
+    assert.equal(scheduler.pending.size, 1)
+    await runtime.close()
+    assert.equal(scheduler.pending.size, 0)
   })
 
   it('persists timer deadlines and memory across restart without duplicate interval effects', async () => {

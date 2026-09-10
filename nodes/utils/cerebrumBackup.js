@@ -220,85 +220,109 @@ function readBackupEtsAccess (backup, configuration) {
   return validate({ configured: source.etsExposeConfigured, exposedGAs: source.etsExposedGAs === undefined ? [] : source.etsExposedGAs, readOnlyGAs: source.etsReadOnlyGAs === undefined ? [] : source.etsReadOnlyGAs })
 }
 
-function buildMigrationFlows (RED, node, config, { etsAccess } = {}) {
-  const all = new Map()
-  RED.nodes.eachNode(item => all.set(item.id, clone(item)))
-  if (!all.has(node.id)) all.set(node.id, { ...clone(config), id: node.id, type: 'cerebrumUltimate' })
-  const selected = new Set([node.id])
-  for (const item of all.values()) if (item.type === 'global-config') selected.add(item.id)
-  const references = value => {
-    if (typeof value === 'string') return all.has(value) ? [value] : []
-    if (Array.isArray(value)) return value.flatMap(references)
-    if (value && typeof value === 'object') return Object.values(value).flatMap(references)
-    return []
-  }
-  // Include complete containing tabs/subflows, linked tabs, groups and recursively
-  // referenced config nodes. Shared config nodes do not pull in unrelated tabs.
-  let changed = true
-  while (changed) {
-    const before = selected.size
-    for (const id of selected) {
-      const item = all.get(id)
-      references(item).forEach(ref => selected.add(ref))
-      if (item.type.startsWith('subflow:') && all.has(item.type.slice(8))) selected.add(item.type.slice(8))
-      if (item.type === 'tab' || item.type === 'subflow') {
-        for (const other of all.values()) if (other.z === id) selected.add(other.id)
-      }
-      for (const other of all.values()) {
-        if (other.type.startsWith('link ') && references(other.links).includes(id)) selected.add(other.id)
-      }
-    }
-    changed = selected.size !== before
-  }
-  const warnings = []
-  const flows = [...selected].map(id => {
-    const item = clone(all.get(id))
-    if (item.type === 'cerebrumUltimate') delete item.aiEducation
-    // Dashboard changes live in Cerebrum's file, not RED.nodes.eachNode(). The
-    // portable flow must carry the same current permissions as the data backup.
-    if (id === node.id && etsAccess) {
-      item.etsExposeConfigured = etsAccess.configured === true
-      item.etsExposedGAs = clone(etsAccess.exposedGAs)
-      item.etsReadOnlyGAs = clone(etsAccess.readOnlyGAs)
-    }
-    const live = RED.nodes.getNode(id)
-    const credentials = typeof RED.nodes.getCredentials === 'function' ? RED.nodes.getCredentials(id) : live && live.credentials
-    if (credentials) item.credentials = clone(credentials)
-    // Cerebrum's provider API key is intentionally never portable.
-    if (item.credentials) delete item.credentials.llmApiKey
-    delete item.llmApiKey
-    if (item.credentials && !Object.keys(item.credentials).length) delete item.credentials
-    // KNX Ultimate expects CSV/ESF text, never its parsed runtime array.
-    // Inline a configured ETS file so the source-machine path is not required.
-    if (item.type === 'knxUltimate-config' && typeof item.csv === 'string' && /\.(?:csv|esf)$/i.test(item.csv.trim()) && !item.csv.includes('\n')) {
-      item.csv = fs.readFileSync(item.csv.trim(), 'utf8')
-    }
-    return item
-  })
-  if (typeof RED.nodes.getCredentials !== 'function') warnings.push('Credentials of inactive configuration nodes may be unavailable; verify them after importing the flows.')
-  const packageFile = path.join(String(RED.settings.userDir || process.cwd()), 'package.json')
-  let dependencies = {}
-  if (fs.existsSync(packageFile)) dependencies = JSON.parse(fs.readFileSync(packageFile, 'utf8')).dependencies || {}
-  const types = new Set(flows.map(item => item.type))
-  if (typeof RED.nodes.getNodeList === 'function') {
-    for (const info of RED.nodes.getNodeList()) {
-      if (info.module && info.module !== 'node-red' && info.module !== '@node-red/nodes' && Array.isArray(info.types) && info.types.some(type => types.has(type))) {
-        dependencies[info.module] = info.version || dependencies[info.module] || '*'
-      }
+const portableNodeOmittedKeys = new Set([
+  'z',
+  'x',
+  'y',
+  'wires',
+  'g',
+  'l',
+  'd',
+  'credentials',
+  'llmApiKey',
+  'unifiHistoryUsername',
+  'unifiHistoryPassword',
+  'aiEducation'
+])
+const portableNodeSecretKeys = new Set([
+  'authorization',
+  'cookie',
+  'credential',
+  'credentials',
+  'apikey',
+  'llmapikey',
+  'password',
+  'passwd',
+  'secret',
+  'token',
+  'accesstoken',
+  'refreshtoken'
+])
+
+function sanitizePortableNodeValue (value, seen = new WeakSet()) {
+  if (value === null || typeof value !== 'object') return value
+  if (seen.has(value)) return undefined
+  seen.add(value)
+  let sanitized
+  if (Array.isArray(value)) {
+    sanitized = value.map(item => sanitizePortableNodeValue(item, seen)).filter(item => item !== undefined)
+  } else {
+    sanitized = {}
+    for (const [key, item] of Object.entries(value)) {
+      const normalizedKey = key.replace(/[^a-z0-9]/gi, '').toLowerCase()
+      if (portableNodeSecretKeys.has(normalizedKey)) continue
+      const next = sanitizePortableNodeValue(item, seen)
+      if (next !== undefined) sanitized[key] = next
     }
   }
+  seen.delete(value)
+  return sanitized
+}
+
+function buildPortableCerebrumNode (node, config, etsAccess) {
+  const source = config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+  const portable = {}
+  for (const [key, value] of Object.entries(source)) {
+    if (portableNodeOmittedKeys.has(key)) continue
+    const sanitized = sanitizePortableNodeValue(value)
+    if (sanitized !== undefined) portable[key] = sanitized
+  }
+  portable.id = String(node && node.id ? node.id : source.id || '')
+  portable.type = 'cerebrumUltimate'
+  if (etsAccess) {
+    portable.etsExposeConfigured = etsAccess.configured === true
+    portable.etsExposedGAs = clone(etsAccess.exposedGAs)
+    portable.etsReadOnlyGAs = clone(etsAccess.readOnlyGAs)
+  }
+  return portable
+}
+
+function readInstalledUltimatePackages (RED) {
+  const dependencies = {}
+  try {
+    const getNodeList = RED && RED.nodes && RED.nodes.getNodeList
+    const nodeSets = typeof getNodeList === 'function' ? getNodeList.call(RED.nodes) : []
+    for (const info of Array.isArray(nodeSets) ? nodeSets.slice(0, 5000) : []) {
+      const moduleName = String(info && info.module ? info.module : '').trim().slice(0, 240)
+      if (!moduleName.toLowerCase().includes('-ultimate')) continue
+      const version = String(info && info.version ? info.version : '').trim().slice(0, 80)
+      dependencies[moduleName] = version || '*'
+    }
+  } catch (error) { /* Installed-package inventory is optional. */ }
   dependencies['node-red-contrib-cerebrum-ultimate'] = require('../../package.json').version
+  return Object.fromEntries(Object.entries(dependencies).sort(([left], [right]) => left.localeCompare(right)))
+}
+
+function buildMigrationFlows (RED, node, config, { etsAccess } = {}) {
+  // Do not enumerate the deployed runtime. The constructor already supplied the
+  // selected Cerebrum node's saved configuration; keep only that data and strip
+  // flow placement/wiring and secrets. RED is consulted once, solely for the
+  // installed compatible `-ultimate` package inventory.
+  const flows = [buildPortableCerebrumNode(node, config, etsAccess)]
+  const dependencies = readInstalledUltimatePackages(RED)
   return {
     flows: backupFile('nodeRedFlows', 'cerebrum-flows.json', JSON.stringify(flows, null, 2), 'application/json'),
     dependencies,
-    runtime: { node: process.version, nodeRed: typeof RED.version === 'function' ? RED.version() : String(RED.version || '') },
-    etsCatalogs: backupFile('etsCatalogs', 'cerebrum-ets-catalogs.json', JSON.stringify(flows.filter(item => item.type === 'knxUltimate-config').map(item => ({ id: item.id, catalog: clone(RED.nodes.getNode(item.id)?.csv || []) })), null, 2), 'application/json'),
-    warnings,
+    runtime: { node: process.version, nodeRed: '' },
+    etsCatalogs: backupFile('etsCatalogs', 'cerebrum-ets-catalogs.json', '[]', 'application/json'),
+    warnings: [
+      'This backup does not inspect or include deployed Node-RED flows, tabs, wiring, configuration nodes, credentials or runtime ETS catalogs.'
+    ],
     instructions: [
       'Install the listed Node-RED packages on the destination.',
-      'Extract and import cerebrum-flows.json in the Node-RED editor; preserve node IDs where possible. Review connections and deploy.',
-      'Open the imported Cerebrum node and import this backup to restore its data and archives.',
-      'Re-enter the AI provider API key. Verify external service addresses, environment variables, certificates, custom modules and context stores on the destination: those resources are managed outside Cerebrum.'
+      'cerebrum-flows.json contains only the sanitized settings of the selected Cerebrum node; it contains no tab, wiring or referenced configuration nodes.',
+      'Create or import the Cerebrum node on the destination, reconnect its integrations manually, deploy it, then import this backup to restore Cerebrum data and archives.',
+      'Re-enter credentials and verify external service addresses, environment variables, certificates, custom modules and context stores on the destination: those resources are managed outside Cerebrum.'
     ]
   }
 }

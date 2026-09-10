@@ -105,4 +105,41 @@ describe('Scheduled semantic automation work', () => {
       notify: async () => assert.fail('Stale reply')
     }), /cancelled/)
   })
+
+  it('dispatches one evidence-bound camera snapshot without sending a duplicate text reply', async () => {
+    const calls = []
+    await runCerebrumAutomationAssistant({
+      instruction: 'Mostra lo snapshot dell’ultimo movimento della Tettoia Est',
+      isCancelled: () => false,
+      reason: async () => ({
+        content: 'Ultimo movimento della Tettoia Est.',
+        language: 'it',
+        cameraActions: [{
+          type: 'event_snapshot',
+          providerId: 'unifi-ultimate:protect',
+          cameraId: 'protect:tettoia-est',
+          cameraName: 'Tettoia Est',
+          eventId: 'event-42',
+          historicalEvidenceVerified: true
+        }]
+      }),
+      camera: async request => { calls.push(request) },
+      speak: async () => assert.fail('Unexpected speech'),
+      notify: async () => assert.fail('Unexpected duplicate reply')
+    })
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].reply, 'Ultimo movimento della Tettoia Est.')
+    assert.equal(calls[0].actions[0].eventId, 'event-42')
+  })
+
+  it('rejects persistent camera-watch actions from scheduled model work', async () => {
+    await assert.rejects(runCerebrumAutomationAssistant({
+      instruction: 'Create a watch',
+      isCancelled: () => false,
+      reason: async () => ({ cameraActions: [{ type: 'watch', cameraName: 'Tettoia Est' }] }),
+      camera: async () => assert.fail('Unexpected camera dispatch'),
+      speak: async () => assert.fail('Unexpected speech'),
+      notify: async () => assert.fail('Unexpected reply')
+    }), /cannot create or change camera watches/)
+  })
 })

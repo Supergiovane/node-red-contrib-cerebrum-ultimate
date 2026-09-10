@@ -23,13 +23,139 @@ const uniqueTexts = values => Array.from(new Set((Array.isArray(values) ? values
   .map(value => clampText(value, 240))
   .filter(Boolean)))
 
+const normalizeCerebrumCameraEventAt = value => {
+  const text = clampText(value, 80)
+  if (!text) return ''
+  const numeric = /^\d{10,13}$/.test(text) ? Number(text) : NaN
+  const parsed = new Date(Number.isFinite(numeric) ? (text.length <= 10 ? numeric * 1000 : numeric) : text)
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString()
+}
+
+const formatCerebrumCameraEventDateTime = ({ eventAt, language = 'en', timeZone } = {}) => {
+  const normalizedAt = normalizeCerebrumCameraEventAt(eventAt)
+  if (!normalizedAt) return ''
+  const rawLanguage = clampText(language, 16).toLocaleLowerCase()
+  const locale = rawLanguage.startsWith('it')
+    ? 'it-IT'
+    : rawLanguage.startsWith('de')
+      ? 'de-DE'
+      : rawLanguage.startsWith('fr')
+        ? 'fr-FR'
+        : rawLanguage.startsWith('es')
+          ? 'es-ES'
+          : rawLanguage.startsWith('zh') ? 'zh-CN' : 'en-US'
+  const options = {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short'
+  }
+  const requestedTimeZone = clampText(timeZone, 80)
+  if (requestedTimeZone) options.timeZone = requestedTimeZone
+  try {
+    return new Intl.DateTimeFormat(locale, options).format(new Date(normalizedAt))
+  } catch (error) {
+    return normalizedAt.replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+  }
+}
+
+const appendCerebrumCameraEventDateTime = ({ content, eventAt, language, timeZone } = {}) => {
+  const formatted = formatCerebrumCameraEventDateTime({ eventAt, language, timeZone })
+  if (!formatted) return clampText(content, 4000)
+  const rawLanguage = clampText(language || 'en', 16).toLocaleLowerCase()
+  const label = rawLanguage.startsWith('it')
+    ? 'Data/ora evento'
+    : rawLanguage.startsWith('de')
+      ? 'Datum/Uhrzeit des Ereignisses'
+      : rawLanguage.startsWith('fr')
+        ? 'Date/heure de l’événement'
+        : rawLanguage.startsWith('es')
+          ? 'Fecha/hora del evento'
+          : rawLanguage.startsWith('zh') ? '事件日期/时间' : 'Event date/time'
+  // Keep the authoritative event time first: Telegram photo captions are
+  // truncated to 1024 characters by the supported adapter presets.
+  return [`${label}: ${formatted}`, clampText(content, 4000)].filter(Boolean).join('\n')
+}
+
+const redactCerebrumCameraHistoryCredentialText = (value, historyCredentials) => {
+  let text = String(value && value.message ? value.message : value || '')
+  const source = historyCredentials && typeof historyCredentials === 'object' && !Array.isArray(historyCredentials)
+    ? historyCredentials
+    : {}
+  const variants = [source.username, source.password]
+    .flatMap(secret => {
+      const raw = String(secret || '')
+      if (!raw) return []
+      const encoded = (() => { try { return encodeURIComponent(raw) } catch (error) { return '' } })()
+      const jsonEscaped = (() => { try { return JSON.stringify(raw).slice(1, -1) } catch (error) { return '' } })()
+      return [raw, encoded, jsonEscaped]
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+  ;Array.from(new Set(variants)).forEach(secret => { text = text.split(secret).join('[redacted]') })
+  return clampText(text, 500)
+}
+
+const CEREBRUM_CAMERA_PROVIDER_ALIAS_GROUPS = Object.freeze([
+  Object.freeze(['unifi-ultimate', 'unifi-protect', 'node-red-contrib-unifi-ultimate'])
+])
+
+const parseCerebrumCameraProviderReference = value => {
+  const reference = clampText(value, 240).toLocaleLowerCase()
+  if (!reference) return { reference: '', family: '', scoped: false }
+  const separator = reference.indexOf(':')
+  const rawFamily = separator >= 0 ? reference.slice(0, separator) : reference
+  const suffix = separator >= 0 ? reference.slice(separator + 1) : ''
+  const aliases = CEREBRUM_CAMERA_PROVIDER_ALIAS_GROUPS.find(group => group.includes(rawFamily))
+  const family = aliases ? aliases[0] : rawFamily
+  return {
+    reference: suffix ? `${family}:${suffix}` : family,
+    family,
+    scoped: Boolean(suffix)
+  }
+}
+
+// Models sometimes copy the adapter id shown in AVAILABLE CAMERA ADAPTERS
+// instead of the provider instance id returned by a history query. Accept that
+// family reference (and known package aliases), while a scoped provider id must
+// still match exactly so one controller cannot be mistaken for another.
+const matchesCerebrumCameraProviderReference = ({ requestedProviderId, providerId, provider } = {}) => {
+  const requested = parseCerebrumCameraProviderReference(requestedProviderId)
+  if (!requested.reference) return true
+  const source = provider && typeof provider === 'object' && !Array.isArray(provider) ? provider : {}
+  const references = uniqueTexts([
+    providerId,
+    source.id,
+    source.providerId,
+    source.adapterId,
+    source.source,
+    source.packageName,
+    source.module,
+    source.moduleName,
+    ...(Array.isArray(source.aliases) ? source.aliases : []),
+    ...(Array.isArray(source.providerAliases) ? source.providerAliases : [])
+  ])
+  return references.some(value => {
+    const candidate = parseCerebrumCameraProviderReference(value)
+    if (!candidate.reference) return false
+    return requested.scoped
+      ? candidate.reference === requested.reference
+      : candidate.reference === requested.reference || candidate.family === requested.family
+  })
+}
+
 // Runtime contract for optional camera suites. A package registers one adapter
 // manifest and one provider per configured controller. Providers expose:
 //   listCameras({ force }) -> camera[]
 //   takeSnapshot({ cameraId, cameraName, highQuality }) -> { data, mediaType, camera }
 //   queryEvents({ cameraId, cameraName, eventTypes, objectTypes, from, to,
-//                 offset, limit }) -> { events, nextOffset, hasMore }
-//   takeEventSnapshot({ eventId, cameraId, cameraName }) -> { data, mediaType }
+//                 offset, limit }, { historyCredentials, historyQueryScope })
+//     -> { events, nextOffset, hasMore }
+//   takeEventSnapshot({ eventId, cameraId, cameraName }, { historyCredentials })
+//     -> { data, mediaType }
 //   subscribe(listener) -> unsubscribe(), with normalized camera event objects.
 // Providers whose live feed must never enter Cerebrum's durable memory declare
 // `eventRetention: 'none'`. Queries remain available on demand and the provider
@@ -269,6 +395,8 @@ const normalizeCerebrumCameraEvent = value => {
 }
 
 const normalizeCerebrumHistoricalCameraEvent = (value, defaults = {}) => {
+  const eventAt = normalizeCerebrumCameraEventAt(value && value.at)
+  if (!eventAt) return null
   const event = normalizeCerebrumCameraEvent(value)
   if (!event || !event.eventId) return null
   const endAt = clampText(value && value.endAt, 64)
@@ -284,7 +412,7 @@ const normalizeCerebrumHistoricalCameraEvent = (value, defaults = {}) => {
     scopeId: event.scopeId,
     scopeName: event.scopeName,
     objectTypes: event.objectTypes.slice(0, 12),
-    at: event.at,
+    at: eventAt,
     endAt: parsedEnd && !Number.isNaN(parsedEnd.getTime()) ? parsedEnd.toISOString() : '',
     active: event.active,
     score: Number.isFinite(scoreValue) ? scoreValue : null,
@@ -313,7 +441,7 @@ const cameraHistoricalQueryMatches = (action, event) => {
   return true
 }
 
-const executeCerebrumCameraHistoryActions = async ({ actions, cameras, providers } = {}) => {
+const executeCerebrumCameraHistoryActions = async ({ actions, cameras, providers, resolveHistoryCredentials, historyQueryScope } = {}) => {
   const catalog = (Array.isArray(cameras) ? cameras : []).map(normalizeCerebrumCameraRegistration).filter(Boolean)
   const providerMap = providers instanceof Map ? providers : new Map(Object.entries(providers || {}))
   const results = []
@@ -323,8 +451,8 @@ const executeCerebrumCameraHistoryActions = async ({ actions, cameras, providers
       : null
     const candidates = Array.from(providerMap.entries()).filter(([providerId, provider]) => {
       if (!provider || typeof provider.queryEvents !== 'function') return false
-      if (action.providerId && action.providerId !== providerId) return false
-      if (targetCamera && targetCamera.providerId !== providerId) return false
+      if (action.providerId && !matchesCerebrumCameraProviderReference({ requestedProviderId: action.providerId, providerId, provider })) return false
+      if (targetCamera && !matchesCerebrumCameraProviderReference({ requestedProviderId: targetCamera.providerId, providerId, provider })) return false
       return true
     })
     if (!candidates.length) {
@@ -340,7 +468,11 @@ const executeCerebrumCameraHistoryActions = async ({ actions, cameras, providers
     const continuations = []
     const errors = []
     for (const [providerId, provider] of candidates) {
+      let historyCredentials
       try {
+        historyCredentials = typeof resolveHistoryCredentials === 'function'
+          ? resolveHistoryCredentials({ providerId, provider })
+          : undefined
         const response = await provider.queryEvents({
           cameraId: action.cameraId,
           cameraName: action.cameraName,
@@ -350,6 +482,9 @@ const executeCerebrumCameraHistoryActions = async ({ actions, cameras, providers
           to: action.to,
           offset: action.offset,
           limit: action.limit
+        }, {
+          historyCredentials,
+          historyQueryScope: clampText(historyQueryScope, 160)
         })
         const providerEvents = Array.isArray(response) ? response : Array.isArray(response && response.events) ? response.events : []
         providerEvents.forEach(candidate => {
@@ -361,14 +496,21 @@ const executeCerebrumCameraHistoryActions = async ({ actions, cameras, providers
           continuations.push({ providerId, offset: Math.floor(nextOffset) })
         }
       } catch (error) {
-        errors.push({ providerId, error: clampText(error && error.message ? error.message : error, 500) })
+        errors.push({
+          providerId,
+          error: redactCerebrumCameraHistoryCredentialText(error, historyCredentials)
+        })
       }
     }
     events.sort((left, right) => new Date(right.at).getTime() - new Date(left.at).getTime())
     const selected = events.slice(0, action.limit)
+    const providerFailure = errors.length === candidates.length
+      ? clampText(Array.from(new Set(errors.map(item => item.error).filter(Boolean))).join('; '), 500)
+      : ''
     results.push({
       operation: 'query_events',
       ok: selected.length > 0 || errors.length < candidates.length,
+      error: providerFailure,
       reason: action.reason,
       filters: {
         providerId: action.providerId,
@@ -392,20 +534,47 @@ const executeCerebrumCameraHistoryActions = async ({ actions, cameras, providers
 }
 
 const buildCerebrumCameraHistoryResultsContext = (results, { maxChars = 12000 } = {}) => {
+  const requestedBudget = Number(maxChars)
+  const byteBudget = Number.isFinite(requestedBudget) ? Math.max(0, Math.floor(requestedBudget)) : 12000
+  if (byteBudget === 0) return ''
   const lines = []
+  let bytes = 0
   let evidenceIndex = 0
-  ;(Array.isArray(results) ? results : []).forEach((result, resultIndex) => {
+  let omittedLines = 0
+  const appendLine = line => {
+    const text = String(line || '')
+    if (!text) return true
+    const prefix = lines.length ? '\n' : ''
+    const size = Buffer.byteLength(prefix + text, 'utf8')
+    if (bytes + size > byteBudget) {
+      omittedLines += 1
+      return false
+    }
+    lines.push(text)
+    bytes += size
+    return true
+  }
+  const source = Array.isArray(results) ? results : []
+  // Later pages contain the evidence acquired most recently. Select them first
+  // so an earlier dense page cannot permanently hide a newly found event from
+  // a small model window. Every row is admitted atomically; never cut an event
+  // id, timestamp, continuation token or other evidence field mid-line.
+  source.slice().reverse().forEach((result, reverseIndex) => {
+    const resultIndex = source.length - reverseIndex - 1
     if (!result || result.ok !== true) {
-      lines.push(`Query ${resultIndex + 1}: FAILED — ${clampText(result && result.error, 500)}`)
+      appendLine(`Query ${resultIndex + 1}: FAILED — ${clampText(result && result.error, 500)}`)
       return
     }
     const events = Array.isArray(result.events) ? result.events : []
-    lines.push(`Query ${resultIndex + 1}: ${events.length} event(s) returned${result.hasMore ? '; more pages are available' : ''}.`)
+    appendLine(`Query ${resultIndex + 1}: ${events.length} event(s) returned${result.hasMore ? '; more pages are available' : ''}.`)
+    // Pagination metadata is more important than any individual row: without
+    // it the model cannot continue a source query whose newest page was partial.
     ;(Array.isArray(result.continuations) ? result.continuations : []).forEach(item => {
-      lines.push(`Continuation: providerId=${item.providerId} | offset=${item.offset}`)
+      appendLine(`Continuation: providerId=${item.providerId} | offset=${item.offset}`)
     })
     events.forEach(event => {
       evidenceIndex += 1
+      const eventObjectTypes = Array.isArray(event && event.objectTypes) ? event.objectTypes : []
       const details = [
         `providerId=${event.providerId || '?'}`,
         `eventId=${event.eventId}`,
@@ -415,16 +584,17 @@ const buildCerebrumCameraHistoryResultsContext = (results, { maxChars = 12000 } 
         event.endAt ? `endAt=${event.endAt}` : '',
         `type=${event.eventType || '?'}`,
         event.scopeName || event.scopeId ? `scope=${event.scopeName || event.scopeId}` : '',
-        event.objectTypes.length ? `objects=${event.objectTypes.join(',')}` : '',
+        eventObjectTypes.length ? `objects=${eventObjectTypes.join(',')}` : '',
         `snapshot=${event.thumbnailAvailable ? 'available' : 'unavailable'}`
       ].filter(Boolean)
-      lines.push(`[CH${evidenceIndex}] ${details.join(' | ')}`)
+      appendLine(`[CH${evidenceIndex}] ${details.join(' | ')}`)
     })
     ;(Array.isArray(result.errors) ? result.errors : []).forEach(item => {
-      lines.push(`Provider error: ${item.providerId || '?'} — ${clampText(item.error, 500)}`)
+      appendLine(`Provider error: ${item.providerId || '?'} — ${clampText(item.error, 500)}`)
     })
   })
-  return lines.join('\n').slice(0, Math.max(0, Number(maxChars) || 0))
+  if (omittedLines > 0) appendLine(`Earlier or oversized camera-history rows omitted: ${omittedLines}.`)
+  return lines.join('\n')
 }
 
 const bindCerebrumCameraEventSnapshotEvidence = (action, results) => {
@@ -436,7 +606,7 @@ const bindCerebrumCameraEventSnapshotEvidence = (action, results) => {
   )).filter(event => (
     event &&
     clampText(event.eventId, 200) === eventId &&
-    (!providerId || clampText(event.providerId, 200) === providerId)
+    (!providerId || matchesCerebrumCameraProviderReference({ requestedProviderId: providerId, providerId: event.providerId }))
   ))
   const matches = Array.from(new Map(matchingEvents.map(event => [
     `${clampText(event.providerId, 200)}\u0000${clampText(event.eventId, 200)}`,
@@ -449,6 +619,14 @@ const bindCerebrumCameraEventSnapshotEvidence = (action, results) => {
     })
   }
   const evidence = matches[0]
+  const eventAt = normalizeCerebrumCameraEventAt(evidence.at)
+  if (!eventAt) {
+    return Object.assign({}, action, {
+      historicalEvidenceVerified: false,
+      historicalEvidenceAmbiguous: false,
+      historicalEvidenceMissingTimestamp: true
+    })
+  }
   return Object.assign({}, action, {
     providerId: clampText(evidence.providerId, 200),
     cameraId: clampText(evidence.cameraId, 160),
@@ -456,6 +634,7 @@ const bindCerebrumCameraEventSnapshotEvidence = (action, results) => {
     unresolvedTarget: '',
     unresolved: false,
     ambiguous: false,
+    eventAt,
     historicalEvidenceVerified: true,
     historicalSnapshotUnavailable: evidence.thumbnailAvailable === false
   })
@@ -528,20 +707,25 @@ module.exports = {
   CEREBRUM_CAMERA_MAX_ACTIONS,
   CEREBRUM_CAMERA_REGISTRY_ALIAS_KEY,
   CEREBRUM_CAMERA_REGISTRY_KEY,
+  appendCerebrumCameraEventDateTime,
   bindCerebrumCameraEventSnapshotEvidence,
   buildCerebrumCameraNotificationText,
   buildCerebrumCameraHistoryResultsContext,
   cameraWatchMatchesEvent,
   executeCerebrumCameraHistoryActions,
+  formatCerebrumCameraEventDateTime,
   getCerebrumCameraAdapterRegistry,
+  matchesCerebrumCameraProviderReference,
   normalizeCameraEventType,
   normalizeCameraObjectType,
   normalizeCerebrumCameraAction,
   normalizeCerebrumCameraActions,
   normalizeCerebrumCameraEvent,
+  normalizeCerebrumCameraEventAt,
   normalizeCerebrumHistoricalCameraEvent,
   normalizeCerebrumCameraImage,
   normalizeCerebrumCameraRegistration,
   normalizeSearchText,
+  redactCerebrumCameraHistoryCredentialText,
   resolveCerebrumCamera
 }

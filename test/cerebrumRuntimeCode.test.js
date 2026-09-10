@@ -12,22 +12,22 @@ const { parseCerebrumConversationResponse } = require('../nodes/cerebrumUltimate
 describe('Cerebrum isolated runtime JavaScript tool', function () {
   it('normalizes one bounded run action', function () {
     const normalized = normalizeCerebrumCodeActions([
-      { operation: 'run', code: 'return node.id', reason: 'inspect the current node' },
+      { operation: 'run', code: 'return RED.nodes.listNodeSets()', reason: 'inspect compatible packages' },
       { operation: 'run', code: 'return 2', reason: 'ignored by the one-action limit' }
     ])
     expect(normalized.rejected).to.deep.equal([])
     expect(normalized.accepted).to.deep.equal([
-      { operation: 'run', code: 'return node.id', reason: 'inspect the current node' }
+      { operation: 'run', code: 'return RED.nodes.listNodeSets()', reason: 'inspect compatible packages' }
     ])
   })
 
   it('parses JavaScript actions from the structured LLM response', function () {
     const envelope = parseCerebrumConversationResponse(JSON.stringify({
       reply: '',
-      code_actions: [{ operation: 'run', code: 'return node.id', reason: 'inspect runtime' }]
+      code_actions: [{ operation: 'run', code: 'return RED.nodes.listTypes()', reason: 'inspect runtime inventory' }]
     }))
     expect(envelope.codeActions).to.deep.equal([
-      { operation: 'run', code: 'return node.id', reason: 'inspect runtime' }
+      { operation: 'run', code: 'return RED.nodes.listTypes()', reason: 'inspect runtime inventory' }
     ])
   })
 
@@ -36,72 +36,106 @@ describe('Cerebrum isolated runtime JavaScript tool', function () {
     expect(normalizeCerebrumCodeActions([{ operation: 'run', code: 'x'.repeat(CEREBRUM_CODE_MAX_SOURCE_CHARS + 1) }]).rejected[0].reason).to.include('exceeds')
   })
 
-  it('runs synchronously against a data-only Node-RED capability snapshot', function () {
-    const flowNodes = [
-      { id: 'a', type: 'inject', name: 'Trigger' },
-      { id: 'b', type: 'function', name: 'Logic' }
-    ]
-    const node = { id: 'cerebrum-1', type: 'cerebrumUltimate', mutable: 'host' }
+  it('runs synchronously against an inventory-only Node-RED capability snapshot', function () {
+    let getNodeListCalls = 0
     const RED = {
       nodes: {
-        eachNode: callback => flowNodes.forEach(callback),
-        getNode: id => flowNodes.find(item => item.id === id),
-        getNodeList: () => [{ id: 'example/nodes', module: 'example', version: '1.0.0', enabled: true, types: ['inject', 'function'] }]
+        eachNode: () => { throw new Error('eachNode must not be called') },
+        getNode: () => { throw new Error('getNode must not be called') },
+        getType: () => { throw new Error('getType must not be called') },
+        getNodeList: () => {
+          getNodeListCalls += 1
+          return [
+            { id: 'knx/nodes', module: 'node-red-contrib-knx-ultimate', version: '4.0.0', enabled: true, loaded: true, types: ['knxUltimate', 'knxUltimate-config'] },
+            { id: 'core/nodes', module: 'node-red', version: '4.1.0', enabled: true, loaded: true, types: ['inject', 'function'] }
+          ]
+        }
       }
     }
     const execution = executeCerebrumRuntimeCode({
       action: {
         operation: 'run',
         code: [
-          'const nodes = []',
-          'RED.nodes.eachNode(item => nodes.push({ id: item.id, type: item.type }))',
-          'let mutationBlocked = false',
-          'try { node.mutable = "changed" } catch (error) { mutationBlocked = true }',
-          'return { currentNode: node.id, nodes, selected: RED.nodes.getNode("b").name, installed: RED.nodes.getType("function").installed, nodeSets: RED.nodes.listNodeSets().length, mutationBlocked, question, sessionId }'
+          'const first = RED.nodes.listNodeSets()',
+          'first.push({ module: "mutated-copy" })',
+          'return {',
+          '  nodeType: typeof node,',
+          '  eachNodeType: typeof RED.nodes.eachNode,',
+          '  getNodeType: typeof RED.nodes.getNode,',
+          '  getTypeType: typeof RED.nodes.getType,',
+          '  modules: RED.nodes.listNodeSets().map(item => item.module),',
+          '  types: RED.nodes.listTypes().map(item => item.type),',
+          '  integrations: RED.integrations.map(item => item.id),',
+          '  question,',
+          '  sessionId',
+          '}'
         ].join('\n'),
-        reason: 'inspect the deployed runtime'
+        reason: 'inspect compatible packages'
       },
-      node,
       RED,
+      runtimeSnapshot: {
+        integrations: [{ id: 'unifi-ultimate', title: 'UniFi Protect', installed: true, deployed: true, usable: true }]
+      },
       question: 'What is deployed?',
       sessionId: 'chat-1'
     })
     expect(execution.ok).to.equal(true)
     expect(execution.result).to.deep.equal({
-      currentNode: 'cerebrum-1',
-      nodes: [
-        { id: 'a', type: 'inject' },
-        { id: 'b', type: 'function' }
-      ],
-      selected: 'Logic',
-      installed: true,
-      nodeSets: 1,
-      mutationBlocked: true,
+      nodeType: 'undefined',
+      eachNodeType: 'undefined',
+      getNodeType: 'undefined',
+      getTypeType: 'undefined',
+      modules: ['node-red-contrib-knx-ultimate'],
+      types: ['knxUltimate', 'knxUltimate-config'],
+      integrations: ['unifi-ultimate'],
       question: 'What is deployed?',
       sessionId: 'chat-1'
     })
-    expect(node.mutable).to.equal('host')
+    expect(getNodeListCalls).to.equal(1)
   })
 
-  it('never exposes live runtime objects or sensitive snapshot fields', function () {
+  it('ignores supplied flow nodes, wiring and live runtime objects', function () {
     let hostMethodCalled = false
     const node = { id: 'cerebrum-1', type: 'cerebrumUltimate', password: 'hidden', send: () => { hostMethodCalled = true } }
     const RED = {
       nodes: {
-        eachNode: visitor => visitor({ id: 'safe', type: 'inject', credentials: { token: 'hidden' } }),
-        getNodeList: () => [{ id: 'safe/set', types: ['inject'], secret: 'hidden' }]
+        eachNode: () => { hostMethodCalled = true },
+        getNode: () => { hostMethodCalled = true },
+        getType: () => { hostMethodCalled = true },
+        getNodeList: () => [
+          { id: 'safe/set', module: 'node-red-contrib-safe-ultimate', types: ['safeUltimateNode'], secret: 'hidden' },
+          { id: 'core/set', module: 'node-red', types: ['inject'] }
+        ]
       }
     }
-    const snapshot = buildCerebrumRuntimeInspectionSnapshot({ node, RED })
+    const runtimeSnapshot = {
+      currentNode: node,
+      flowNodeCount: 2,
+      nodes: [{ id: 'flow-secret', type: 'function', credentials: { token: 'hidden' }, wires: [['destination-secret']] }],
+      discovery: { nodes: [{ id: 'discovery-secret' }] },
+      registries: { provider: { raw: 'hidden' } },
+      integrations: [{ id: 'safe-adapter', title: 'Safe', usable: true, raw: { password: 'hidden' } }]
+    }
+    const snapshot = buildCerebrumRuntimeInspectionSnapshot({ runtimeSnapshot, node, RED })
     expect(JSON.stringify(snapshot)).not.to.include('hidden')
+    expect(snapshot).not.to.have.any.keys('nodes', 'currentNode', 'flowNodeCount', 'discovery', 'registries')
+    expect(snapshot.nodeSets.map(item => item.module)).to.deep.equal(['node-red-contrib-safe-ultimate'])
 
     const execution = executeCerebrumRuntimeCode({
-      action: { operation: 'run', code: 'return { sendType: typeof node.send, credentials: RED.nodes.getNode("safe").credentials }' },
+      action: {
+        operation: 'run',
+        code: 'return { nodeType: typeof node, eachNodeType: typeof RED.nodes.eachNode, runtimeKeys: Object.keys(runtime).sort() }'
+      },
       node,
-      RED
+      RED,
+      runtimeSnapshot
     })
     expect(execution).to.deep.include({ ok: true })
-    expect(execution.result).to.deep.equal({ sendType: 'undefined' })
+    expect(execution.result).to.deep.equal({
+      nodeType: 'undefined',
+      eachNodeType: 'undefined',
+      runtimeKeys: ['capturedAt', 'installedNodeSetCount', 'installedTypeCount', 'integrations', 'inventoryOnly', 'nodeSets', 'nodeTypes', 'version']
+    })
     expect(hostMethodCalled).to.equal(false)
   })
 

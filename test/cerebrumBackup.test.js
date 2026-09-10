@@ -13,6 +13,7 @@ const { Writable } = require('stream')
 const { backupFile, createBackupUploads, readSupplementalFiles, validateSupplementalFiles, replaceSupplementalFiles, buildMigrationFlows } = require('../nodes/utils/cerebrumBackup')
 const { createBackupZip, decodeBackupUpload } = require('../nodes/utils/cerebrumBackupZip')
 const { getAiEducationFilePath } = require('../nodes/utils/cerebrumAiEducation')
+const { executeAutomationAction } = require('../nodes/utils/cerebrumAutomationTool')
 const Module = require('module')
 // Keep the admin-route singleton isolated from other suites' mocked RED hosts.
 const runtimePath = require.resolve('../nodes/cerebrumUltimate')
@@ -30,7 +31,7 @@ describe('Cerebrum portable backup', () => {
   let root
   let instances
   const routes = new Map()
-  function create (id, config = {}, credentials = { llmApiKey: 'AI-SECRET-EXCLUDED' }) {
+  function create (id, config = {}, credentials = { llmApiKey: 'AI-SECRET-EXCLUDED' }, userDir) {
     let Constructor
     const flow = [
       { id: 'tab', type: 'tab', label: 'Home' },
@@ -43,7 +44,7 @@ describe('Cerebrum portable backup', () => {
     const RED = {
       auth: { needsPermission: () => noop },
       httpAdmin: { get: (url, ...handlers) => routes.set(url, handlers.at(-1)), post: (url, permission, handler) => routes.set(url, handler), use: noop },
-      settings: { userDir: path.join(root, id), httpAdminRoot: '/' },
+      settings: { userDir: userDir || path.join(root, id), httpAdminRoot: '/' },
       nodes: {
         getNode: () => undefined,
         getCredentials: nodeId => nodeId === id ? credentials : nodeId === 'gateway' ? { password: 'INTEGRATION-SECRET-INCLUDED' } : undefined,
@@ -117,7 +118,7 @@ describe('Cerebrum portable backup', () => {
     return readSupplementalFiles(locations)
   }
 
-  it('applies default and custom history retention to disk archives while the AI is disabled, including after restart and restore', async function () {
+  it('applies default and custom history retention to disk archives while the AI is disabled, including maintenance after restart and restore', async function () {
     this.timeout(10000)
     const { serializeCerebrumCompactHistoryRecord } = require('../nodes/utils/cerebrumEventHistory')
     const { addCerebrumChatInstruction } = require('../nodes/utils/cerebrumChatContext')
@@ -164,9 +165,37 @@ describe('Cerebrum portable backup', () => {
     const expired = target._sharedMemoryArchive.append({ kind: 'conversation', at: new Date(recentTs).toISOString(), data: { text: 'restart marker' } })
     await close(target)
     const restarted = create('short-history-retention', { historyRetentionDays: 7 })
-    await restarted._historyRetentionPromise
+    // Startup deliberately does not scan a potentially huge shared archive.
+    // The deferred maintenance pass (invoked directly here) still applies the
+    // configured retention after a restart.
+    await restarted.applyHistoryRetention()
     expect((await restarted.querySharedMemory({ operation: 'get', text: expired.id })).ok).to.equal(false)
     expect(restarted._chatContext.instructions.some(item => item.text === 'Keep Relax at 37%')).to.equal(true)
+  })
+
+  it('maintains every local archive and applies the shortest live policy only from the shared archive leader', async () => {
+    const userDir = path.join(root, 'shared-retention')
+    const leader = create('retention-a', { historyRetentionDays: 30 }, undefined, userDir)
+    const follower = create('retention-b', { historyRetentionDays: 7 }, undefined, userDir)
+    const now = Date.now()
+    const leaderDay = new Date(now - 31 * 86400000).toISOString().slice(0, 10)
+    const followerDay = new Date(now - 8 * 86400000).toISOString().slice(0, 10)
+    seed(leader, `history/${leader.id}/${leaderDay}.knxctx`, '')
+    seed(follower, `history/${follower.id}/${followerDay}.knxctx`, '')
+    const sharedExpired = leader._sharedMemoryArchive.append({
+      kind: 'conversation',
+      at: new Date(now - 8 * 86400000).toISOString(),
+      data: { text: 'shortest live retention marker' }
+    })
+
+    await follower.applyHistoryRetention()
+    expect(fs.existsSync(path.join(storage(follower), 'history', follower.id, `${followerDay}.knxctx`))).to.equal(false)
+    expect(fs.existsSync(path.join(storage(leader), 'history', leader.id, `${leaderDay}.knxctx`))).to.equal(true)
+    expect((await follower.querySharedMemory({ operation: 'get', text: sharedExpired.id })).ok).to.equal(true)
+
+    await leader.applyHistoryRetention()
+    expect(fs.existsSync(path.join(storage(leader), 'history', leader.id, `${leaderDay}.knxctx`))).to.equal(false)
+    expect((await leader.querySharedMemory({ operation: 'get', text: sharedExpired.id })).ok).to.equal(false)
   })
 
   it('round trips editable JavaScript source through ZIP, node migration and restart', async function () {
@@ -400,33 +429,48 @@ describe('Cerebrum portable backup', () => {
     const simpleGet = require('simple-get')
     const transport = simpleGet.concat
     const registry = require('../nodes/utils/cerebrumCamera').getCerebrumCameraAdapterRegistry()
-    const providerId = 'camera-history-test:controller-1'
+    const providerId = 'unifi-ultimate:controller-1'
+    const historyCredentials = {
+      username: 'chat-history-user-private',
+      password: 'chat-history-password-private'
+    }
+    const eventAt = '2026-09-09T08:00:00.000Z'
     const image = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
     const historyCalls = []
     const snapshotCalls = []
     const currentSnapshotCalls = []
     const prompts = []
-    registry.registerAdapter({ id: 'camera-history-test', title: 'Recorded camera test' })
-    registry.registerProvider({
+    let liveSubscribeCalls = 0
+    let catalogCalls = 0
+    let providerReady = false
+    registry.registerAdapter({ id: 'unifi-ultimate', title: 'UniFi Ultimate / Protect' })
+    const provider = {
       id: providerId,
-      adapterId: 'camera-history-test',
+      adapterId: 'unifi-ultimate',
       controllerId: 'controller-1',
-      title: 'Recorded camera test',
+      title: 'UniFi Protect',
+      eventRetention: 'none',
+      historyCredentialsMode: 'per_call',
       capabilities: ['camera_catalog', 'event_history', 'event_snapshot'],
+      get connected () { return providerReady },
+      get ready () { return providerReady },
+      isReady () { return providerReady },
       async listCameras () {
-        return [{ id: 'controller-1:camera-1', name: 'Ingresso principale', online: false }]
+        catalogCalls += 1
+        providerReady = true
+        return [{ id: 'controller-1:camera-1', name: 'Tettoia Est', online: false }]
       },
-      async queryEvents (request) {
-        historyCalls.push(request)
+      async queryEvents (request, invocation) {
+        historyCalls.push({ request, invocation })
         return {
           events: [{
             providerId,
             eventId: 'event-42',
             cameraId: 'controller-1:camera-1',
-            cameraName: 'Ingresso principale',
+            cameraName: 'Tettoia Est',
             eventType: 'smartDetectZone',
             objectTypes: ['person'],
-            at: '2026-09-09T08:00:00.000Z',
+            at: eventAt,
             endAt: '2026-09-09T08:00:04.000Z',
             active: false,
             thumbnailAvailable: true
@@ -435,16 +479,21 @@ describe('Cerebrum portable backup', () => {
           nextOffset: null
         }
       },
-      async takeEventSnapshot (request) {
-        snapshotCalls.push(request)
+      async takeEventSnapshot (request, invocation) {
+        snapshotCalls.push({ request, invocation })
         return { data: image, mediaType: 'image/jpeg', eventId: request.eventId }
       },
       async takeSnapshot (request) {
         currentSnapshotCalls.push(request)
         throw new Error('A current snapshot must not be used for historical evidence')
       },
-      subscribe: () => () => {}
-    })
+      subscribe: () => {
+        liveSubscribeCalls += 1
+        return () => {}
+      }
+    }
+    registry.registerProvider(provider)
+    expect(provider.isReady()).to.equal(false)
     let modelCall = 0
     simpleGet.concat = (options, callback) => {
       modelCall += 1
@@ -452,8 +501,8 @@ describe('Cerebrum portable backup', () => {
       const cameraActions = modelCall === 1
         ? [{
             type: 'query_events',
-            providerId,
-            camera: 'Ingresso principale',
+            providerId: 'unifi-ultimate',
+            camera: 'Tettoia Est',
             eventId: '',
             eventType: 'motion',
             scopeName: '',
@@ -468,8 +517,8 @@ describe('Cerebrum portable backup', () => {
           }]
         : [{
             type: 'event_snapshot',
-            providerId,
-            camera: 'Ingresso principale',
+            providerId: 'unifi-ultimate',
+            camera: 'Tettoia Est',
             eventId: 'event-42',
             eventType: '',
             scopeName: '',
@@ -500,44 +549,59 @@ describe('Cerebrum portable backup', () => {
     }
     try {
       const node = create('recorded-camera-chat', {
+        unifiProtectConfig: 'controller-1',
         llmEnabled: true,
         llmProvider: 'openai_compat',
         llmBaseUrl: 'https://llm.invalid/v1/chat/completions',
         llmModel: 'test-model',
         llmMaxTokens: 1200,
         llmContextLength: 32768
+      }, {
+        llmApiKey: 'AI-SECRET-EXCLUDED',
+        unifiHistoryUsername: historyCredentials.username,
+        unifiHistoryPassword: historyCredentials.password
       })
       node.cerebrumAutonomyEnabled = false
-      const result = await node.sidebarAsk('Fammi vedere lo snapshot dell’ultimo movimento rilevato all’ingresso')
+      const result = await node.sidebarAsk("Mostrami lo snapshot dell'ultimo movimento rilevato da UniFi Protect per Tettoia Est")
 
       expect(modelCall).to.equal(2)
+      expect(catalogCalls).to.be.at.least(1)
+      expect(provider.isReady()).to.equal(true)
+      expect(liveSubscribeCalls).to.equal(0)
+      expect(prompts[0]).to.include('never claim that recorded snapshots are unavailable before the selected provider query has actually failed')
       expect(historyCalls).to.have.length(1)
-      expect(historyCalls[0]).to.include({
+      expect(historyCalls[0].request).to.include({
         cameraId: 'controller-1:camera-1',
         offset: 0,
         limit: 20
       })
-      expect(historyCalls[0].eventTypes).to.deep.equal(['motion'])
-      expect(snapshotCalls).to.deep.equal([{
+      expect(historyCalls[0].request.eventTypes).to.deep.equal(['motion'])
+      expect(historyCalls[0].request).not.to.have.property('historyCredentials')
+      expect(historyCalls[0].invocation).to.deep.equal({ historyCredentials, historyQueryScope: 'recorded-camera-chat' })
+      expect(snapshotCalls[0].request).to.deep.equal({
         eventId: 'event-42',
         cameraId: 'controller-1:camera-1',
-        cameraName: 'Ingresso principale',
+        cameraName: 'Tettoia Est',
         reason: 'Mostra l’immagine dell’evento più recente'
-      }])
+      })
+      expect(snapshotCalls[0].invocation).to.deep.equal({ historyCredentials })
       expect(currentSnapshotCalls).to.have.length(0)
       expect(prompts[1]).to.include('CAMERA HISTORY TOOL RESULTS').and.include('eventId=event-42')
       const debugPrompt = fs.readFileSync(node._lastChatPromptDebugFile, 'utf8')
       expect(debugPrompt).to.include('Transient camera-history evidence omitted')
       expect(debugPrompt).not.to.include('eventId=event-42')
       const backup = await decodeBackupUpload(await createBackupZip(await node.exportAiConfig()))
+      expect(JSON.stringify(backup)).not.to.include(historyCredentials.username)
+      expect(JSON.stringify(backup)).not.to.include(historyCredentials.password)
       expect(backup.supplementalFiles.lastChatPrompt.content).to.include('Transient camera-history evidence omitted')
       expect(backup.supplementalFiles.lastChatPrompt.content).not.to.include('eventId=event-42')
       expect(backup.supplementalFiles.lastChatPrompt.content).not.to.include('[CH1]')
       expect(backup.supplementalFiles.lastChatPrompt.content).not.to.include('2026-09-09T08:00:00.000Z')
-      expect(result.metadata).to.include({ type: 'camera_event_snapshot', eventId: 'event-42' })
+      expect(result.metadata).to.include({ type: 'camera_event_snapshot', eventId: 'event-42', eventAt })
       expect(result.metadata.image).to.include({ mediaType: 'image/jpeg' })
       expect(result.metadata.image.data).to.equal(image)
-      expect(result.answer).to.include('Ingresso principale')
+      expect(result.answer).to.include('Tettoia Est')
+      expect(result.answer).to.include('Data/ora evento').and.include('2026')
 
       const archived = fs.readFileSync(node._sharedMemoryArchive.filePath, 'utf8')
         .trim()
@@ -547,15 +611,219 @@ describe('Cerebrum portable backup', () => {
       expect(historyAudit.data.result).not.to.have.property('events')
       expect(historyAudit.data.result).to.include({ ok: true, returnedEvents: 1, hasMore: false })
       const archivedReply = archived.find(record => record.kind === 'conversation' && record.data?.metadata?.type === 'camera_event_snapshot')
-      expect(archivedReply.data.metadata.image).to.deep.equal({
-        mediaType: 'image/jpeg',
-        filename: 'ingresso-principale-snapshot.jpg',
-        byteLength: 4,
-        stored: false
+      const archivedReplyWithImage = archived.find(record => record.kind === 'conversation' && record.data?.metadata?.image)
+      expect(archivedReply).to.equal(undefined)
+      expect(archivedReplyWithImage.data.metadata).to.deep.equal({
+        image: {
+          mediaType: 'image/jpeg',
+          filename: 'tettoia-est-snapshot.jpg',
+          byteLength: 4,
+          stored: false
+        }
       })
+      expect(archived).not.to.include(historyCredentials.username)
+      expect(archived).not.to.include(historyCredentials.password)
     } finally {
       registry.unregisterProvider(providerId)
       simpleGet.concat = transport
+    }
+  })
+
+  it('runs a scheduled camera-history intent, retrieves the exact event snapshot and keeps UniFi events transient', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const originalNow = Date.now
+    const registry = require('../nodes/utils/cerebrumCamera').getCerebrumCameraAdapterRegistry()
+    const providerId = 'unifi-ultimate:scheduled-controller'
+    const historyCredentials = {
+      username: 'scheduled-history-user-private',
+      password: 'scheduled-history-password-private'
+    }
+    const instruction = 'Recupera e invia lo snapshot dell’ultimo movimento rilevato dalla telecamera Tettoia Est.'
+    const eventId = 'scheduled-event-42'
+    const eventAt = '2026-09-09T06:38:30.000Z'
+    const image = Buffer.from([0xff, 0xd8, 0x42, 0xff, 0xd9])
+    const historyCalls = []
+    const eventSnapshotCalls = []
+    const currentSnapshotCalls = []
+    const prompts = []
+    const outputs = []
+    let subscribeCalls = 0
+    let modelCall = 0
+    let time = Date.parse('2026-09-09T06:39:00.000Z')
+    Date.now = () => time
+    registry.registerAdapter({ id: 'unifi-ultimate', title: 'UniFi Ultimate / Protect' })
+    registry.registerProvider({
+      id: providerId,
+      adapterId: 'unifi-ultimate',
+      controllerId: 'scheduled-controller',
+      title: 'UniFi Protect',
+      eventRetention: 'none',
+      historyCredentialsMode: 'per_call',
+      capabilities: ['camera_catalog', 'event_history', 'event_snapshot'],
+      async listCameras () {
+        return [{ id: 'scheduled-controller:tettoia-est', name: 'Tettoia Est', online: false }]
+      },
+      async queryEvents (request, invocation) {
+        historyCalls.push({ request, invocation })
+        return {
+          events: [{
+            providerId,
+            eventId,
+            cameraId: 'scheduled-controller:tettoia-est',
+            cameraName: 'Tettoia Est',
+            eventType: 'motion',
+            objectTypes: [],
+            at: eventAt,
+            active: false,
+            thumbnailAvailable: true
+          }],
+          hasMore: false,
+          nextOffset: null
+        }
+      },
+      async takeEventSnapshot (request, invocation) {
+        eventSnapshotCalls.push({ request, invocation })
+        return { data: image, mediaType: 'image/jpeg', eventId: request.eventId }
+      },
+      async takeSnapshot (request) {
+        currentSnapshotCalls.push(request)
+        throw new Error('Historical execution must not substitute a current snapshot')
+      },
+      subscribe: () => {
+        subscribeCalls += 1
+        return () => {}
+      }
+    })
+    simpleGet.concat = (options, callback) => {
+      modelCall += 1
+      prompts.push(JSON.stringify(JSON.parse(options.body).messages))
+      const cameraActions = modelCall === 1
+        ? [{
+            type: 'query_events',
+            providerId,
+            camera: 'Tettoia Est',
+            eventId: '',
+            eventType: 'motion',
+            scopeName: '',
+            objectTypes: [],
+            from: '',
+            to: '',
+            offset: 0,
+            limit: 20,
+            cooldownSeconds: 0,
+            sendSnapshot: false,
+            reason: 'Trova l’ultimo movimento della Tettoia Est'
+          }]
+        : [{
+            type: 'event_snapshot',
+            providerId,
+            camera: 'Tettoia Est',
+            eventId,
+            eventType: '',
+            scopeName: '',
+            objectTypes: [],
+            from: '',
+            to: '',
+            offset: 0,
+            limit: 20,
+            cooldownSeconds: 0,
+            sendSnapshot: false,
+            reason: 'Invia lo snapshot registrato più recente'
+          }]
+      const response = {
+        reply: '',
+        language: 'it',
+        commands: [],
+        cameraActions,
+        speechActions: [],
+        memoryActions: [],
+        catalogActions: [],
+        webActions: [],
+        scheduleActions: [],
+        historyActions: [],
+        codeActions: [],
+        automationActions: []
+      }
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      const node = create('scheduled-camera-history', {
+        unifiProtectConfig: 'scheduled-controller',
+        llmEnabled: true,
+        llmProvider: 'openai_compat',
+        llmBaseUrl: 'https://llm.invalid/v1/chat/completions',
+        llmModel: 'test-model',
+        llmMaxTokens: 1200,
+        llmContextLength: 32768
+      }, {
+        llmApiKey: 'AI-SECRET-EXCLUDED',
+        unifiHistoryUsername: historyCredentials.username,
+        unifiHistoryPassword: historyCredentials.password
+      })
+      node.cerebrumAutonomyEnabled = false
+      node.send = output => outputs.push(output)
+      await node.refreshCameraAdapterRegistry({ force: true })
+      const dueAt = time + 60000
+      const source = `module.exports = c => { c.describe("Snapshot movimento Tettoia Est"); c.schedule.at("ultimo-movimento", ${dueAt}, () => c.assistant.run(${JSON.stringify(instruction)})) }`
+      const created = await executeAutomationAction(node._automationRuntime, {
+        operation: 'create',
+        name: 'snapshot-tettoia-est.js',
+        revision: '',
+        code: source,
+        offset: 0
+      }, {
+        authority: 'user',
+        sessionId: 'telegram:camera-owner',
+        request: instruction
+      })
+      expect(created).to.include({ ok: true, status: 'active' })
+
+      time = dueAt
+      await node._automationRuntime.tick()
+      await node._automationRuntime.drain()
+
+      expect(modelCall).to.equal(2)
+      expect(prompts[0]).to.include('LOCAL AUTOMATION EXECUTION').and.include(instruction)
+      expect(prompts[1]).to.include('CAMERA HISTORY TOOL RESULTS').and.include(`eventId=${eventId}`)
+      expect(historyCalls).to.have.length(1)
+      expect(historyCalls[0].request).to.include({
+        cameraId: 'scheduled-controller:tettoia-est',
+        offset: 0,
+        limit: 20
+      })
+      expect(historyCalls[0].request.eventTypes).to.deep.equal(['motion'])
+      expect(historyCalls[0].request).not.to.have.property('historyCredentials')
+      expect(historyCalls[0].invocation).to.deep.equal({ historyCredentials, historyQueryScope: 'scheduled-camera-history' })
+      expect(eventSnapshotCalls[0].request).to.deep.equal({
+        eventId,
+        cameraId: 'scheduled-controller:tettoia-est',
+        cameraName: 'Tettoia Est',
+        reason: 'Invia lo snapshot registrato più recente'
+      })
+      expect(eventSnapshotCalls[0].invocation).to.deep.equal({ historyCredentials })
+      expect(currentSnapshotCalls).to.have.length(0)
+      expect(subscribeCalls).to.equal(0)
+      const delivered = outputs.find(output => output[2]?.cerebrum?.type === 'camera_event_snapshot')
+      expect(delivered[2].cerebrum).to.include({ eventId, eventAt, sessionId: 'telegram:camera-owner' })
+      expect(delivered[2].cerebrum.image.data).to.equal(image)
+      expect(delivered[2].payload).to.include('Data/ora evento').and.include('2026')
+
+      await node.exportAiConfig()
+      const archived = fs.readFileSync(node._sharedMemoryArchive.filePath, 'utf8')
+      const archiveRecords = archived.trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      expect(archived).to.include('camera_history_query')
+      expect(archived).not.to.include(eventId)
+      expect(archived).not.to.include(eventAt)
+      expect(archived).not.to.include(image.toString('base64'))
+      expect(archived).not.to.include(historyCredentials.username)
+      expect(archived).not.to.include(historyCredentials.password)
+      expect(archiveRecords.some(record => record.kind === 'conversation' && record.channel === 'telegram:camera-owner' && record.data?.role === 'user')).to.equal(false)
+    } finally {
+      registry.unregisterProvider(providerId)
+      simpleGet.concat = transport
+      Date.now = originalNow
     }
   })
 
@@ -564,6 +832,11 @@ describe('Cerebrum portable backup', () => {
     const registry = require('../nodes/utils/cerebrumCamera').getCerebrumCameraAdapterRegistry()
     const providerId = 'unifi-ultimate:protect-live-only'
     let listener
+    let subscribeCalls = 0
+    let unsubscribeCalls = 0
+    let catalogFails = false
+    const liveImage = Buffer.from([0xff, 0xd8, 0x24, 0xff, 0xd9])
+    const liveEventAt = '2026-09-09T12:00:00.000Z'
     registry.registerAdapter({ id: 'unifi-ultimate', title: 'UniFi Ultimate / Protect' })
     registry.registerProvider({
       id: providerId,
@@ -572,6 +845,7 @@ describe('Cerebrum portable backup', () => {
       eventRetention: 'none',
       capabilities: ['camera_catalog', 'snapshot', 'motion', 'event_history', 'event_snapshot'],
       async listCameras () {
+        if (catalogFails) throw new Error('temporary controller failure')
         return [{
           id: 'protect-live-only:camera-1',
           name: 'Ingresso',
@@ -580,16 +854,44 @@ describe('Cerebrum portable backup', () => {
           online: true
         }]
       },
+      async takeSnapshot () {
+        return { data: liveImage, mediaType: 'image/jpeg' }
+      },
       subscribe (callback) {
+        subscribeCalls += 1
         listener = callback
-        return () => { listener = null }
+        return () => { unsubscribeCalls += 1; listener = null }
       }
     })
     try {
       const node = create('protect-live-only', { unifiProtectConfig: 'protect-live-only' })
       node.cerebrumAutonomyEnabled = false
       await node.refreshCameraAdapterRegistry({ force: true })
+      expect(listener).to.equal(undefined)
+      expect(subscribeCalls).to.equal(0)
+
+      const { addCerebrumCameraWatch, removeCerebrumCameraWatches } = require('../nodes/utils/cerebrumChatContext')
+      node._chatContext = addCerebrumCameraWatch(node._chatContext, {
+        sessionId: 'test',
+        watch: {
+          id: 'explicit-protect-watch',
+          cameraId: 'protect-live-only:camera-1',
+          cameraName: 'Ingresso',
+          eventType: 'motion',
+          sendSnapshot: true,
+          language: 'it'
+        }
+      })
+      await node.refreshCameraAdapterRegistry()
       expect(listener).to.be.a('function')
+      expect(subscribeCalls).to.equal(1)
+
+      catalogFails = true
+      await node.refreshCameraAdapterRegistry({ force: true })
+      expect(listener).to.be.a('function')
+      expect(subscribeCalls).to.equal(1)
+      expect(unsubscribeCalls).to.equal(0)
+      catalogFails = false
 
       const appended = []
       const append = node._sharedMemoryArchive.append.bind(node._sharedMemoryArchive)
@@ -599,6 +901,8 @@ describe('Cerebrum portable backup', () => {
       }
       const observationsBefore = node._homeMemory.observations.length
       const episodesBefore = node._homeMemory.episodes.length
+      const outputs = []
+      node.send = output => outputs.push(output)
 
       listener({
         source: 'unifi-ultimate',
@@ -609,18 +913,30 @@ describe('Cerebrum portable backup', () => {
         eventId: 'motion-1',
         eventType: 'motion',
         active: true,
-        at: '2026-09-09T12:00:00.000Z',
+        at: liveEventAt,
         raw: { controllerPayload: 'must-not-be-saved' }
       })
 
-      expect(appended).to.deep.equal([])
+      await new Promise(resolve => setImmediate(resolve))
+      await new Promise(resolve => setImmediate(resolve))
+      const notification = outputs.find(output => output[2]?.cerebrum?.type === 'camera_notification')
+      expect(notification[2].cerebrum).to.include({ eventAt: liveEventAt })
+      expect(notification[2].cerebrum.image.data).to.equal(liveImage)
+      expect(notification[2].payload).to.match(/^Data\/ora evento: /).and.include('2026')
+      outputs.length = 0
+
+      expect(appended).to.have.length(1)
+      const archivedNotification = JSON.stringify(appended)
+      expect(archivedNotification).to.include('Data/ora evento')
+      expect(archivedNotification).not.to.include('controllerPayload')
+      expect(archivedNotification).not.to.include('motion-1')
+      expect(archivedNotification).not.to.include(liveEventAt)
+      appended.length = 0
       expect(node._homeMemory.observations).to.have.length(observationsBefore)
       expect(node._homeMemory.episodes).to.have.length(episodesBefore)
       const historyDir = path.join(storage(node), 'adapter-history', node.id)
       expect(fs.existsSync(historyDir)).to.equal(false)
 
-      const outputs = []
-      node.send = output => outputs.push(output)
       node.emit('input', {
         payload: { camera: { id: 'camera-1' }, verbose: true },
         details: { unifiProtect: { deviceType: 'camera', deviceId: 'camera-1', source: 'interval' } }
@@ -636,6 +952,38 @@ describe('Cerebrum portable backup', () => {
       await new Promise(resolve => setImmediate(resolve))
       expect(outputs).to.deep.equal([])
       expect(appended).to.deep.equal([])
+
+      const removed = removeCerebrumCameraWatches(node._chatContext, {
+        sessionId: 'test',
+        predicate: () => true
+      })
+      node._chatContext = removed.context
+      await node.refreshCameraAdapterRegistry()
+      expect(listener).to.equal(null)
+      expect(unsubscribeCalls).to.equal(1)
+
+      const automation = await executeAutomationAction(node._automationRuntime, {
+        operation: 'create',
+        name: 'protect-motion.js',
+        revision: '',
+        offset: 0,
+        code: 'module.exports = c => c.onEvent("motion", {source:"unifi-ultimate",objectId:"protect-live-only:camera-1",event:"motion"}, () => {})'
+      }, { authority: 'user' })
+      expect(automation.ok).to.equal(true)
+      await new Promise(resolve => setImmediate(resolve))
+      await node.refreshCameraAdapterRegistry()
+      expect(listener).to.be.a('function')
+      expect(subscribeCalls).to.equal(2)
+
+      const paused = await node._automationRuntime.manage({
+        ...node._automationRuntime.read({ name: 'protect-motion.js' }),
+        operation: 'pause'
+      })
+      expect(paused.status).to.equal('paused')
+      await new Promise(resolve => setImmediate(resolve))
+      await node.refreshCameraAdapterRegistry()
+      expect(listener).to.equal(null)
+      expect(unsubscribeCalls).to.equal(2)
     } finally {
       registry.unregisterProvider(providerId)
     }
@@ -875,7 +1223,8 @@ describe('Cerebrum portable backup', () => {
     expect(JSON.parse(backup.files.aiConfiguration.content).etsAccess).to.deep.equal(access)
     const migrated = JSON.parse(backup.migration.flows.content).find(item => item.id === source.id)
     expect(migrated).to.deep.include({ etsExposeConfigured: true, etsExposedGAs: access.exposedGAs, etsReadOnlyGAs: access.readOnlyGAs })
-    // The portable flow already has current access, before the data ZIP is restored.
+    // The sanitized Cerebrum settings already have current access before the
+    // data ZIP is restored; integration configuration and wiring stay local.
     let target = create('ets-target', { ...migrated, id: 'ets-target', server: 'new-gateway' })
     target.serverKNX = gateway('new-gateway')
     expect(await target.getEtsAccessSnapshot()).to.deep.include({ ...access, selectedCount: 2, readOnlyCount: 1 })
@@ -1100,11 +1449,12 @@ describe('Cerebrum portable backup', () => {
     expect(backup.supplementalFiles.worldObservations.content).to.be.a('string')
     expect(JSON.parse(backup.supplementalFiles.worldModel.content).entities.some(entity => entity.id === 'adapter:light.kitchen' && entity.value === 'on')).to.equal(true)
     expect(JSON.stringify(backup)).not.to.include('AI-SECRET-EXCLUDED')
-    expect(JSON.stringify(backup)).to.include('INTEGRATION-SECRET-INCLUDED')
+    expect(JSON.stringify(backup)).not.to.include('INTEGRATION-SECRET-INCLUDED')
     const flows = JSON.parse(backup.migration.flows.content)
-    expect(flows.map(item => item.id)).to.have.members(['source', 'tab', 'chat', 'gateway'])
+    expect(flows.map(item => item.id)).to.deep.equal(['source'])
     expect(flows.find(item => item.id === 'source')).to.include({ llmModel: 'saved-model', chatInputCode: 'return msg;' })
-    expect(flows.find(item => item.id === 'source')).not.to.have.property('credentials')
+    expect(flows.find(item => item.id === 'source')).not.to.have.any.keys('credentials', 'wires', 'z', 'x', 'y')
+    expect(JSON.parse(backup.migration.etsCatalogs.content)).to.deep.equal([])
     await close(source)
     const migratedConfig = flows.find(item => item.id === 'source')
     let target = create('target', { ...migratedConfig, id: 'target' }, { llmApiKey: 'DESTINATION-KEY' })
@@ -1151,34 +1501,68 @@ describe('Cerebrum portable backup', () => {
     expect(parseCerebrumChatContextFileStrict(restored.files.chatLearning.content).sessions).to.deep.equal(parseCerebrumChatContextFileStrict(backup.files.chatLearning.content).sessions)
   })
 
-  it('embeds external ETS text, global settings and cross-tab/subflow dependencies without copying unrelated tabs', () => {
-    const etsPath = path.join(root, 'project.csv')
-    const csv = '"Name"\t"Address"\n"Kitchen"\t"1/2/3"\n'
-    fs.writeFileSync(etsPath, csv)
-    const catalog = [{ ga: '1/2/3', dpt: '1.001', devicename: 'Kitchen' }]
-    const flows = [
-      { id: 'global', type: 'global-config', env: [{ name: 'HOME', value: 'Kitchen', type: 'str' }] },
-      { id: 'home', type: 'tab' },
-      { id: 'c', type: 'cerebrumUltimate', z: 'home', server: 'gateway' },
-      { id: 'out', type: 'link out', z: 'home', links: ['in'] },
-      { id: 'in', type: 'link in', z: 'remote', links: ['out'] },
-      { id: 'remote', type: 'tab' },
-      { id: 'instance', type: 'subflow:sub', z: 'remote' },
-      { id: 'sub', type: 'subflow' },
-      { id: 'inside', type: 'function', z: 'sub', func: 'return msg;' },
-      { id: 'gateway', type: 'knxUltimate-config', csv: etsPath },
-      { id: 'other', type: 'function', z: 'unrelated', server: 'gateway' },
-      { id: 'unrelated', type: 'tab' }
-    ]
-    const result = buildMigrationFlows({ settings: { userDir: root }, nodes: { eachNode: visit => flows.forEach(visit), getNode: id => id === 'gateway' ? { csv: catalog } : undefined, getCredentials: () => undefined, getNodeList: () => [{ module: 'node-red-contrib-knx-ultimate', version: '4.0.0', types: ['knxUltimate-config'] }, { module: 'node-red', version: '4.1.0', types: ['function'] }] } }, { id: 'c' }, {})
+  it('never inspects RED flows or runtime nodes and inventories only installed -ultimate packages', () => {
+    let inventoryCalls = 0
+    const forbidden = () => { throw new Error('RED runtime flow inspection is forbidden') }
+    const source = {
+      id: 'stale-id',
+      type: 'cerebrumUltimate',
+      z: 'home',
+      x: 120,
+      y: 80,
+      wires: [['other-node']],
+      llmModel: 'local-model',
+      server: 'gateway',
+      unifiHistoryUsername: 'history-user-do-not-export',
+      unifiHistoryPassword: 'history-password-do-not-export',
+      credentials: { password: 'do-not-export' },
+      nested: { apiKey: 'do-not-export', preference: 'keep-me' }
+    }
+    const RED = {
+      nodes: {
+        eachNode: forbidden,
+        getNode: forbidden,
+        getType: forbidden,
+        getCredentials: forbidden,
+        getNodeList: () => {
+          inventoryCalls += 1
+          return [
+            { module: 'node-red-contrib-knx-ultimate', version: '4.0.0', types: ['knxUltimate-config'] },
+            { module: 'node-red-contrib-unifi-ultimate', version: '2.1.0', types: ['unifi-protect'] },
+            { module: 'node-red-contrib-unrelated', version: '9.0.0', types: ['unrelated'] },
+            { module: 'node-red', version: '4.1.0', types: ['function'] }
+          ]
+        }
+      }
+    }
+    Object.defineProperties(RED, {
+      settings: { get: forbidden },
+      version: { get: forbidden }
+    })
+    const access = { configured: true, exposedGAs: ['1/2/3'], readOnlyGAs: ['1/2/3'] }
+    const result = buildMigrationFlows(RED, { id: 'c' }, source, { etsAccess: access })
     const exported = JSON.parse(result.flows.content)
-    expect(exported.map(item => item.id)).to.have.members(['c', 'global', 'home', 'gateway', 'out', 'in', 'remote', 'instance', 'sub', 'inside'])
-    expect(exported.find(item => item.id === 'gateway').csv).to.equal(csv)
-    expect(result.flows.content).not.to.include(etsPath)
+    expect(inventoryCalls).to.equal(1)
+    expect(exported).to.deep.equal([{
+      id: 'c',
+      type: 'cerebrumUltimate',
+      llmModel: 'local-model',
+      server: 'gateway',
+      nested: { preference: 'keep-me' },
+      etsExposeConfigured: true,
+      etsExposedGAs: ['1/2/3'],
+      etsReadOnlyGAs: ['1/2/3']
+    }])
     expect(result.dependencies['node-red-contrib-knx-ultimate']).to.equal('4.0.0')
-    expect(result.dependencies).not.to.have.property('node-red')
-    expect(JSON.parse(result.etsCatalogs.content)).to.deep.equal([{ id: 'gateway', catalog }])
-    expect(flows.find(item => item.id === 'gateway').csv).to.equal(etsPath)
+    expect(result.dependencies['node-red-contrib-unifi-ultimate']).to.equal('2.1.0')
+    expect(result.dependencies['node-red-contrib-cerebrum-ultimate']).to.equal(require('../package.json').version)
+    expect(result.dependencies).not.to.have.any.keys('node-red', 'node-red-contrib-unrelated')
+    expect(result.runtime).to.deep.equal({ node: process.version, nodeRed: '' })
+    expect(JSON.parse(result.etsCatalogs.content)).to.deep.equal([])
+    expect(source).to.have.property('wires')
+    expect(source.unifiHistoryUsername).to.equal('history-user-do-not-export')
+    expect(source.unifiHistoryPassword).to.equal('history-password-do-not-export')
+    expect(source.credentials.password).to.equal('do-not-export')
   })
 
   it('still imports version 1 backups without deleting destination archives', async () => {
@@ -1270,7 +1654,7 @@ describe('Cerebrum portable backup', () => {
     expect(error.message).to.include('simulated append error')
   })
 
-  it('includes directly usable migration files in a compressed ZIP', async () => {
+  it('includes sanitized node settings and the package inventory in a compressed ZIP', async () => {
     const node = create('zip-source')
     const backup = await node.exportAiConfig()
     backup.node.name = 'Casa è memoria 🏠'
@@ -1283,7 +1667,8 @@ describe('Cerebrum portable backup', () => {
       for await (const chunk of await zip.openReadStreamPromise(entry)) chunks.push(chunk)
       files[entry.fileName] = Buffer.concat(chunks).toString('utf8')
     }
-    expect(Object.keys(files)).to.have.members(['cerebrum-backup.json', 'cerebrum-flows.json', 'required-packages.json', 'README.txt', 'archives/sharedMemory/cerebrum-memory.jsonl'])
+    expect(Object.keys(files)).to.have.members(['cerebrum-backup.json', 'cerebrum-flows.json', 'required-packages.json', 'README.txt'])
+    expect(backup.supplementalFiles.sharedMemory).to.deep.equal([])
     expect(JSON.parse(files['cerebrum-flows.json'])).to.deep.equal(JSON.parse(backup.migration.flows.content))
     expect(JSON.parse(files['required-packages.json'])).to.deep.equal(backup.migration.dependencies)
     expect(files['README.txt']).to.include('Ripristina ZIP')
