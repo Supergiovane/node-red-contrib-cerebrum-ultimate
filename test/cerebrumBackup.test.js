@@ -14,6 +14,7 @@ const { backupFile, createBackupUploads, readSupplementalFiles, validateSuppleme
 const { createBackupZip, decodeBackupUpload } = require('../nodes/utils/cerebrumBackupZip')
 const { getAiEducationFilePath } = require('../nodes/utils/cerebrumAiEducation')
 const { executeAutomationAction } = require('../nodes/utils/cerebrumAutomationTool')
+const { serializeCerebrumCompactHistoryRecord } = require('../nodes/utils/cerebrumEventHistory')
 const Module = require('module')
 // Keep the admin-route singleton isolated from other suites' mocked RED hosts.
 const runtimePath = require.resolve('../nodes/cerebrumUltimate')
@@ -562,7 +563,25 @@ describe('Cerebrum portable backup', () => {
         unifiHistoryPassword: historyCredentials.password
       })
       node.cerebrumAutonomyEnabled = false
-      const result = await node.sidebarAsk("Mostrami lo snapshot dell'ultimo movimento rilevato da UniFi Protect per Tettoia Est")
+      const now = new Date()
+      const day = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-')
+      const history = serializeCerebrumCompactHistoryRecord({ ts: Date.now() - 60000, event: 'GroupValue_Response', source: '1.1.1', destination: '1/2/3', payload: 20, dptdesc: 'x'.repeat(800) }, 'knx') + '\n'
+      const adapterHistory = serializeCerebrumCompactHistoryRecord({ ts: Date.now() - 60000, adapterId: 'test-adapter', resourceId: 'sensor', resourceName: 'Temperature', eventType: 'state', details: { note: 'x'.repeat(800) } }, 'adapter') + '\n'
+      seed(node, `history/${node.id}/${day}.knxctx`, history.repeat(300))
+      seed(node, `adapter-history/${node.id}/${day}.knxctx`, adapterHistory.repeat(200))
+      const wholeHistoryReads = []
+      const readFile = fs.readFileSync
+      let result
+      try {
+        fs.readFileSync = (...args) => {
+          if (String(args[0]).endsWith('.knxctx')) wholeHistoryReads.push(args[0])
+          return readFile(...args)
+        }
+        result = await node.sidebarAsk("Mostrami lo snapshot dell'ultimo movimento rilevato da UniFi Protect per Tettoia Est")
+      } finally { fs.readFileSync = readFile }
+      expect(wholeHistoryReads).to.deep.equal([])
+      expect(prompts[0]).to.include('kind=knx | total=300')
+      expect(prompts[0]).to.include('kind=adapter | total=200')
 
       expect(modelCall).to.equal(2)
       expect(catalogCalls).to.be.at.least(1)
@@ -602,6 +621,22 @@ describe('Cerebrum portable backup', () => {
       expect(result.metadata.image.data).to.equal(image)
       expect(result.answer).to.include('Tettoia Est')
       expect(result.answer).to.include('Data/ora evento').and.include('2026')
+
+      // Exercise the actual HTTP serializer without another model/camera call.
+      // It must not expand JPEG bytes through Buffer.toJSON's numeric array.
+      const ask = node.sidebarAsk
+      let wireReply
+      image.toJSON = () => { throw new Error('JPEG bytes expanded into a JSON array') }
+      try {
+        node.sidebarAsk = async () => result
+        await routes.get('/cerebrumUltimate/sidebar/ask')({ body: { nodeId: node.id, question: 'snapshot' } }, {
+          json: value => { wireReply = JSON.parse(JSON.stringify(value)) },
+          status: code => { throw new Error(`Unexpected HTTP ${code}`) }
+        })
+        expect(wireReply.metadata.image.encoding).to.equal('base64')
+        expect(Buffer.from(wireReply.metadata.image.data, 'base64').equals(image)).to.equal(true)
+        expect(result.metadata.image.data).to.equal(image)
+      } finally { node.sidebarAsk = ask; delete image.toJSON }
 
       const archived = fs.readFileSync(node._sharedMemoryArchive.filePath, 'utf8')
         .trim()

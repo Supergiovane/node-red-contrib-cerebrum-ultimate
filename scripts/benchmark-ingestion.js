@@ -12,6 +12,9 @@ const { performance } = require('perf_hooks')
 async function main () {
   const entityCount = Number(process.argv[2] || 300)
   const eventCount = Number(process.argv[3] || 600)
+  let peakHeapBytes = 0
+  let peakRssBytes = 0
+  let peakTransitionEdges = 0
   assert(Number.isInteger(entityCount) && entityCount > 0 && entityCount <= 600, 'Use 1..600 entities')
   assert(Number.isInteger(eventCount) && eventCount >= entityCount, 'Use at least one event per entity')
   const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-ingestion-benchmark-'))
@@ -72,11 +75,20 @@ async function main () {
     })
     node.sysLogger = { warn: message => failures.push(String(message)), error: message => failures.push(String(message)), info: noop, debug: noop }
     await node._autonomyRuntime.tick()
+    const sampleMemory = () => {
+      const memory = process.memoryUsage()
+      peakHeapBytes = Math.max(peakHeapBytes, memory.heapUsed)
+      peakRssBytes = Math.max(peakRssBytes, memory.rss)
+      peakTransitionEdges = Math.max(peakTransitionEdges, node._transitionStats.size)
+    }
     const ingest = (index, value) => node.handleSend({
       knx: { event: 'GroupValue_Response', source: '1.1.1', destination: gateway.csv[index % entityCount].ga, dpt: '9.001' },
       payload: value
     })
-    for (let index = 0; index < entityCount; index++) ingest(index, 20)
+    for (let index = 0; index < entityCount; index++) {
+      ingest(index, 20)
+      if (index % 50 === 49) sampleMemory()
+    }
     await node._autonomyRuntime.tick()
     const results = []
     for (const scenario of ['unchanged', 'changing']) {
@@ -84,7 +96,10 @@ async function main () {
       const cpu = process.cpuUsage()
       for (let index = 0; index < eventCount; index++) {
         ingest(index, scenario === 'unchanged' ? 20 : 21 + Math.floor(index / entityCount) % 2)
-        if (index % 50 === 49) await new Promise(resolve => setImmediate(resolve))
+        if (index % 50 === 49) {
+          sampleMemory()
+          await new Promise(resolve => setImmediate(resolve))
+        }
       }
       await node._autonomyRuntime.tick()
       await node.getCerebrumMemoryFile()
@@ -112,7 +127,17 @@ async function main () {
       assert(observation.data.evidenceIds.every(id => evidenceIds.has(id)), 'Observation evidence must resolve to raw history')
     }
     assert.deepStrictEqual(failures, [])
-    process.stdout.write(JSON.stringify({ entityCount, nodeVersion: process.version, results }, null, 2) + '\n')
+    sampleMemory()
+    if (typeof global.gc === 'function') global.gc()
+    const memory = {
+      peakHeapMiB: Number((peakHeapBytes / 1024 ** 2).toFixed(1)),
+      peakRssMiB: Number((peakRssBytes / 1024 ** 2).toFixed(1)),
+      retainedHeapMiB: typeof global.gc === 'function' ? Number((process.memoryUsage().heapUsed / 1024 ** 2).toFixed(1)) : null,
+      peakTransitionEdges,
+      retainedTransitionEdges: node._transitionStats.size,
+      retainedRateSeries: node._gaRateSeries.size
+    }
+    process.stdout.write(JSON.stringify({ entityCount, nodeVersion: process.version, results, memory }, null, 2) + '\n')
   } finally {
     if (node) await new Promise(resolve => node.emit('close', resolve))
     fs.rmSync(userDir, { recursive: true, force: true })

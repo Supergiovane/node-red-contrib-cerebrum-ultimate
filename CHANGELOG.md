@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.6 — 2026-09-09
+
+- Reduce snapshot/chat memory spikes by reading KNX, adapter and operation history in 64 KiB chunks instead of loading whole daily files and splitting them into arrays. Preserve full-range aggregate counts and select top counts without duplicating the complete counter table. Encode camera bytes as Base64 only in the sidebar HTTP response; Telegram/Node-RED still receive the original binary image. Added snapshot-request measurements and regression coverage for history boundaries, totals and image delivery.
+- Bound live dashboard caches during ingestion, including graph correlations (500), rate series (300) and anomaly summaries (120). Previously graph/rate limits only ran when reading the dashboard, allowing background KNX traffic to retain large amounts of RAM. Expire stale graph/rate/history data on the local state tick, while preserving raw archives, observations and learned memory. Added an integration regression with the dashboard closed and RAM measurements to the ingestion benchmark.
+- Relax background work: derived memory checkpoints every 10 seconds, state checks and AI Education polling every 30 seconds, gateway status polling every 5 seconds only when a gateway exists, and adapter-registry fallback checks every 60 seconds. Remove suspended legacy scheduler/proactive timers. Raw events remain immediately archived, saves keep their first deadline and flush at shutdown, and JavaScript automations retain their own deadline scheduler. See [CPU and memory measurements](docs/cpu-performance.md).
+
 ## 0.3.4 — 2026-09-09
 
 - Reduced CPU use during live integration traffic: update only the affected home-memory collection and state/entity records, avoid repeated whole-registry normalization, and stop observation correlation scans at the time-window boundary. Preserve state freshness, raw archives, evidence links, learning and device permissions. Added regression coverage and a synthetic ingestion benchmark; see [CPU measurements](docs/cpu-performance.md).

@@ -1,7 +1,44 @@
+const fs = require('fs')
+const { StringDecoder } = require('string_decoder')
+
 const CEREBRUM_ADAPTER_HISTORY_MIN_HOURS = 24
 const CEREBRUM_HISTORY_DETAILS_MAX_CHARS = 12000
 const CEREBRUM_COMPACT_ARCHIVE_EXTENSION = 'knxctx'
 const CEREBRUM_HISTORY_SENSITIVE_KEY_RE = /(authorization|bearer|cookie|credential|password|passwd|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|headers?)/i
+
+// Query the complete file through a bounded byte buffer, including UTF-8 and
+// legacy JSONL records split across chunks. Never materialize a day's archive
+// and its entire line array just to select a small working-context view.
+function * readCerebrumCompactHistoryLines (filePath, { maxLineBytes = 1024 * 1024 } = {}) {
+  const fd = fs.openSync(filePath, 'r')
+  try {
+    const size = fs.fstatSync(fd).size
+    const buffer = Buffer.allocUnsafe(64 * 1024)
+    const decoder = new StringDecoder('utf8')
+    let cursor = 0
+    let remainder = ''
+    const checkedLine = line => {
+      if (Buffer.byteLength(line, 'utf8') > maxLineBytes) throw new Error('Compact history contains an oversized record')
+      return line.endsWith('\r') ? line.slice(0, -1) : line
+    }
+    while (cursor < size) {
+      const read = fs.readSync(fd, buffer, 0, Math.min(buffer.length, size - cursor), cursor)
+      if (!read) throw new Error('Compact history changed while reading')
+      cursor += read
+      const text = remainder + decoder.write(buffer.subarray(0, read))
+      let start = 0
+      let end
+      while ((end = text.indexOf('\n', start)) >= 0) {
+        yield checkedLine(text.slice(start, end))
+        start = end + 1
+      }
+      remainder = text.slice(start)
+      checkedLine(remainder)
+    }
+    remainder += decoder.end()
+    if (remainder) yield checkedLine(remainder)
+  } finally { fs.closeSync(fd) }
+}
 
 const CEREBRUM_COMPACT_ARCHIVE_COLUMNS = Object.freeze({
   knx: Object.freeze([
@@ -360,10 +397,27 @@ const incrementCount = (map, key) => {
   map.set(normalized, Number(map.get(normalized) || 0) + 1)
 }
 
-const topCounts = (map, limit) => Array.from(map.entries())
-  .map(([key, count]) => ({ key, count }))
-  .sort((left, right) => right.count - left.count || left.key.localeCompare(right.key))
-  .slice(0, Math.max(1, Number(limit) || 1))
+const topCounts = (map, limit) => {
+  const maxItems = Math.max(1, Number(limit) || 1)
+  const top = []
+  const compare = (left, right) => right.count - left.count || left.key.localeCompare(right.key)
+  // Keep exact counters while avoiding a second full copy and sort of every
+  // distinct sensor/value combination just to report its leading 40 entries.
+  for (const [key, count] of map) {
+    const item = { key, count }
+    if (top.length === maxItems && compare(item, top[top.length - 1]) >= 0) continue
+    let low = 0
+    let high = top.length
+    while (low < high) {
+      const middle = (low + high) >>> 1
+      if (compare(item, top[middle]) < 0) high = middle
+      else low = middle + 1
+    }
+    top.splice(low, 0, item)
+    if (top.length > maxItems) top.pop()
+  }
+  return top
+}
 
 const buildEventSearchText = (event, kind) => {
   if (kind === 'knx') {
@@ -504,6 +558,7 @@ const formatCerebrumAdapterHistoryEventForPrompt = event => {
 }
 
 module.exports = {
+  readCerebrumCompactHistoryLines,
   CEREBRUM_ADAPTER_HISTORY_MIN_HOURS,
   CEREBRUM_COMPACT_ARCHIVE_COLUMNS,
   CEREBRUM_COMPACT_ARCHIVE_EXTENSION,

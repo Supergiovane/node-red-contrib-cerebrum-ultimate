@@ -138,6 +138,7 @@ const {
   formatCerebrumCompactContextForPrompt,
   parseCerebrumCompactHistoryRecord,
   serializeCerebrumCompactHistoryRecord,
+  readCerebrumCompactHistoryLines,
   normalizeCerebrumAdapterHistoryEvent
 } = require('./utils/cerebrumEventHistory')
 const {
@@ -215,7 +216,12 @@ const CEREBRUM_TRAFFIC_DEFAULTS = Object.freeze({
 })
 
 const PROACTIVE_EDUCATION_RETRY_MINUTES = 15
-const CEREBRUM_STATE_TICK_MS = 15 * 1000
+const CEREBRUM_STATE_TICK_MS = 30 * 1000
+const CEREBRUM_HOME_MEMORY_SAVE_MS = 10 * 1000
+const CEREBRUM_BUS_STATUS_POLL_MS = 5 * 1000
+const CEREBRUM_TRANSITION_MAX_EDGES = 500
+const CEREBRUM_RATE_MAX_SERIES = 300
+const CEREBRUM_ANOMALY_MAX_ITEMS = 120
 const CEREBRUM_SUMMARY_REFRESH_MS = 5 * 1000
 const CEREBRUM_SUMMARY_IDLE_REFRESH_MS = 30 * 1000
 const CEREBRUM_FLOW_TOPOLOGY_MAX_TELEGRAMS = 400
@@ -240,6 +246,15 @@ const CEREBRUM_REASONING_EFFORT_OPTIONS = Object.freeze(['none', 'minimal', 'low
 const CEREBRUM_ROUTINE_FEEDBACK_TIMEOUT_MS = 4000
 const CEREBRUM_ADAPTER_HISTORY_RETENTION_DAYS = Math.max(1, CEREBRUM_TRAFFIC_DEFAULTS.historyStoreRetentionDays)
 const CEREBRUM_DEFAULT_PROMPT_HISTORY_MINUTES = 20
+
+// These are disposable dashboard projections, not the raw event archive or
+// learned memory. Enforce their existing view limits when ingesting events,
+// even if nobody opens the dashboard to trigger its historical pruning path.
+const setCerebrumTelemetryEntry = (map, key, value, maxItems) => {
+  map.delete(key)
+  map.set(key, value)
+  while (map.size > maxItems) map.delete(map.keys().next().value)
+}
 const CEREBRUM_WEB_MAX_RESEARCH_ROUNDS = 2
 const CEREBRUM_WEB_MAX_ACTIONS_PER_ROUND = 3
 const CEREBRUM_WEB_MAX_SOURCES = 8
@@ -6235,7 +6250,18 @@ module.exports = function (RED) {
           return
         }
         const ret = await n.sidebarAsk(question)
-        res.json(ret)
+        const image = ret && ret.metadata && ret.metadata.image
+        // Buffer.toJSON expands each JPEG byte into a JavaScript array element.
+        // Encode only at the HTTP boundary; Node-RED/Telegram keep binary data.
+        res.json(image && Buffer.isBuffer(image.data)
+          ? {
+              ...ret,
+              metadata: {
+                ...ret.metadata,
+                image: { ...image, data: image.data.toString('base64'), encoding: 'base64' }
+              }
+            }
+          : ret)
       } catch (error) {
         res.status(error.status || 500).json({ error: error.message || String(error) })
       }
@@ -7574,7 +7600,7 @@ module.exports = function (RED) {
           anomalyCount: 0
         }
       }
-      node._gaRateSeries.set(key, entry)
+      setCerebrumTelemetryEntry(node._gaRateSeries, key, entry, CEREBRUM_RATE_MAX_SERIES)
       return entry
     }
 
@@ -7611,10 +7637,10 @@ module.exports = function (RED) {
         }
         node._gaRateSeries.set(ga, entry)
       }
-      if (node._gaRateSeries.size <= 300) return
+      if (node._gaRateSeries.size <= CEREBRUM_RATE_MAX_SERIES) return
       const sorted = Array.from(node._gaRateSeries.values())
         .sort((a, b) => (b.lastSampleAt || 0) - (a.lastSampleAt || 0))
-        .slice(0, 300)
+        .slice(0, CEREBRUM_RATE_MAX_SERIES)
       node._gaRateSeries = new Map(sorted.map(e => [e.ga, e]))
     }
 
@@ -7647,7 +7673,7 @@ module.exports = function (RED) {
         item.maxSeverityScore = sev.score
         item.severity = sev.label
       }
-      node._anomalyLifecycle.set(key, item)
+      setCerebrumTelemetryEntry(node._anomalyLifecycle, key, item, CEREBRUM_ANOMALY_MAX_ITEMS)
 
       const rateSeries = touchGARateSeries(ga)
       if (rateSeries) {
@@ -7680,7 +7706,7 @@ module.exports = function (RED) {
           lastPayload: item.lastPayload || {}
         })
       }
-      return out.sort((a, b) => String(b.lastSeenAt).localeCompare(String(a.lastSeenAt))).slice(0, 120)
+      return out.sort((a, b) => String(b.lastSeenAt).localeCompare(String(a.lastSeenAt))).slice(0, CEREBRUM_ANOMALY_MAX_ITEMS)
     }
 
     const trackTransitionTelemetry = (telegram) => {
@@ -7727,7 +7753,7 @@ module.exports = function (RED) {
         edge.recentTs.push(now)
         while (edge.recentTs.length > 400) edge.recentTs.shift()
 
-        node._transitionStats.set(k, edge)
+        setCerebrumTelemetryEntry(node._transitionStats, k, edge, CEREBRUM_TRANSITION_MAX_EDGES)
       }
 
       node._transitionRecent.push({
@@ -7753,10 +7779,10 @@ module.exports = function (RED) {
         }
         node._transitionStats.set(k, edge)
       }
-      if (node._transitionStats.size <= 500) return
+      if (node._transitionStats.size <= CEREBRUM_TRANSITION_MAX_EDGES) return
       const sorted = Array.from(node._transitionStats.values())
         .sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0))
-        .slice(0, 500)
+        .slice(0, CEREBRUM_TRANSITION_MAX_EDGES)
       node._transitionStats = new Map(sorted.map(e => [e.key, e]))
     }
 
@@ -9182,7 +9208,9 @@ module.exports = function (RED) {
 
     const scheduleHomeMemoryPersist = ({ immediate = false } = {}) => {
       if (node._closing) immediate = true
-      // Keep the first deadline: a continuous stream must not postpone saving.
+      // Raw events are already archived and habits have their own checkpoint.
+      // Coalesce this derived Markdown view, keeping the first deadline so a
+      // continuous stream cannot postpone the save indefinitely.
       if (!immediate && node._homeMemoryWriteTimer) return null
       if (node._homeMemoryWriteTimer) {
         clearTimeout(node._homeMemoryWriteTimer)
@@ -9192,7 +9220,7 @@ module.exports = function (RED) {
       node._homeMemoryWriteTimer = setTimeout(() => {
         node._homeMemoryWriteTimer = null
         persistHomeMemoryNow()
-      }, 1500)
+      }, CEREBRUM_HOME_MEMORY_SAVE_MS)
       return null
     }
 
@@ -9705,11 +9733,7 @@ module.exports = function (RED) {
           for (let i = 0; i < dayKeys.length; i++) {
             const filePath = getHistoryArchiveFile(dayKeys[i])
             if (!fs.existsSync(filePath)) continue
-            const raw = fs.readFileSync(filePath, 'utf8')
-            if (!raw || String(raw).trim() === '') continue
-            const lines = raw.split(/\r?\n/)
-            for (let j = 0; j < lines.length; j++) {
-              const line = lines[j]
+            for (const line of readCerebrumCompactHistoryLines(filePath)) {
               if (!line) continue
               const telegram = parseCerebrumCompactHistoryRecord(line, 'knx')
               const ts = Number(telegram && telegram.ts ? telegram.ts : 0)
@@ -9784,10 +9808,10 @@ module.exports = function (RED) {
           if (!fs.existsSync(filePath)) return
           const stat = fs.statSync(filePath)
           if (Number(stat.size || 0) > (32 * 1024 * 1024)) throw new Error(`operations archive ${dayKey} exceeds the safe read limit`)
-          fs.readFileSync(filePath, 'utf8').split(/\r?\n/).forEach(line => {
+          for (const line of readCerebrumCompactHistoryLines(filePath)) {
             const operation = parseCerebrumOperationRecord(line)
             if (operation && operation.ts >= from && operation.ts <= to) out.push(operation)
-          })
+          }
         })
       } catch (error) {
         try { node.sysLogger?.warn(`Cerebrum operations load error: ${error.message || error}`) } catch (logError) { /* ignore */ }
@@ -9923,17 +9947,15 @@ module.exports = function (RED) {
           dayKeys.forEach(dayKey => {
             const filePath = getAdapterHistoryArchiveFile(dayKey)
             if (!fs.existsSync(filePath)) return
-            const raw = fs.readFileSync(filePath, 'utf8')
-            if (!raw || String(raw).trim() === '') return
-            raw.split(/\r?\n/).forEach(line => {
-              if (!line) return
+            for (const line of readCerebrumCompactHistoryLines(filePath)) {
+              if (!line) continue
               const item = parseCerebrumCompactHistoryRecord(line, 'adapter')
               const ts = Number(item && item.ts ? item.ts : 0)
-              if (!Number.isFinite(ts) || ts < from || ts > to) return
+              if (!Number.isFinite(ts) || ts < from || ts > to) continue
               const key = buildCerebrumHistoryEventKey(item, 'adapter')
-              if (key && pending.has(key)) return
+              if (key && pending.has(key)) continue
               accumulator.add(item)
-            })
+            }
           })
         }
         pending.forEach(item => {
@@ -16455,12 +16477,15 @@ module.exports = function (RED) {
 
     const runCerebrumStateTick = async () => {
       if (node._closing === true || node._cerebrumStateTickInFlight) return
+      const now = nowMs()
+      trimHistory(now)
+      pruneTransitionStats(now)
+      pruneGARateSeries(now)
       const stateLeader = isCerebrumStateLeader('state')
       const knxLeader = isCerebrumStateLeader('knx')
       const proposalLeader = isCerebrumStateLeader('proposal')
       if (!stateLeader && !knxLeader && !proposalLeader) return
       node._cerebrumStateTickInFlight = true
-      const now = nowMs()
       try {
         if (stateLeader) {
           updateHomeMemoryCollection('reconciler', updateCerebrumReconciler, { lastTickAt: new Date(now).toISOString() })
@@ -19061,7 +19086,7 @@ module.exports = function (RED) {
         try { syncHomeAutomationAdapterRegistry() } catch (error) {
           try { node.sysLogger?.warn(`Cerebrum home automation adapter refresh error: ${error.message || error}`) } catch (logError) { /* ignore */ }
         }
-      }, 30 * 1000)
+      }, 60 * 1000)
     } catch (error) {
       try { node.sysLogger?.warn(`Cerebrum home automation registry unavailable: ${error.message || error}`) } catch (logError) { /* ignore */ }
     }
@@ -19196,6 +19221,7 @@ module.exports = function (RED) {
       node._educationCompiler = createCerebrumEducationCompiler({
         snapshot: () => aiEducationStore.snapshot(),
         runtime: () => requireAutomationRuntime(),
+        intervalMs: CEREBRUM_STATE_TICK_MS,
         enabled: () => llmPolicy.allowed() && ['chat', 'interval'].includes(llmPolicy.reason()) && node.cerebrumAutonomyEnabled,
         waitingMessage: 'Saved instructions will be compiled during the next user chat or configured periodic review.',
         compile: async ({ content, isCancelled }) => {
@@ -19219,7 +19245,11 @@ module.exports = function (RED) {
       node._autonomyRuntime = createCerebrumAutonomyRuntime({
         node,
         filePath: getWorldModelFile(),
-        readSnapshot: () => normalizeCerebrumHomeMemory(node._homeMemory),
+        readSnapshot: () => normalizeCerebrumHomeMemory({
+          states: node._homeMemory.states,
+          habits: node._homeMemory.habits,
+          episodes: node._homeMemory.episodes
+        }),
         archiveSnapshot: world => archiveCerebrumSnapshots(Object.entries(world).map(([key, value]) => ({ collection: `world.${key}`, value }))),
         canReason: () => isCerebrumStateLeader('autonomy') && llmPolicy.reason() === 'interval',
         historyContext: () => {
@@ -19379,33 +19409,15 @@ module.exports = function (RED) {
       })
     }, CEREBRUM_STATE_TICK_MS)
 
-    if (node._proactiveCheckTimer) clearInterval(node._proactiveCheckTimer)
-    node._proactiveCheckTimer = setInterval(() => {
-      try { checkProactiveHomeState() } catch (error) {
-        try { node.sysLogger?.warn(`Cerebrum proactive check error: ${error.message || error}`) } catch (logError) { /* ignore */ }
-      }
-    }, 30 * 1000)
-
-    if (node._scheduleTickTimer) clearInterval(node._scheduleTickTimer)
-    if (node._scheduleStartupTimer) clearTimeout(node._scheduleStartupTimer)
-    node._scheduleStartupTimer = setTimeout(() => {
-      node._scheduleStartupTimer = null
-      if (node._closing === true) return
-      Promise.resolve(runScheduledTaskTick()).catch(error => {
-        try { node.sysLogger?.warn(`Cerebrum schedule startup error: ${error.message || error}`) } catch (logError) { /* ignore */ }
-      })
-      node._scheduleTickTimer = setInterval(() => {
-        Promise.resolve(runScheduledTaskTick()).catch(error => {
-          try { node.sysLogger?.warn(`Cerebrum schedule tick error: ${error.message || error}`) } catch (logError) { /* ignore */ }
-        })
-      }, 15 * 1000)
-    }, 2 * 1000)
+    // Legacy semantic schedules/proactive LLM checks are suspended by the
+    // invocation policy. Do not wake timers just to fail that permission gate.
+    // Local JavaScript functions retain their own exact-deadline scheduler.
 
     if (node._busConnectionWatchTimer) clearInterval(node._busConnectionWatchTimer)
-    node._busConnectionWatchTimer = setInterval(() => {
+    if (node.serverKNX) {
+      node._busConnectionWatchTimer = setInterval(pollBusConnectionStatus, CEREBRUM_BUS_STATUS_POLL_MS)
       pollBusConnectionStatus()
-    }, 1000)
-    pollBusConnectionStatus()
+    }
 
     updateStatus({ fill: 'grey', shape: 'dot', text: 'AI ready' })
   }
