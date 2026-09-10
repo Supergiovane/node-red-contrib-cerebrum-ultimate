@@ -4,13 +4,10 @@ const CEREBRUM_ENTITY_REGISTRY_MAX_ENTITIES = 1200
 const CEREBRUM_ENTITY_REGISTRY_MAX_BINDINGS = 24
 const CEREBRUM_ENTITY_REGISTRY_MAX_CAPABILITIES = 48
 const CEREBRUM_ENTITY_REGISTRY_MAX_CATALOG_BINDINGS = CEREBRUM_ENTITY_REGISTRY_MAX_ENTITIES
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g // eslint-disable-line no-control-regex
 
-const cleanText = (value, max = 240) => Array.from(String(value === undefined || value === null ? '' : value))
-  .map(character => {
-    const code = character.charCodeAt(0)
-    return code <= 31 || code === 127 ? ' ' : character
-  })
-  .join('')
+const cleanText = (value, max = 240) => String(value === undefined || value === null ? '' : value)
+  .replace(CONTROL_CHARACTERS, ' ')
   .replace(/\s+/g, ' ')
   .trim()
   .slice(0, max)
@@ -147,8 +144,11 @@ const entitiesSemanticallyEqual = (left, right) => Boolean(left && right) &&
  * never cause an automatic merge: two bindings converge only through an
  * explicit semanticId or an exact source/provider/object identity.
  */
-const upsertCerebrumSemanticEntity = (registry, input = {}) => {
-  let entities = normalizeCerebrumEntityRegistry(registry)
+const upsertCerebrumSemanticEntity = (registry, input = {}, { normalized = false } = {}) => {
+  // The live registry was normalized at load/catalog boundaries. Copy its
+  // array, then normalize only the binding/entity being replaced. Callers with
+  // imported or otherwise unvalidated data retain the full normalization path.
+  let entities = normalized ? registry.slice() : normalizeCerebrumEntityRegistry(registry)
   const binding = normalizeBinding(input)
   if (!binding) return { entities, entity: null, created: false, merged: false }
   const explicitId = cleanText(input.semanticId, 600)

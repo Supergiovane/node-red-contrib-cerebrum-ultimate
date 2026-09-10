@@ -422,6 +422,19 @@ const normalizeCerebrumHomeMemory = (value = {}) => {
   }
 }
 
+// Update one collection in an already normalized live memory. The existing
+// updater validates new data and replaces changed records; unrelated collections
+// retain their references instead of being serialized for every event.
+// Disk imports, user edits and exported snapshots use full normalization.
+const updateCerebrumHomeMemoryCollection = (memory, collection, update, input) => {
+  const updated = update({
+    createdAt: memory.createdAt,
+    updatedAt: memory.updatedAt,
+    [collection]: memory[collection]
+  }, input, { normalized: true })
+  return { ...memory, [collection]: updated[collection], updatedAt: updated.updatedAt }
+}
+
 const addBoundedCerebrumObservation = (memory, observation) => {
   const target = normalizeCerebrumHomeMemory(memory)
   const item = clonePlain(observation, null)
@@ -481,10 +494,11 @@ const applyCerebrumCurrentState = (target, {
   if (Number.isNaN(nowDate.getTime())) return false
   const nowIso = nowDate.toISOString()
   const normalizedValue = normalizeStateValue(value)
-  const existing = target.states.find(item => item.key === key)
+  const index = target.states.findIndex(item => item.key === key)
+  const existing = target.states[index]
   const changed = !!existing && existing.value !== normalizedValue
-  const observations = Math.max(0, Number(existing && existing.observations) || 0) + 1
-  const changes = Math.max(0, Number(existing && existing.changes) || 0) + (changed ? 1 : 0)
+  const observations = Math.max(0, Math.min(1000000, Number(existing && existing.observations) || 0)) + 1
+  const changes = Math.max(0, Math.min(1000000, Number(existing && existing.changes) || 0)) + (changed ? 1 : 0)
   const tier = resolveCerebrumStateTier({
     observedAt: nowIso,
     changedAt: changed || !existing ? nowIso : existing.changedAt,
@@ -511,13 +525,13 @@ const applyCerebrumCurrentState = (target, {
     lastRefreshRequestedAt: (existing && existing.lastRefreshRequestedAt) || '',
     observations,
     changes,
-    stableObservations: changed ? 0 : Math.max(0, Number(existing && existing.stableObservations) || 0) + 1,
+    stableObservations: changed ? 0 : Math.max(0, Math.min(1000000, Number(existing && existing.stableObservations) || 0)) + 1,
     tier: tier.tier,
     refreshIntervalSeconds: tier.refreshIntervalSeconds,
     nextRefreshAt: new Date(nowDate.getTime() + (tier.refreshIntervalSeconds * 1000)).toISOString(),
     confidence: Math.max(0, Math.min(1, Number(confidence) || 0))
   }
-  if (existing) Object.assign(existing, next)
+  if (existing) target.states[index] = next
   else target.states.push(next)
   return true
 }
@@ -530,14 +544,20 @@ const finalizeCerebrumCurrentStates = target => {
   return target
 }
 
-const updateCerebrumCurrentState = (memory, observation = {}) => {
-  const target = normalizeCerebrumHomeMemory(memory)
+const copyCurrentStatesForUpdate = (memory, normalized) => normalized
+  ? { ...memory, states: memory.states.slice() }
+  : normalizeCerebrumHomeMemory(memory)
+
+const updateCerebrumCurrentState = (memory, observation = {}, { normalized = false } = {}) => {
+  // Live updates replace the changed row, leaving earlier snapshots intact.
+  // The default still validates all fields for external/imported memory.
+  const target = copyCurrentStatesForUpdate(memory, normalized)
   applyCerebrumCurrentState(target, observation)
   return finalizeCerebrumCurrentStates(target)
 }
 
-const updateCerebrumCurrentStates = (memory, observations = []) => {
-  const target = normalizeCerebrumHomeMemory(memory)
+const updateCerebrumCurrentStates = (memory, observations = [], { normalized = false } = {}) => {
+  const target = copyCurrentStatesForUpdate(memory, normalized)
   ;(Array.isArray(observations) ? observations : []).forEach(observation => {
     applyCerebrumCurrentState(target, observation)
   })
@@ -1034,6 +1054,7 @@ const buildCerebrumProactiveFallback = ({ language, label, durationMinutes } = {
 }
 
 module.exports = {
+  updateCerebrumHomeMemoryCollection,
   CEREBRUM_HABIT_MIN_CONFIDENCE,
   CEREBRUM_HABIT_MIN_OBSERVATION_SPAN_DAYS,
   CEREBRUM_HABIT_MIN_OBSERVED_DAYS,

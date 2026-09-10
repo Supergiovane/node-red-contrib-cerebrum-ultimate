@@ -11,6 +11,31 @@ const {
 } = require('../nodes/utils/cerebrumEntityRegistry')
 
 describe('Cerebrum semantic entity registry', () => {
+  it('replaces only affected live entities while preserving explicit merges and old snapshots', () => {
+    const at = '2026-09-10T06:00:00.000Z'
+    let registry = synchronizeCerebrumSemanticEntities([], [
+      { adapterId: 'knx', objectId: '1/2/3', label: 'Light', at },
+      { adapterId: 'home-assistant', objectId: 'light.kitchen', semanticId: 'home:kitchen', label: 'Kitchen', at },
+      { adapterId: 'knx', objectId: '1/2/4', label: 'Unrelated', at }
+    ], { at }).entities
+    const inputs = [
+      { adapterId: 'knx', objectId: '1/2/3', label: '\u0000Cucina\nè 🏠\u007f', at: '2026-09-10T06:01:00.000Z' },
+      { adapterId: 'knx', objectId: '1/2/3', semanticId: 'home:kitchen', at: '2026-09-10T06:02:00.000Z' }
+    ]
+    for (const input of inputs) {
+      const before = JSON.parse(JSON.stringify(registry))
+      const expected = upsertCerebrumSemanticEntity(registry, input)
+      const result = upsertCerebrumSemanticEntity(registry, input, { normalized: true })
+      expect(result).to.deep.equal(expected)
+      expect(registry).to.deep.equal(before)
+      expect(result.entities.find(item => item.label === 'Unrelated')).to.equal(registry.find(item => item.label === 'Unrelated'))
+      if (!input.semanticId) expect(result.entity.label).to.equal('Cucina è 🏠')
+      registry = result.entities
+    }
+    expect(registry).to.have.length(2)
+    expect(registry.find(item => item.id === 'home:kitchen').bindings).to.have.length(2)
+  })
+
   it('keeps unrelated native IDs separate even when labels and areas match', () => {
     let entities = []
     entities = upsertCerebrumSemanticEntity(entities, { adapterId: 'knx', objectId: '1/2/3', label: 'Ingresso', area: 'hall', kind: 'presence' }).entities

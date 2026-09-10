@@ -1,13 +1,10 @@
 'use strict'
 
 const crypto = require('crypto')
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g // eslint-disable-line no-control-regex
 
-const cleanText = (value, max = 500) => Array.from(String(value === undefined || value === null ? '' : value))
-  .map(character => {
-    const code = character.charCodeAt(0)
-    return code <= 31 || code === 127 ? ' ' : character
-  })
-  .join('')
+const cleanText = (value, max = 500) => String(value === undefined || value === null ? '' : value)
+  .replace(CONTROL_CHARACTERS, ' ')
   .replace(/\s+/g, ' ')
   .trim()
   .slice(0, max)
@@ -85,18 +82,24 @@ const correlateCerebrumObservations = (value, { windowMs = 5000, maxEpisodes = 1
     .filter(item => item && item.status === 'observed' && Number.isFinite(Date.parse(item.at || '')))
     .sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
   const groups = []
+  const window = Math.max(0, Number(windowMs) || 0)
   observations.forEach(observation => {
     const area = cleanText(observation.area, 160)
     const entityIds = new Set(cleanList(observation.entityIds || observation.entityId, 40))
     const observedAt = Date.parse(observation.at)
-    const related = [...groups].reverse().find(group => {
-      if (observedAt - Date.parse(group.endedAt) > Math.max(0, Number(windowMs) || 0)) return false
-      if (observedAt - Date.parse(group.startedAt) > Math.max(0, Number(windowMs) || 0)) return false
-      if (area && group.area && area === group.area) return true
-      return [...entityIds].some(id => group.entityIds.has(id))
-    })
+    let related
+    // Groups are created in timestamp order. Once the start is outside the
+    // correlation window, every earlier group is outside it too.
+    for (let index = groups.length - 1; index >= 0; index--) {
+      const group = groups[index]
+      if (observedAt - group.startedTs > window) break
+      if ((area && group.area && area === group.area) || [...entityIds].some(id => group.entityIds.has(id))) {
+        related = group
+        break
+      }
+    }
     if (!related) {
-      groups.push({ area, entityIds, observations: [observation], startedAt: observation.at, endedAt: observation.at })
+      groups.push({ area, entityIds, observations: [observation], startedTs: observedAt, startedAt: observation.at, endedAt: observation.at })
       return
     }
     related.observations.push(observation)

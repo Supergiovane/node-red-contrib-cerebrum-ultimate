@@ -1,5 +1,7 @@
 const { expect } = require('chai')
 
+/* global describe, it */
+
 const {
   CEREBRUM_HABIT_MIN_CONFIDENCE,
   CEREBRUM_HABIT_MIN_OBSERVATION_SPAN_DAYS,
@@ -20,14 +22,76 @@ const {
   findCerebrumHabitPredictions,
   inferCerebrumHomeSemantic,
   isCerebrumQuietTime,
+  normalizeCerebrumHomeMemory,
   parseCerebrumHomeMemoryMarkdown,
   parseCerebrumHomeMemoryMarkdownStrict,
   updateCerebrumCurrentState,
+  updateCerebrumCurrentStates,
   updateCerebrumCoverHabit,
+  updateCerebrumHomeMemoryCollection,
+  updateCerebrumReconciler,
   updateCerebrumTemporalHabit
 } = require('../nodes/utils/homeMemory')
 
 describe('Cerebrum bounded home intelligence memory', () => {
+  it('updates live states without rescanning the registry or mutating previous state snapshots', () => {
+    const at = '2026-09-10T06:00:00.000Z'
+    const initial = normalizeCerebrumHomeMemory({
+      states: Array.from({ length: 600 }, (_, index) => ({
+        source: 'knx', objectId: String(index), value: 20, observations: 1, observedAt: at, changedAt: at
+      })),
+      habits: [{ id: 'confirmed-habit', type: 'temporal_state_pattern', status: 'confirmed', userOverride: { value: '21', note: 'Occupant preference' } }],
+      semanticEntities: [{ id: 'home:kitchen', label: 'Kitchen', access: ['observe'], createdAt: at, updatedAt: at }]
+    })
+    const before = JSON.parse(JSON.stringify(initial))
+    const input = { source: 'knx', objectId: '42', value: 21, verified: true, at: '2026-09-10T06:01:00.000Z' }
+    const updated = updateCerebrumHomeMemoryCollection(initial, 'states', updateCerebrumCurrentState, input)
+    const expected = updateCerebrumCurrentState(initial, input)
+
+    expect({ ...updated, updatedAt: expected.updatedAt }).to.deep.equal(expected)
+    expect(initial).to.deep.equal(before)
+    expect(updated.semanticEntities).to.equal(initial.semanticEntities)
+    expect(updated.habits).to.equal(initial.habits)
+    expect(updated.states.find(item => item.objectId === '43')).to.equal(initial.states[43])
+    expect(updated.states.find(item => item.objectId === '42')).to.include({ value: '21', previousValue: '20', observations: 2, changes: 1, verifiedAt: input.at })
+
+    const repeated = updateCerebrumHomeMemoryCollection(updated, 'states', updateCerebrumCurrentState, { ...input, at: '2026-09-10T06:02:00.000Z' })
+    expect(updated.states.find(item => item.objectId === '42').observations).to.equal(2)
+    expect(repeated.states.find(item => item.objectId === '42')).to.include({ observations: 3, changes: 1, changedAt: input.at, observedAt: '2026-09-10T06:02:00.000Z' })
+
+    const batch = [{ ...input, value: 22 }, { ...input, objectId: '600', value: 23 }]
+    const refreshed = updateCerebrumHomeMemoryCollection(repeated, 'states', updateCerebrumCurrentStates, batch)
+    const expectedBatch = updateCerebrumCurrentStates(repeated, batch)
+    expect(refreshed.states).to.deep.equal(expectedBatch.states).and.have.length(600)
+    expect(repeated.states.find(item => item.objectId === '42').value).to.equal('21')
+  })
+
+  it('preserves unrelated live memory during observation, habit and reconciler updates', () => {
+    const at = '2026-09-10T06:00:00.000Z'
+    let memory = normalizeCerebrumHomeMemory({
+      ownerSessionId: 'telegram:42',
+      ownerLanguage: 'it',
+      states: [{ source: 'knx', objectId: '1/2/3', value: 'on', observedAt: at }],
+      observations: [{ id: 'earlier', evidenceIds: ['m123'], at }]
+    })
+    const cases = [
+      ['observations', addBoundedCerebrumObservation, { id: 'next', evidenceIds: ['m456'], at }],
+      ['habits', updateCerebrumTemporalHabit, { source: 'knx', objectId: '1/2/3', value: 'on', at }],
+      ['reconciler', updateCerebrumReconciler, { lastTickAt: at, homeAssistantRefreshCount: 3 }]
+    ]
+    for (const [collection, update, input] of cases) {
+      const before = JSON.parse(JSON.stringify(memory))
+      const expected = update(memory, input)
+      const next = updateCerebrumHomeMemoryCollection(memory, collection, update, input)
+      expect({ ...next, updatedAt: expected.updatedAt }).to.deep.equal(expected)
+      expect(memory).to.deep.equal(before)
+      for (const key of ['states', 'observations', 'habits', 'semanticEntities', 'reconciler']) {
+        if (key !== collection) expect(next[key], key).to.equal(memory[key])
+      }
+      memory = next
+    }
+  })
+
   it('defaults and clamps the home-memory file to 5 MB', () => {
     expect(HOME_MEMORY_DEFAULT_KB).to.equal(5120)
     expect(HOME_MEMORY_MAX_KB).to.equal(5120)

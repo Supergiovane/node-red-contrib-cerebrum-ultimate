@@ -95,7 +95,7 @@ const redactCerebrumCameraHistoryCredentialText = (value, historyCredentials) =>
     })
     .filter(Boolean)
     .sort((left, right) => right.length - left.length)
-  ;Array.from(new Set(variants)).forEach(secret => { text = text.split(secret).join('[redacted]') })
+  Array.from(new Set(variants)).forEach(secret => { text = text.split(secret).join('[redacted]') })
   return clampText(text, 500)
 }
 

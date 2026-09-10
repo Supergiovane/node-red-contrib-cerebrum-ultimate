@@ -51,6 +51,7 @@ const {
   updateCerebrumCurrentState,
   updateCerebrumCurrentStates,
   updateCerebrumCoverHabit,
+  updateCerebrumHomeMemoryCollection,
   updateCerebrumReconciler,
   updateCerebrumTemporalHabit
 } = require('./utils/homeMemory')
@@ -8995,7 +8996,7 @@ module.exports = function (RED) {
           confidence: Number(item.semantic.confidence || 0)
         }))
       const semanticByKey = new Map()
-      normalizeCerebrumHomeMemory(node._homeMemory).semanticObjects.forEach((item) => {
+      node._homeMemory.semanticObjects.forEach((item) => {
         semanticByKey.set(`${item.ga || ''}\n${item.dpt || ''}\n${item.label || ''}`, item)
       })
       currentSemanticObjects.forEach((item) => {
@@ -9004,7 +9005,7 @@ module.exports = function (RED) {
       const semanticObjects = Array.from(semanticByKey.values())
         .sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0))
         .slice(0, HOME_MEMORY_MAX_SEMANTIC_OBJECTS)
-      const semanticObjectsChanged = JSON.stringify(semanticObjects) !== JSON.stringify(normalizeCerebrumHomeMemory(node._homeMemory).semanticObjects)
+      const semanticObjectsChanged = JSON.stringify(semanticObjects) !== JSON.stringify(node._homeMemory.semanticObjects)
       const semanticResult = synchronizeCerebrumSemanticEntities(node._homeMemory.semanticEntities, currentSemanticObjects.map(item => ({
         source: 'knx',
         adapterId: 'knx',
@@ -9027,8 +9028,12 @@ module.exports = function (RED) {
       }
     }
 
+    const updateHomeMemoryCollection = (collection, update, input) => {
+      node._homeMemory = updateCerebrumHomeMemoryCollection(node._homeMemory, collection, update, input)
+    }
+
     const registerCerebrumSemanticBinding = input => {
-      const result = upsertCerebrumSemanticEntity(node._homeMemory.semanticEntities, input)
+      const result = upsertCerebrumSemanticEntity(node._homeMemory.semanticEntities, input, { normalized: true })
       node._homeMemory.semanticEntities = result.entities
       return result.entity
     }
@@ -9038,8 +9043,8 @@ module.exports = function (RED) {
         evidenceId: archiveRecord && archiveRecord.id
       }))
       if (!observation) return null
-      if (normalizeCerebrumHomeMemory(node._homeMemory).observations.some(item => item && item.id === observation.id)) return observation
-      node._homeMemory = addBoundedCerebrumObservation(node._homeMemory, observation)
+      if (node._homeMemory.observations.some(item => item && item.id === observation.id)) return observation
+      updateHomeMemoryCollection('observations', addBoundedCerebrumObservation, observation)
       archiveCerebrumData('observation', observation, '', observation.at)
       const consolidation = consolidateCerebrumEpisodes({
         episodes: node._homeMemory.episodes,
@@ -9055,7 +9060,7 @@ module.exports = function (RED) {
       habit.type === 'temporal_state_pattern' &&
       ['learning', 'pending_confirmation'].includes(String(habit.status || 'learning'))
 
-    const getHabitLearningProgress = memory => normalizeCerebrumHomeMemory(memory).habits
+    const getHabitLearningProgress = memory => normalizeCerebrumHomeMemory({ habits: memory && memory.habits }).habits
       .filter(isHabitLearningInProgress)
 
     const persistHabitLearningCheckpointNow = () => {
@@ -14868,7 +14873,7 @@ module.exports = function (RED) {
       notifyCompletion()
       if (!notified) return
       const task = pending.scheduledTask && typeof pending.scheduledTask === 'object' ? pending.scheduledTask : {}
-      node._homeMemory = addBoundedCerebrumNotification(node._homeMemory, {
+      updateHomeMemoryCollection('notifications', addBoundedCerebrumNotification, {
         at: new Date().toISOString(),
         type: 'scheduled_task_notification',
         reason: task.reason || 'chat_schedule',
@@ -15691,7 +15696,7 @@ module.exports = function (RED) {
         at: event.at
       }) : null
       if (event.entityId) {
-        node._homeMemory = updateCerebrumCurrentState(node._homeMemory, {
+        updateHomeMemoryCollection('states', updateCerebrumCurrentState, {
           source: event.adapterId || event.source || 'home-automation',
           objectId: event.entityId,
           semanticId: semanticEntity && semanticEntity.id,
@@ -15735,7 +15740,7 @@ module.exports = function (RED) {
         const previous = node._cerebrumLastValues.get(stateKey)
         node._cerebrumLastValues.set(stateKey, event.state)
         if (previous !== undefined && previous !== event.state) {
-          node._homeMemory = updateCerebrumTemporalHabit(node._homeMemory, {
+          updateHomeMemoryCollection('habits', updateCerebrumTemporalHabit, {
             source: event.adapterId || 'home-automation',
             objectId: event.entityId,
             semanticId: semanticEntity && semanticEntity.id,
@@ -15814,7 +15819,7 @@ module.exports = function (RED) {
       const hasHomeAssistantProvider = Array.from(node._homeAutomationProviders.values())
         .some(provider => provider && provider.adapterId === 'home-assistant' && typeof provider.listEntities === 'function')
       if (!hadHomeAssistantProvider && hasHomeAssistantProvider) {
-        node._homeMemory = updateCerebrumReconciler(node._homeMemory, { nextHomeAssistantRefreshAt: '' })
+        updateHomeMemoryCollection('reconciler', updateCerebrumReconciler, { nextHomeAssistantRefreshAt: '' })
         scheduleHomeMemoryPersist()
       }
     }
@@ -15839,7 +15844,7 @@ module.exports = function (RED) {
       const providers = Array.from(node._homeAutomationProviders.values())
         .filter(provider => provider && provider.adapterId === 'home-assistant' && typeof provider.listEntities === 'function')
       if (!providers.length) {
-        node._homeMemory = updateCerebrumReconciler(node._homeMemory, {
+        updateHomeMemoryCollection('reconciler', updateCerebrumReconciler, {
           nextHomeAssistantRefreshAt: new Date(now + (CEREBRUM_HA_WARM_REFRESH_SECONDS * 1000)).toISOString()
         })
         scheduleHomeMemoryPersist()
@@ -15899,7 +15904,7 @@ module.exports = function (RED) {
             confidence: 1
           }
         })
-        node._homeMemory = updateCerebrumCurrentStates(node._homeMemory, observations)
+        updateHomeMemoryCollection('states', updateCerebrumCurrentStates, observations)
         observations.forEach(observation => {
           const previous = previousStates.get(observation.objectId)
           if (previous && String(previous.value) === String(observation.value)) return
@@ -15917,7 +15922,7 @@ module.exports = function (RED) {
           }), archiveRecord)
         })
         const intervalSeconds = determineHomeAssistantRefreshSeconds()
-        node._homeMemory = updateCerebrumReconciler(node._homeMemory, {
+        updateHomeMemoryCollection('reconciler', updateCerebrumReconciler, {
           lastHomeAssistantRefreshAt: new Date(now).toISOString(),
           nextHomeAssistantRefreshAt: new Date(now + (intervalSeconds * 1000)).toISOString(),
           homeAssistantRefreshIntervalSeconds: intervalSeconds,
@@ -15943,7 +15948,7 @@ module.exports = function (RED) {
       } catch (error) {
         const previousInterval = Math.max(CEREBRUM_HA_WARM_REFRESH_SECONDS, Number(reconciler.homeAssistantRefreshIntervalSeconds) || CEREBRUM_HA_WARM_REFRESH_SECONDS)
         const retrySeconds = Math.min(6 * 60 * 60, previousInterval * 2)
-        node._homeMemory = updateCerebrumReconciler(node._homeMemory, {
+        updateHomeMemoryCollection('reconciler', updateCerebrumReconciler, {
           nextHomeAssistantRefreshAt: new Date(now + (retrySeconds * 1000)).toISOString(),
           homeAssistantRefreshIntervalSeconds: retrySeconds,
           homeAssistantErrorCount: Number(reconciler.homeAssistantErrorCount || 0) + 1,
@@ -15987,7 +15992,7 @@ module.exports = function (RED) {
           confidence: unregistered.semantic.confidence,
           at: new Date(now).toISOString()
         })
-        node._homeMemory = registerCerebrumStateTarget(node._homeMemory, {
+        updateHomeMemoryCollection('states', registerCerebrumStateTarget, {
           source: 'knx',
           objectId: unregistered.ga,
           semanticId: semanticEntity && semanticEntity.id,
@@ -16008,7 +16013,7 @@ module.exports = function (RED) {
       if (!dueStates.length) return 0
       const messages = dueStates.map(state => {
         const catalogItem = catalogByGa.get(state.objectId)
-        node._homeMemory = markCerebrumStateRefreshRequested(node._homeMemory, {
+        updateHomeMemoryCollection('states', markCerebrumStateRefreshRequested, {
           key: state.key,
           at: new Date(now).toISOString(),
           retrySeconds: Math.max(300, Number(state.refreshIntervalSeconds) || 300)
@@ -16039,7 +16044,7 @@ module.exports = function (RED) {
         })
       })
       const reconciler = normalizeCerebrumHomeMemory(node._homeMemory).reconciler
-      node._homeMemory = updateCerebrumReconciler(node._homeMemory, {
+      updateHomeMemoryCollection('reconciler', updateCerebrumReconciler, {
         autonomousReadCount: Number(reconciler.autonomousReadCount || 0) + messages.length
       })
       scheduleHomeMemoryPersist()
@@ -16405,7 +16410,7 @@ module.exports = function (RED) {
         at: new Date().toISOString()
       })
       const content = effectiveOperation === 'reject' ? copy.rejected : effectiveOperation === 'modify' ? copy.modified : copy.confirmed
-      node._homeMemory = addBoundedCerebrumNotification(node._homeMemory, {
+      updateHomeMemoryCollection('notifications', addBoundedCerebrumNotification, {
         at: new Date().toISOString(),
         type: `cerebrum_habit_${effectiveOperation === 'reject' ? 'rejected' : effectiveOperation === 'modify' ? 'modified' : 'confirmed'}`,
         reason: 'occupant_decision',
@@ -16458,7 +16463,7 @@ module.exports = function (RED) {
       const now = nowMs()
       try {
         if (stateLeader) {
-          node._homeMemory = updateCerebrumReconciler(node._homeMemory, { lastTickAt: new Date(now).toISOString() })
+          updateHomeMemoryCollection('reconciler', updateCerebrumReconciler, { lastTickAt: new Date(now).toISOString() })
           await refreshCerebrumHomeAssistantStates(now)
         }
         if (knxLeader) refreshCerebrumKnxStates(now)
@@ -16470,7 +16475,7 @@ module.exports = function (RED) {
           }
         }
       } catch (error) {
-        node._homeMemory = updateCerebrumReconciler(node._homeMemory, { lastError: error.message || String(error) })
+        updateHomeMemoryCollection('reconciler', updateCerebrumReconciler, { lastError: error.message || String(error) })
         scheduleHomeMemoryPersist()
         try { node.sysLogger?.warn(`Cerebrum state tick error: ${error.message || error}`) } catch (logError) { /* ignore */ }
       } finally {
@@ -16982,7 +16987,7 @@ module.exports = function (RED) {
 
     const recordProactiveObservation = ({ catalogItem, telegram, event }) => {
       const semantic = catalogItem && catalogItem.semantic ? catalogItem.semantic : {}
-      node._homeMemory = addBoundedCerebrumObservation(node._homeMemory, {
+      updateHomeMemoryCollection('observations', addBoundedCerebrumObservation, {
         at: new Date(Number(telegram.ts || nowMs())).toISOString(),
         type: 'semantic_state_change',
         event,
@@ -17048,7 +17053,7 @@ module.exports = function (RED) {
       }
       if (previous && previous.open === true) {
         const durationMinutes = Math.max(0, (now - Number(previous.openedAt || now)) / 60000)
-        node._homeMemory = updateCerebrumCoverHabit(node._homeMemory, {
+        updateHomeMemoryCollection('habits', updateCerebrumCoverHabit, {
           ga,
           label: catalogItem.label || ga,
           area: catalogItem.semantic.area || '',
@@ -17087,7 +17092,7 @@ module.exports = function (RED) {
       const previous = node._cerebrumLastValues.get(catalogItem.ga)
       node._cerebrumLastValues.set(catalogItem.ga, value)
       if (previous === undefined || previous === value) return
-      node._homeMemory = updateCerebrumTemporalHabit(node._homeMemory, {
+      updateHomeMemoryCollection('habits', updateCerebrumTemporalHabit, {
         source: 'knx',
         objectId: catalogItem.ga,
         semanticId: node._homeMemory.states.find(state => state.key === `knx:${catalogItem.ga}`)?.semanticId,
@@ -17142,7 +17147,7 @@ module.exports = function (RED) {
         confidence: semantic.confidence || 1,
         at: new Date(Number(telegram.ts || nowMs())).toISOString()
       })
-      node._homeMemory = updateCerebrumCurrentState(node._homeMemory, {
+      updateHomeMemoryCollection('states', updateCerebrumCurrentState, {
         source: 'knx',
         objectId: catalogItem.ga || telegram.destination,
         semanticId: semanticEntity && semanticEntity.id,
@@ -17269,7 +17274,7 @@ module.exports = function (RED) {
       if (!sendCerebrumOutputs([null, null, replyMessage, null], syntheticInputMessage)) {
         return { sent: false, recheckAfterMinutes: PROACTIVE_EDUCATION_RETRY_MINUTES }
       }
-      node._homeMemory = addBoundedCerebrumNotification(node._homeMemory, {
+      updateHomeMemoryCollection('notifications', addBoundedCerebrumNotification, {
         at: new Date().toISOString(),
         type: 'proactive_notification',
         reason: 'open_too_long',
@@ -17384,7 +17389,7 @@ module.exports = function (RED) {
       }
       const replyMessage = buildCerebrumReplyMessage({ inputMessage: syntheticInputMessage, content: decision.content, metadata })
       if (!sendCerebrumOutputs([null, null, replyMessage, null], syntheticInputMessage)) return false
-      node._homeMemory = addBoundedCerebrumNotification(node._homeMemory, {
+      updateHomeMemoryCollection('notifications', addBoundedCerebrumNotification, {
         at: new Date().toISOString(),
         type: 'cerebrum_habit_suggestion',
         reason: 'learned_temporal_pattern',
@@ -18320,7 +18325,7 @@ module.exports = function (RED) {
               })
               node._scheduleStore = completion.store
               scheduleScheduleStorePersist({ immediate: true })
-              node._homeMemory = addBoundedCerebrumNotification(node._homeMemory, {
+              updateHomeMemoryCollection('notifications', addBoundedCerebrumNotification, {
                 at: notifiedAt,
                 type: 'scheduled_task_notification',
                 reason: scheduledTask.reason || 'chat_schedule',
@@ -19295,7 +19300,7 @@ module.exports = function (RED) {
                 confidence: 1,
                 at
               }
-              node._homeMemory = updateCerebrumCurrentState(node._homeMemory, observation)
+              updateHomeMemoryCollection('states', updateCerebrumCurrentState, observation)
               node._autonomyRuntime?.ingestState(node._homeMemory.states.find(state => state.key === `home-assistant:${objectId}`))
               if (!previous || String(previous.value) !== String(entity.state)) {
                 const archiveRecord = archiveCerebrumData('adapter', {

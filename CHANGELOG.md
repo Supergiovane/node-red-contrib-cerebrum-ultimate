@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.4 — 2026-09-09
+
+- Reduced CPU use during live integration traffic: update only the affected home-memory collection and state/entity records, avoid repeated whole-registry normalization, and stop observation correlation scans at the time-window boundary. Preserve state freshness, raw archives, evidence links, learning and device permissions. Added regression coverage and a synthetic ingestion benchmark; see [CPU measurements](docs/cpu-performance.md).
+
 ## 0.3.3 — 2026-09-09
 
 - Added a versioned, integration-neutral runtime capability contract with sanitized health, readiness and supported-operation snapshots for RED, KNX, Home Assistant, UniFi/camera and third-party adapters. Capability discovery does not grant device authority.
