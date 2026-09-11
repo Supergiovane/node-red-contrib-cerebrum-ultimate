@@ -1,3 +1,4 @@
+/* eslint-env mocha */
 const { expect } = require('chai')
 const fs = require('fs')
 const path = require('path')
@@ -25,13 +26,13 @@ describe('Cerebrum startup assistant notification', () => {
     expect(message).to.include('provider unavailable')
   })
 
-  it('wires the generated message only to the assistant output with the boot marker', () => {
+  it('wires the local startup message only to the assistant output with the boot marker', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'nodes', 'cerebrumUltimate.js'), 'utf8')
-    expect(source).to.include("name: 'knx_ai_boot_notification'")
+    expect(source).not.to.include("name: 'knx_ai_boot_notification'")
     expect(source).to.include('replyMessage.boot = true')
     expect(source).to.include('message.boot === true')
     expect(source).to.include('sendCerebrumOutputs([null, null, replyMessage, null, null], syntheticInputMessage)')
     expect(source).to.include('if (node._bootAssistantTimer) clearTimeout(node._bootAssistantTimer)')
-    expect(source).to.include("llmTest = 'passed'")
+    expect(source).to.include('aiGenerated: false')
   })
 })

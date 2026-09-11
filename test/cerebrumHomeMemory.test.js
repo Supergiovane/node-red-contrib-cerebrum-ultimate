@@ -34,6 +34,65 @@ const {
 } = require('../nodes/utils/homeMemory')
 
 describe('Cerebrum bounded home intelligence memory', () => {
+  it('shows instructions once while preserving Web, Telegram and legacy conversation records', async () => {
+    const { sharedInsightItems } = await import('../ui/cerebrumUltimate-vue/src/cerebrumInsights.mjs')
+    const content = [
+      'CEREBRUM_CHAT_CONTEXT\t4',
+      'CREATED_AT\t2026-09-10T12:00:00Z',
+      'UPDATED_AT\t2026-09-10T12:00:00Z',
+      'GLOBAL_INSTRUCTION\t2026-09-10T12:00:00Z\tKeep the kitchen at 21 degrees',
+      'GLOBAL_TURN\t2026-09-10T12:00:00Z\tweb:1\tKeep the kitchen at 21 degrees\tSaved',
+      'GLOBAL_TURN\t2026-09-10T12:01:00Z\ttelegram:42\tHow warm is it?\t21 degrees',
+      'SESSION\tlegacy\t2026-09-10T12:00:00Z',
+      'INSTRUCTION\t2026-09-09T12:00:00Z\tDo not lower the shutters',
+      'TURN\t2026-09-09T12:00:00Z\tAre the shutters open?\tYes',
+      'CAMERA_WATCH\twatch-1\t2026-09-09T12:00:00Z\tcam-1\tEntrance\tmotion\tfront\tFront door\t30\tfalse\tit',
+      'END_SESSION'
+    ].join('\n')
+    const instructions = sharedInsightItems(content, { scope: 'instructions' })
+    const conversations = sharedInsightItems(content, { scope: 'conversations' })
+    expect(instructions.map(item => item.text)).to.deep.equal(['Keep the kitchen at 21 degrees', 'Do not lower the shutters'])
+    expect(conversations).to.have.length(4)
+    expect(conversations.some(item => item.text)).to.equal(false)
+    expect(conversations.filter(item => item.question).map(item => item.question)).to.deep.equal(['Keep the kitchen at 21 degrees', 'How warm is it?', 'Are the shutters open?'])
+    expect(conversations.find(item => item.id === 'watch-1').cameraName).to.equal('Entrance')
+    const legacy = content.replace('CEREBRUM_CHAT_CONTEXT\t4', 'CEREBRUM_CHAT_CONTEXT\t3').split('\n').filter(line => !line.startsWith('GLOBAL_')).join('\n')
+    expect(sharedInsightItems(legacy, { scope: 'instructions' })).to.have.length(1)
+    expect(sharedInsightItems(legacy, { scope: 'conversations' })).to.have.length(2)
+  })
+
+  it('shows factual device data while keeping legacy inferred memories in the full editor only', async () => {
+    const { sharedInsightItems } = await import('../ui/cerebrumUltimate-vue/src/cerebrumInsights.mjs')
+    const memory = {
+      habits: [{ id: 'habit', label: 'Kitchen lights', status: 'confirmed' }],
+      habitDecisions: [{ id: 'decision', habitId: 'habit', action: 'confirm' }],
+      observations: [{ id: 'observation', label: 'Kitchen lights', value: 'on' }],
+      notifications: [{ id: 'notification', message: 'Lights on' }],
+      states: [{ key: 'knx:1/2/3', label: 'Kitchen lights', value: 'on' }],
+      semanticObjects: [{ id: 'light', label: 'Kitchen lights' }],
+      semanticEntities: [{ id: 'home:kitchen_light', label: 'Kitchen lights' }],
+      episodes: [{ id: 'episode', summary: 'Kitchen occupied and lights on' }]
+    }
+    const content = JSON.stringify(memory)
+    expect(sharedInsightItems(content, { mode: 'memory', scope: 'states' })).to.deep.equal(memory.states)
+    expect(sharedInsightItems(content, { mode: 'memory', scope: 'observations' })).to.deep.equal(memory.observations)
+    expect(sharedInsightItems(content, { mode: 'memory' })).to.deep.equal([...memory.states, ...memory.observations])
+    // Filtering affects the display only; the editable memory and older files
+    // remain intact, and malformed collections still surface an error.
+    const { parseCerebrumMemoryJson } = await import('../ui/cerebrumUltimate-vue/src/cerebrumMemoryView.mjs')
+    expect(parseCerebrumMemoryJson(content)).to.deep.equal(memory)
+    expect(sharedInsightItems('{"habits":[]}', { mode: 'memory' })).to.deep.equal([])
+    expect(() => sharedInsightItems('{"habits":[null]}', { mode: 'memory' })).to.throw('Invalid memory collection')
+  })
+
+  it('dates and sorts observed episodes using their actual time range', async () => {
+    const { formatRecordLog, recordTime } = await import('../ui/cerebrumUltimate-vue/src/cerebrumRecordLog.mjs')
+    const episode = { startedAt: '2026-09-10T12:00:00Z', endedAt: '2026-09-10T12:02:00Z', summary: 'Kitchen occupied' }
+    expect(recordTime(episode)).to.equal(episode.endedAt)
+    const text = formatRecordLog([{ at: '2026-09-10T12:01:00Z', summary: 'Earlier observation' }, episode], 'it')
+    expect(text.split('\n')[0]).to.include('Kitchen occupied').and.not.match(/^—/)
+  })
+
   it('updates live states without rescanning the registry or mutating previous state snapshots', () => {
     const at = '2026-09-10T06:00:00.000Z'
     const initial = normalizeCerebrumHomeMemory({

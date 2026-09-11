@@ -15,51 +15,25 @@ const normalizeLlmPolicyState = value => {
 
 // A permission belongs to one async task, never to all work on an open UI or
 // concurrent chat. Expire it even for callbacks created inside a finished task.
-function createCerebrumLlmPolicy ({ mode = 'chat', intervalMinutes, enabled, persist = () => {}, now = Date.now }) {
+function createCerebrumLlmPolicy ({ enabled, persist = () => {}, now = Date.now }) {
   const scope = new AsyncLocalStorage()
-  const intervalMs = normalizeLlmIntervalMinutes(intervalMinutes) * 60000
   let state = normalizeLlmPolicyState()
-  let running = false
-  let chats = 0
   const allowed = () => enabled() && scope.getStore()?.active === true
   const assertAllowed = () => {
-    if (!allowed()) throw Object.assign(new Error('LLM calls are allowed only during a user chat, an explicit JavaScript assistant.run, or the configured periodic review.'), { code: 'CEREBRUM_LLM_POLICY' })
+    if (!allowed()) throw Object.assign(new Error('LLM calls are allowed only during a user chat or an explicit JavaScript assistant.run.'), { code: 'CEREBRUM_LLM_POLICY' })
   }
   const run = async (reason, work) => {
-    if (!['chat', 'javascript', 'interval'].includes(reason)) throw new Error('Invalid LLM authorization')
-    if (reason === 'chat') chats++
-    const token = { reason, active: true, toTs: now(), fromTs: state.lastContextAt || Math.max(0, now() - intervalMs) }
-    try { return await scope.run(token, work) } finally { token.active = false; if (reason === 'chat') chats-- }
+    if (!['chat', 'javascript'].includes(reason)) throw new Error('Invalid LLM authorization')
+    const token = { reason, active: true, toTs: now() }
+    try { return await scope.run(token, work) } finally { token.active = false }
   }
-  const save = () => persist({ ...state })
-  const range = () => {
-    const token = scope.getStore()
-    if (!allowed() || token.reason === 'javascript') return null
-    return { fromTs: token.fromTs, toTs: token.toTs, label: 'locally collected history since the previous context update (bounded selection; full archive remains queryable)', explicit: false }
-  }
+  // Chat uses its requested range or the normal recent-history view. An old
+  // background checkpoint must not turn a routine request into a house review.
+  const range = () => null
   const markContext = () => {
-    if (!range()) return
+    if (!allowed() || scope.getStore().reason !== 'chat') return
     state.lastContextAt = Math.max(state.lastContextAt, scope.getStore().toTs)
-    save()
-  }
-  const tick = async work => {
-    if (mode !== 'interval' || !enabled() || running || chats > 0) return false
-    const at = now()
-    if (!state.lastAttemptAt) { state.lastAttemptAt = at; save(); return false }
-    if (at - state.lastAttemptAt < intervalMs) return false
-    running = true
-    try {
-      // Persist the claim before spending money; failures wait a full interval,
-      // including after restart. Never catch up by replaying missed timer ticks.
-      state.lastAttemptAt = at
-      state.error = ''
-      save()
-      await run('interval', work)
-      state.lastSuccessAt = at
-    } catch (error) {
-      state.error = String(error.message || error).slice(0, 500)
-    } finally { running = false; save() }
-    return true
+    persist({ ...state })
   }
   return {
     run,
@@ -67,10 +41,11 @@ function createCerebrumLlmPolicy ({ mode = 'chat', intervalMinutes, enabled, per
     assertAllowed,
     range,
     markContext,
-    tick,
+    // Kept for callers migrating old flows; periodic reasoning is retired.
+    tick: async () => false,
     reason: () => allowed() ? scope.getStore().reason : '',
     restore: value => { state = normalizeLlmPolicyState(value) },
-    snapshot: () => ({ ...state, mode: mode === 'interval' ? 'interval' : 'chat', intervalMinutes: intervalMs / 60000, running, nextRunAt: mode === 'interval' && state.lastAttemptAt ? new Date(state.lastAttemptAt + intervalMs).toISOString() : '' })
+    snapshot: () => ({ ...state, mode: 'chat', intervalMinutes: 0, running: false, nextRunAt: '' })
   }
 }
 module.exports = { createCerebrumLlmPolicy, normalizeLlmIntervalMinutes, normalizeLlmPolicyState }

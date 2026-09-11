@@ -42,8 +42,6 @@
       "chatInputCode": "Input mapping (message → Cerebrum)",
       "chatOutputCode": "Output mapping (Cerebrum → message)",
       "aiEducation": "AI Education (user managed)",
-      "llmBackgroundMode": "History updates to LLM",
-      "llmBackgroundIntervalMinutes": "Interval (minutes)",
       "historyRetentionDays": "History retention (days)"
     },
     "outputs": {
@@ -146,7 +144,7 @@
       "chatContextLoading": "Loading Cerebrum context summary…",
       "chatContextUnavailable": "The Cerebrum context summary is temporarily unavailable.",
       "chatLearningOpenHint": "Open the Web UI directly on the shared Cerebrum Learning editor to view, edit, copy or back up its persistent file.",
-      "cerebrumMemoryOpenHint": "Open the user-readable Cerebrum memory to inspect or edit learned habits, occupant decisions and cached home states.",
+      "cerebrumMemoryOpenHint": "Inspect current device data, recorded observations and archived legacy memory.",
       "chatContextIntro": "Cerebrum automatically receives these sources. The paths below are the actual paths used by this Node-RED installation.",
       "chatContextLimitLabel": "Maximum operational context",
       "chatContextProviderManaged": "managed by the selected provider/model",
@@ -166,7 +164,7 @@
       "chatContextSourceCameras": "Detected cameras and their available capabilities.",
       "chatContextSourceBadge": "Source",
       "chatContextFileChatContext": "Persistent conversation turns, instructions and camera notification rules.",
-      "chatContextFileHomeMemory": "Bounded learned home memory, separate from user-managed AI Education.",
+      "chatContextFileHomeMemory": "Current device data and factual observations, separate from saved user instructions.",
       "chatContextFileSchedules": "Authoritative persistent runtime state for this node's plans and reminders.",
       "chatContextFileSchedulesReadable": "Generated human-readable view of this node's plans and reminders.",
       "chatContextFileAssistantConfig": "Persistent Cerebrum configuration and semantic areas for this node.",
@@ -181,8 +179,8 @@
       "chatContextTelegramPattern": "Daily files",
       "chatAdapterIntro": "Choose a mapping preset to insert its input and output code. The list is loaded from the packaged message-adapter mappings file; the generated code remains editable.",
       "chatAdapterCodeHelp": "Mappings run synchronously. Return msg to continue or return no value to discard it. Errors are caught and reported without stopping Node-RED.",
-      "homeIntelligenceIntro": "With the AI assistant enabled, Cerebrum observes your home, learns its habits and acts to improve comfort according to AI Education. It uses the Web only when enabled.",
-      "aiEducationHelp": "Describe your home, occupant preferences and what Cerebrum may do or notify you about. These instructions guide its autonomy and remain under your control.",
+      "homeIntelligenceIntro": "Describe a routine in chat. Cerebrum retrieves device details and asks focused questions before creating JavaScript when needed.",
+      "aiEducationHelp": "Save household facts and preferences here, then request routines in chat. Saving instructions does not generate automations.",
       "aiEducationFileHelp": "Press Done to save and apply these instructions. Cancel discards changes. Included in backups.",
       "aiEducationLoading": "Loading AI Education...",
       "aiEducationSaving": "Saving AI Education...",
@@ -191,9 +189,7 @@
       "aiEducationError": "Unable to read or save AI Education.",
       "aiEducationUnsaved": "Press Done to save your changes.",
       "chatContextFileAiEducation": "User-managed AI Education, loaded from its own file and included in backups.",
-      "llmModeChat": "Only during user chat (default)",
-      "llmModeInterval": "During chat and at an interval",
-      "llmPolicyHint": "History remains archived locally within the configured retention window. The LLM receives summaries and selected evidence during a Web/Telegram chat request or at the configured interval (1–10080 minutes; 1440 = 1 day, 10080 = 7 days). Startup and events do not trigger calls. AI Education compilation also waits for chat or the interval. Explicit assistant.run calls in .js remain authorized. An analysis may require multiple calls; this is not a spending cap."
+      "llmPolicyHint": "Model calls run only for user chat or explicit assistant.run tasks in JavaScript. Habit learning and periodic house reviews are disabled, including for old interval settings."
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/responses (or your compatible endpoint)",

@@ -157,9 +157,12 @@ function validateSupplementalFiles (files) {
     if (files[id] !== null) validateFile(files[id], id)
   }
   if (files.automationRuntime) parseAutomationCheckpoint(files.automationRuntime.content)
-  if (!files.habitLearning) throw backupError('Missing habit learning checkpoint')
-  const checkpoint = JSON.parse(files.habitLearning.content)
-  if (checkpoint.version !== 1 || !Array.isArray(checkpoint.habits)) throw backupError('Invalid habit learning checkpoint')
+  // New installations no longer learn habits. Preserve and validate legacy
+  // checkpoints when present without requiring an inactive file to be created.
+  if (files.habitLearning) {
+    const checkpoint = JSON.parse(files.habitLearning.content)
+    if (checkpoint.version !== 1 || !Array.isArray(checkpoint.habits)) throw backupError('Invalid habit learning checkpoint')
+  }
 }
 
 function replaceSupplementalFiles (files, locations, writeFile) {

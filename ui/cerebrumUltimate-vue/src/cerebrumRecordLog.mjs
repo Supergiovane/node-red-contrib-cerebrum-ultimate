@@ -5,7 +5,7 @@ const readable = value => {
   if (value && typeof value === 'object') return Object.entries(value).map(([key, entry]) => `${key}: ${readable(entry)}`).join(', ')
   return oneLine(value)
 }
-export const recordTime = item => item.at || item.updatedAt || item.decidedAt || item.retrievedAt || item.lastObserved || item.observedAt || item.changedAt || item.createdAt || item.firstSeenAt || item.firstObserved || ''
+export const recordTime = item => item.at || item.updatedAt || item.decidedAt || item.retrievedAt || item.lastObserved || item.observedAt || item.changedAt || item.endedAt || item.startedAt || item.createdAt || item.firstSeenAt || item.firstObserved || ''
 const timeText = (value, language) => {
   if (!present(value)) return '—'
   const date = new Date(value)

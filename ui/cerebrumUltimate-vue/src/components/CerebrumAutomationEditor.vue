@@ -7,10 +7,11 @@ const props = defineProps({
   translate: { type: Function, required: true },
   drafts: { type: Object, required: true },
 });
+const emit = defineEmits(['request-routine']);
 // Keep buffers in App so switching a section or selected node does not lose edits.
 const state = reactive(props.drafts[props.nodeId] || {
   files: [], selected: null, content: '', baseline: '', name: '', directory: '',
-  compilation: {}, maxBytes: 128 * 1024, busy: false, error: '', message: '', syntaxError: '',
+  maxBytes: 128 * 1024, busy: false, error: '', message: '', syntaxError: '',
 });
 props.drafts[props.nodeId] = state;
 const confirmDelete = ref(false);
@@ -36,7 +37,6 @@ async function refresh(silent = false) {
   if (!silent) { state.busy = true; state.error = ''; state.message = ''; }
   try {
     const data = await props.request(tail());
-    state.compilation = data.compilation || {};
     state.files = data.files || [];
     state.directory = data.directory;
     state.maxBytes = data.maxBytes;
@@ -68,18 +68,6 @@ async function open(file) {
   state.message = '';
   try { apply(await props.request(`${tail()}&name=${encodeURIComponent(file.name)}&origin=${file.origin}`)); }
   catch (error) { state.error = error.message; }
-  finally { state.busy = false; }
-}
-async function compileEducation() {
-  if (state.busy) return;
-  state.busy = true;
-  state.error = '';
-  try {
-    state.compilation = await props.request('automations/compile', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ nodeId: props.nodeId }),
-    });
-  } catch (error) { state.error = error.message; }
   finally { state.busy = false; }
 }
 async function manage(operation) {
@@ -157,10 +145,11 @@ const statusText = status => props.translate({ active: 'Automation active', paus
     <div class="automation-heading">
       <h3>{{ translate('JavaScript automations') }}</h3>
     </div>
+    <p>{{ translate('Describe the routine in chat. Cerebrum asks about missing details before creating it; schedules and event handlers run locally.') }}</p>
     <template v-if="nodeId">
       <div class="automation-toolbar">
         <button class="secondary-button" type="button" :disabled="state.busy || dirty" @click="refresh()">{{ translate(state.busy ? 'Loading...' : 'Refresh') }}</button>
-        <button class="secondary-button" type="button" :disabled="state.busy || state.compilation?.status === 'generating'" @click="compileEducation">{{ translate('Check AI Education') }}</button>
+        <button class="secondary-button" type="button" :disabled="state.busy" @click="emit('request-routine')">{{ translate('Create a routine in chat') }}</button>
         <span v-if="dirty" class="unsaved-note">{{ translate('Save or discard your edits before opening another file.') }}</span>
       </div>
       <p v-if="state.error" class="automation-error" role="alert">{{ translate(state.error) }}</p>

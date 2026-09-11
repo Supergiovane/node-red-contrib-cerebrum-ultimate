@@ -42,8 +42,6 @@
       "chatInputCode": "Mapeo de entrada (mensaje → Cerebrum)",
       "chatOutputCode": "Mapeo de salida (Cerebrum → mensaje)",
       "aiEducation": "Educación IA (gestionada por el usuario)",
-      "llmBackgroundMode": "History updates to LLM",
-      "llmBackgroundIntervalMinutes": "Interval (minutes)",
       "historyRetentionDays": "Conservación del historial (días)"
     },
     "outputs": {
@@ -131,7 +129,7 @@
       "chatContextLoading": "Cargando el resumen del contexto de Cerebrum…",
       "chatContextUnavailable": "El resumen del contexto de Cerebrum no está disponible temporalmente.",
       "chatLearningOpenHint": "Abre la interfaz web directamente en el editor de Aprendizaje de Cerebrum compartido para ver, editar, copiar o guardar una copia de su archivo persistente.",
-      "cerebrumMemoryOpenHint": "Abre la memoria Cerebrum legible para consultar o editar hábitos, decisiones de los ocupantes y estados de la casa.",
+      "cerebrumMemoryOpenHint": "Consulta los datos actuales de los dispositivos, observaciones registradas y registros antiguos archivados.",
       "chatContextIntro": "Cerebrum recibe automáticamente estas fuentes. Las rutas siguientes son las que usa realmente esta instalación de Node-RED.",
       "chatContextLimitLabel": "Contexto operativo máximo",
       "chatContextProviderManaged": "gestionado por el proveedor/modelo seleccionado",
@@ -151,7 +149,7 @@
       "chatContextSourceCameras": "Cámaras detectadas y sus capacidades disponibles.",
       "chatContextSourceBadge": "Fuente",
       "chatContextFileChatContext": "Turnos persistentes, instrucciones y reglas de notificación de cámaras.",
-      "chatContextFileHomeMemory": "Memoria aprendida del hogar, limitada y separada de la Educación IA gestionada por el usuario.",
+      "chatContextFileHomeMemory": "Datos actuales y observaciones de dispositivos, separados de las instrucciones guardadas por el usuario.",
       "chatContextFileSchedules": "Estado de ejecución persistente y autoritativo de las planificaciones y recordatorios de este nodo.",
       "chatContextFileSchedulesReadable": "Vista legible generada de las planificaciones y recordatorios de este nodo.",
       "chatContextFileAssistantConfig": "Configuración persistente de Cerebrum y áreas semánticas de este nodo.",
@@ -166,8 +164,8 @@
       "chatContextTelegramPattern": "Archivos diarios",
       "chatAdapterIntro": "Elige un preajuste para insertar su código de mapeo de entrada y salida. La lista se carga desde el archivo de adaptadores de mensajes incluido; el código generado sigue siendo editable.",
       "chatAdapterCodeHelp": "Los mapeos se ejecutan de forma síncrona. Devuelve msg para continuar o ningún valor para descartarlo. Los errores se capturan y notifican sin detener Node-RED.",
-      "homeIntelligenceIntro": "El nodo crea un modelo ETS semántico multilingüe. Las notificaciones proactivas solo se consideran cuando la Educación IA las solicita explícitamente; nunca envía por sí solo un comando KNX.",
-      "aiEducationHelp": "Solo el usuario puede editar esta propiedad del nodo. Úsala para instrucciones duraderas y reglas de notificación proactiva, incluidas las condiciones, la duración, las horas silenciosas y la repetición. El modelo la lee como una instrucción autoritativa, pero nunca la escribe. Los hechos y preferencias solicitados mediante Cerebrum se guardan en la memoria aprendida de las conversaciones; las planificaciones, recordatorios, monitorizaciones y comandos futuros, únicos o recurrentes, se guardan mediante el planificador semántico. No se requieren frases activadoras ni routing por intents. Máximo 16.000 caracteres.",
+      "homeIntelligenceIntro": "Describe una rutina en el chat. Cerebrum consulta los dispositivos y hace preguntas concretas cuando sea necesario antes de crear el JavaScript.",
+      "aiEducationHelp": "Guarda aquí información de la casa y preferencias; solicita las rutinas en el chat. Guardar instrucciones no genera automatizaciones.",
       "aiEducationFileHelp": "Pulsa Hecho para guardar y aplicar las instrucciones. Cancelar descarta los cambios. Incluida en las copias de seguridad.",
       "aiEducationLoading": "Cargando Educación IA...",
       "aiEducationSaving": "Guardando Educación IA...",
@@ -176,9 +174,7 @@
       "aiEducationError": "No se puede leer o guardar Educación IA.",
       "aiEducationUnsaved": "Pulsa Hecho para guardar los cambios.",
       "chatContextFileAiEducation": "Educación IA gestionada por el usuario, leída de su propio archivo e incluida en las copias de seguridad.",
-      "llmModeChat": "Only during user chat (default)",
-      "llmModeInterval": "During chat and at an interval",
-      "llmPolicyHint": "History remains archived locally within the configured retention window. The LLM receives summaries and selected evidence during a Web/Telegram chat request or at the configured interval (1–10080 minutes; 1440 = 1 day, 10080 = 7 days). Startup and events do not trigger calls. AI Education compilation also waits for chat or the interval. Explicit assistant.run calls in .js remain authorized. An analysis may require multiple calls; this is not a spending cap."
+      "llmPolicyHint": "El modelo solo se invoca desde el chat o tareas assistant.run explícitas en JavaScript. El aprendizaje de hábitos y los análisis periódicos están desactivados, incluso con ajustes antiguos de intervalo."
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/chat/completions (or your compatible endpoint)",

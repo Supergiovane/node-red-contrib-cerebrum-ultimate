@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.8 — 2026-09-11
+
+- Focus Cerebrum on user-requested JavaScript routines: remove active habit inference, behavioral episode consolidation, autonomous goals/research, periodic LLM reviews and automatic AI Education compilation. Prepare startup notifications locally without calling the model. Preserve current device data, requested routines and legacy backup files; old interval settings remain inactive after restart/restore.
+- Add conversational routine clarification with a local no-action boundary, retain the request and answers across turns/restarts, and simplify the Web navigation to conversation, routines, saved instructions, device data and activity.
+- Apply changed shared-history retention after a partial deploy even when only a follower restarts, and recheck policy changes during a running compaction. Retain stable archive IDs, current knowledge and per-node daily-file policies. Cover shortened/increased retention, concurrent policy changes and observation/episode expiry with regression tests; correct the documented maintenance cadence.
+- Remove repeated instructions from the conversation log and duplicate device-state views. Keep complete editable memory, historical observations and legacy records in advanced file tools; align the neural map, sidebar and section contents with the request-driven workflow.
+
 ## 0.3.7 — 2026-09-10
 
 - Avoid repeated full shared-archive scans when no records have expired, using an advisory timestamp checkpoint that is updated during appends and saved after retention checks and clean shutdown. Missing or stale checkpoints fall back to the validating scan; configured retention and evidence references are preserved. Added regression coverage for restart reuse, backdated appends, concurrent writes and checkpoint failures.

@@ -35,11 +35,9 @@ onBeforeUnmount(() => {
 const positions = {
   conversation: { x: 320, y: 166 },
   learning: { x: 250, y: 314 },
-  memory: { x: 340, y: 456 },
-  goals: { x: 580, y: 166 },
-  research: { x: 650, y: 314 },
-  operations: { x: 560, y: 456 },
-  automations: { x: 450, y: 314 },
+  memory: { x: 650, y: 314 },
+  operations: { x: 450, y: 456 },
+  automations: { x: 580, y: 166 },
 };
 const fallbackPositions = Object.values(positions);
 const neurons = computed(() => props.sections.map((section, index) => ({
@@ -107,7 +105,7 @@ const neuronStyle = (neuron, index) => ({
       <header class="brain-intro">
         <span class="brain-eyebrow">CEREBRUM</span>
         <h2>{{ words('Dentro Cerebrum', 'Inside Cerebrum') }}</h2>
-        <p>{{ words('Esplora ciò che apprende, ricorda e fa per la tua casa.', 'Explore what it learns, remembers and does for your home.') }}</p>
+        <p>{{ words('Dalla tua richiesta a una routine JavaScript, con i dettagli giusti.', 'From your request to a JavaScript routine, with the right details.') }}</p>
       </header>
 
       <div class="brain-map" :aria-label="words('Mappa delle sezioni di Cerebrum', 'Map of Cerebrum sections')">

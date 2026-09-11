@@ -5,7 +5,7 @@ const { createCerebrumLlmPolicy, normalizeLlmIntervalMinutes } = require('../nod
 const { parseCerebrumRuntimeState, createEmptyCerebrumRuntimeState } = require('../nodes/utils/cerebrumRuntimeState')
 
 describe('LLM cost policy', () => {
-  it('defaults to chat and prevents background work borrowing a concurrent chat permission', async () => {
+  it('permits chat and explicit JavaScript without lending authority to concurrent or expired work', async () => {
     const policy = createCerebrumLlmPolicy({ enabled: () => true })
     assert.throws(policy.assertAllowed, /only during/)
     let release, delayed
@@ -16,60 +16,37 @@ describe('LLM cost policy', () => {
     assert.equal(policy.allowed(), false)
     await chat; release()
     assert.equal(await delayed, false)
-    assert.equal(await policy.tick(() => assert.fail('Background call')), false)
     await policy.run('javascript', async () => { policy.assertAllowed(); assert.equal(policy.range(), null) })
     assert.throws(policy.assertAllowed, /only during/)
   })
 
-  it('waits seven days, persists the claim, and makes no catch-up or immediate retry after restart/failure', async () => {
-    let time = Date.parse('2026-09-08T08:00:00Z'); let saved; let calls = 0
-    const week = 10080 * 60000
-    const make = () => createCerebrumLlmPolicy({ mode: 'interval', intervalMinutes: 10080, enabled: () => true, now: () => time, persist: state => { saved = state } })
+  it('retires interval authorization even with an overdue legacy checkpoint and after restart', async () => {
+    let time = 200000
+    const make = () => createCerebrumLlmPolicy({ mode: 'interval', intervalMinutes: 1, enabled: () => true, now: () => time })
     let policy = make()
-    await policy.tick(() => calls++)
-    assert.equal(calls, 0)
-    time += week - 1
-    await policy.tick(() => calls++)
-    assert.equal(calls, 0)
-    policy = make(); policy.restore(saved)
-    time++
-    await policy.tick(() => { calls++; assert.equal(saved.lastAttemptAt, time); throw Error('Provider down') })
-    assert.equal(calls, 1)
-    policy = make(); policy.restore(saved)
-    await policy.tick(() => calls++)
-    assert.equal(calls, 1)
-    time += week * 3
-    await policy.tick(() => { calls++; policy.markContext() })
-    await policy.tick(() => calls++)
-    assert.equal(calls, 2)
-    assert.equal(saved.lastSuccessAt, time)
-    assert.equal(saved.lastContextAt, time)
-    assert.equal(saved.error, '')
+    policy.restore({ lastAttemptAt: 1, lastContextAt: 2, lastSuccessAt: 3 })
+    for (let week = 0; week < 3; week++) {
+      time += 7 * 86400000
+      assert.equal(await policy.tick(() => assert.fail('No background review')), false)
+      await assert.rejects(policy.run('interval', () => assert.fail('No interval authority')), /Invalid LLM authorization/)
+      const saved = policy.snapshot()
+      assert.equal(saved.mode, 'chat')
+      assert.equal(saved.nextRunAt, '')
+      policy = make(); policy.restore(saved)
+    }
+    await policy.run('chat', () => assert.equal(policy.range(), null, 'Old context timestamps do not expand chat history'))
   })
 
-  it('blocks all scopes when disabled and prevents overlapping periodic reviews', async () => {
-    let enabled = false; let time = 100000
-    const policy = createCerebrumLlmPolicy({ mode: 'interval', intervalMinutes: 1, enabled: () => enabled, now: () => time })
-    await policy.run('chat', () => assert.throws(policy.assertAllowed, /only during/))
-    await policy.tick(() => assert.fail('Disabled'))
+  it('blocks model work when disabled and expires permissions even when the task fails', async () => {
+    let enabled = false
+    const policy = createCerebrumLlmPolicy({ enabled: () => enabled })
+    for (const reason of ['chat', 'javascript']) await policy.run(reason, () => assert.throws(policy.assertAllowed, /only during/))
     enabled = true
-    await policy.tick(() => assert.fail('Initial tick'))
-    time += 60000
-    await policy.run('chat', async () => {
-      assert.equal(await policy.tick(() => assert.fail('Review during chat')), false)
-    })
-    let release
-    const work = policy.tick(() => new Promise(resolve => { release = resolve }))
-    await policy.tick(() => assert.fail('Overlapping tick'))
-    release(); await work
+    await assert.rejects(policy.run('chat', () => { policy.assertAllowed(); throw Error('Provider failed') }), /Provider failed/)
+    assert.equal(policy.allowed(), false)
   })
 
-  it('fails closed on checkpoint errors and preserves optional policy state in old/new backups', async () => {
-    let calls = 0
-    const policy = createCerebrumLlmPolicy({ mode: 'interval', intervalMinutes: 1, enabled: () => true, now: () => 200000, persist: () => { throw Error('Disk full') } })
-    policy.restore({ lastAttemptAt: 1 })
-    await assert.rejects(policy.tick(() => calls++), /Disk full/)
-    assert.equal(calls, 0)
+  it('preserves legacy backup metadata without restarting old reviews', async () => {
     const checkpoint = createEmptyCerebrumRuntimeState()
     delete checkpoint.llmPolicy
     assert.equal(parseCerebrumRuntimeState(JSON.stringify(checkpoint)).llmPolicy.lastAttemptAt, 0)
@@ -77,5 +54,11 @@ describe('LLM cost policy', () => {
     assert.deepEqual(parseCerebrumRuntimeState(JSON.stringify(checkpoint)).llmPolicy, checkpoint.llmPolicy)
     assert.equal(normalizeLlmIntervalMinutes(99999), 10080)
     assert.equal(normalizeLlmIntervalMinutes(-10), 1)
+    let saved
+    const policy = createCerebrumLlmPolicy({ enabled: () => true, now: () => 200000, persist: state => { saved = state } })
+    policy.restore(checkpoint.llmPolicy)
+    await policy.run('chat', () => policy.markContext())
+    assert.equal(saved.lastContextAt, 200000)
+    assert.equal(saved.lastAttemptAt, 12345)
   })
 })

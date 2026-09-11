@@ -201,7 +201,7 @@ describe('Cerebrum shared household memory', () => {
     const archive = createCerebrumSharedArchive(path.join(root, 'common.jsonl'))
     const now = Date.parse('2026-09-08T12:00:00Z')
     const cutoff = now - 30 * 86400000
-    const removed = ['conversation', 'knx', 'adapter', 'operation', 'context', 'instruction'].map((kind, index) => archive.append({ kind, nodeId: `node-${index}`, channel: index % 2 ? 'web' : 'telegram:42', at: new Date(cutoff - 1).toISOString(), data: { text: 'expired è 🏠' } }))
+    const removed = ['conversation', 'knx', 'adapter', 'operation', 'context', 'instruction', 'observation', 'episode'].map((kind, index) => archive.append({ kind, nodeId: `node-${index}`, channel: index % 2 ? 'web' : 'telegram:42', at: new Date(cutoff - 1).toISOString(), data: { text: 'expired è 🏠' } }))
     const retained = [cutoff, now, now + 86400000].map(at => archive.append({ kind: 'conversation', at: new Date(at).toISOString(), data: { text: 'retained è 🏠' } }))
     retained.push(archive.append({ kind: 'context', at: 'unknown', data: { text: 'undated' } }))
     const originalSize = archive.snapshotBytes()

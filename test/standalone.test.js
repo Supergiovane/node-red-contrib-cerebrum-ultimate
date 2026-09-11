@@ -552,11 +552,10 @@ describe('Cerebrum Ultimate standalone package', () => {
     expect(node.unifiProtectConfig).to.equal(undefined)
     expect(node.llmAllowRuntimeCode).to.equal(false)
     expect(node.llmMaxContextKb).to.equal(384)
-    expect(node._autonomyRuntime).to.be.an('object')
-    expect(node.cerebrumAutonomyEnabled).to.equal(true)
-    expect(node.cerebrumAutonomyAllowActions).to.equal(true)
-    expect((await node._autonomyRuntime.tick()).status).to.equal('disabled')
-    expect(node._autonomyRuntime.snapshot().version).to.equal(1)
+    expect(node._autonomyRuntime).to.equal(undefined)
+    expect(node._educationCompiler).to.equal(undefined)
+    expect(await node.runLlmPolicyTick()).to.equal(false)
+    expect(node.getObservedHomeState().entities).to.be.an('array')
     expect(node.cerebrumStorageDir).to.equal(path.join(userDir, 'cerebrumultimatestorage'))
     expect(node.getSidebarState().node.llmAllowRuntimeCode).to.equal(false)
     expect(node.getSidebarState().etsAccess).to.include({ configured: false, totalCount: 0, catalogIncluded: false })
@@ -640,14 +639,13 @@ describe('Cerebrum Ultimate standalone package', () => {
       const archivePath = path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'memory', 'shared', 'cerebrum-memory.jsonl')
       const before = {
         memory: fs.readFileSync(memoryPath, 'utf8'),
-        checkpoint: fs.readFileSync(checkpointPath, 'utf8'),
         archiveBytes: fs.statSync(archivePath).size
       }
 
       const second = await node.getCerebrumMemoryFile()
       expect(second.revision).to.equal(first.revision)
       expect(fs.readFileSync(memoryPath, 'utf8')).to.equal(before.memory)
-      expect(fs.readFileSync(checkpointPath, 'utf8')).to.equal(before.checkpoint)
+      expect(fs.existsSync(checkpointPath)).to.equal(false)
       expect(fs.statSync(archivePath).size).to.equal(before.archiveBytes)
     } finally {
       if (node) await new Promise(resolve => node.emit('close', resolve))
@@ -655,7 +653,7 @@ describe('Cerebrum Ultimate standalone package', () => {
     }
   })
 
-  it('persists acquired home habits immediately and restores them after a Node-RED restart', async () => {
+  it('records device transitions without inferring habits or recovering legacy learning after restart', async () => {
     const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-habit-restart-'))
     const providerListeners = new Set()
     const noop = () => {}
@@ -717,7 +715,6 @@ describe('Cerebrum Ultimate standalone package', () => {
 
       const memoryPath = path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'memory', 'cerebrum-home-memory.md')
       const checkpointPath = path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'memory', 'cerebrum-habit-learning.json')
-      const memoryBeforeLearning = fs.readFileSync(memoryPath, 'utf8')
       const emitProviderEvent = event => providerListeners.forEach(listener => listener(event))
       emitProviderEvent({
         entityId: 'light.kitchen',
@@ -736,74 +733,27 @@ describe('Cerebrum Ultimate standalone package', () => {
         at: '2026-08-03T06:15:00.000Z'
       })
 
-      const learningCheckpoint = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'))
-      expect(learningCheckpoint).to.include({ version: 1 })
-      expect(learningCheckpoint.habits).to.have.length(1)
-      expect(parseCerebrumHomeMemoryMarkdownStrict(fs.readFileSync(memoryPath, 'utf8')).habits).to.deep.equal([])
-      expect(learningCheckpoint.habits[0]).to.include({
-        type: 'temporal_state_pattern',
-        source: 'habit-restart-adapter',
-        objectId: 'light.kitchen',
-        value: 'on',
-        samples: 1
-      })
-
+      const snapshot = JSON.parse((await firstNode.getCerebrumMemoryFile()).jsonContent)
+      expect(snapshot.habits).to.deep.equal([])
+      expect(snapshot.episodes).to.deep.equal([])
+      expect(snapshot.observations).to.have.length(2)
+      expect(snapshot.states.find(state => state.objectId === 'light.kitchen').value).to.equal('on')
+      expect(fs.existsSync(checkpointPath)).to.equal(false)
+      // Old checkpoints are preserved for backup, never merged into active data.
+      const legacy = JSON.stringify({ version: 1, habits: [{ id: 'old-pattern', type: 'temporal_state_pattern', source: 'habit-restart-adapter', objectId: 'light.kitchen', value: 'on', samples: 99, status: 'pending_confirmation' }] })
+      fs.writeFileSync(checkpointPath, legacy)
       await closeNode(firstNode)
       firstNode = null
-      fs.writeFileSync(memoryPath, memoryBeforeLearning, 'utf8')
       restartedNode = new Constructor(config)
-      let restoredSnapshot = await restartedNode.getCerebrumMemoryFile()
-      let restoredMemory = JSON.parse(restoredSnapshot.jsonContent)
-      expect(restoredMemory.habits).to.have.length(1)
-      expect(restoredMemory.habits[0]).to.include({
-        type: 'temporal_state_pattern',
-        source: 'habit-restart-adapter',
-        objectId: 'light.kitchen',
-        value: 'on',
-        samples: 1
-      })
-
-      emitProviderEvent({
-        entityId: 'light.kitchen',
-        resourceName: 'Kitchen light',
-        resourceType: 'light',
-        eventType: 'state_changed',
-        state: 'off',
-        at: '2026-08-10T06:10:00.000Z'
-      })
-      emitProviderEvent({
-        entityId: 'light.kitchen',
-        resourceName: 'Kitchen light',
-        resourceType: 'light',
-        eventType: 'state_changed',
-        state: 'on',
-        at: '2026-08-10T06:15:00.000Z'
-      })
-      const continuedCheckpoint = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'))
-      expect(continuedCheckpoint.habits[0]).to.include({ samples: 2, observationDays: 2 })
-
-      restoredSnapshot = await restartedNode.getCerebrumMemoryFile()
-      restoredMemory = JSON.parse(restoredSnapshot.jsonContent)
-      restoredMemory.habits[0].status = 'confirmed'
-      restoredMemory.habits[0].decidedAt = '2026-08-10T06:16:00.000Z'
-      const confirmedSnapshot = await restartedNode.updateCerebrumMemoryFile({
-        jsonContent: JSON.stringify(restoredMemory),
-        revision: restoredSnapshot.revision
-      })
-      const confirmedMemory = parseCerebrumHomeMemoryMarkdownStrict(fs.readFileSync(memoryPath, 'utf8'))
-      expect(confirmedMemory.habits[0]).to.include({ status: 'confirmed', samples: 2 })
-      expect(JSON.parse(fs.readFileSync(checkpointPath, 'utf8')).habits).to.deep.equal([])
-
-      const memoryWithoutRoutine = JSON.parse(confirmedSnapshot.jsonContent)
-      memoryWithoutRoutine.habits = []
-      await restartedNode.updateCerebrumMemoryFile({
-        jsonContent: JSON.stringify(memoryWithoutRoutine),
-        revision: confirmedSnapshot.revision
-      })
-      await closeNode(restartedNode)
-      restartedNode = new Constructor(config)
-      const afterDeletion = JSON.parse((await restartedNode.getCerebrumMemoryFile()).jsonContent)
-      expect(afterDeletion.habits).to.deep.equal([])
+      for (let day = 1; day <= 20; day++) {
+        for (const state of ['off', 'on']) emitProviderEvent({ entityId: 'light.kitchen', resourceName: 'Kitchen light', resourceType: 'light', eventType: 'state_changed', state, at: new Date(Date.now() + day * 86400000).toISOString() })
+      }
+      const restored = JSON.parse((await restartedNode.getCerebrumMemoryFile()).jsonContent)
+      expect(restored.habits).to.deep.equal([])
+      expect(restored.episodes).to.deep.equal([])
+      expect(restored.states.find(state => state.objectId === 'light.kitchen').value).to.equal('on')
+      expect(fs.readFileSync(checkpointPath, 'utf8')).to.equal(legacy)
+      expect(parseCerebrumHomeMemoryMarkdownStrict(fs.readFileSync(memoryPath, 'utf8')).habits).to.deep.equal([])
     } finally {
       await closeNode(firstNode)
       await closeNode(restartedNode)

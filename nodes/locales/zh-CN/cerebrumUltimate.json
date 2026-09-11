@@ -42,8 +42,6 @@
       "chatInputCode": "输入映射（消息 → Cerebrum）",
       "chatOutputCode": "输出映射（Cerebrum → 消息）",
       "aiEducation": "AI 教育（由用户管理）",
-      "llmBackgroundMode": "History updates to LLM",
-      "llmBackgroundIntervalMinutes": "Interval (minutes)",
       "historyRetentionDays": "历史保留天数"
     },
     "outputs": {
@@ -131,7 +129,7 @@
       "chatContextLoading": "正在加载 Cerebrum 上下文摘要…",
       "chatContextUnavailable": "Cerebrum 上下文摘要暂时不可用。",
       "chatLearningOpenHint": "直接在 Web UI 中打开共享 Cerebrum 学习编辑器，以查看、编辑、复制或备份其持久文件。",
-      "cerebrumMemoryOpenHint": "打开用户可读的 Cerebrum 记忆，以查看或编辑学习到的习惯、住户决定和家庭状态。",
+      "cerebrumMemoryOpenHint": "查看当前设备数据、已记录的观察和旧版归档记忆。",
       "chatContextIntro": "Cerebrum 会自动接收这些来源。以下路径是此 Node-RED 安装实际使用的路径。",
       "chatContextLimitLabel": "最大运行上下文",
       "chatContextProviderManaged": "由所选提供商/模型管理",
@@ -151,7 +149,7 @@
       "chatContextSourceCameras": "检测到的摄像机及其可用功能。",
       "chatContextSourceBadge": "来源",
       "chatContextFileChatContext": "持久化对话轮次、指令和摄像机通知规则。",
-      "chatContextFileHomeMemory": "有界的家庭学习记忆，与用户管理的 AI 教育分开。",
+      "chatContextFileHomeMemory": "当前设备数据和事实观察，与用户保存的指令分开。",
       "chatContextFileSchedules": "此节点计划和提醒的权威持久运行时状态。",
       "chatContextFileSchedulesReadable": "此节点计划和提醒自动生成的易读视图。",
       "chatContextFileAssistantConfig": "此节点的持久化 Cerebrum 配置和语义区域。",
@@ -166,8 +164,8 @@
       "chatContextTelegramPattern": "每日文件",
       "chatAdapterIntro": "选择预设即可插入输入和输出映射代码。列表从随包提供的消息适配器文件加载；生成的代码仍可编辑。",
       "chatAdapterCodeHelp": "映射同步运行。返回 msg 以继续，或不返回值以丢弃消息。错误会被捕获并报告，不会停止 Node-RED。",
-      "homeIntelligenceIntro": "节点会创建多语言 ETS 语义模型。只有 AI 教育明确要求时，才会考虑主动通知；节点绝不会自行发送 KNX 命令。",
-      "aiEducationHelp": "只有用户可以编辑此节点属性。请用它设置长期指导和主动通知规则，包括条件、持续时间、静默时段及重复频率。模型会将其作为权威指导读取，但绝不会写入。通过 Cerebrum 要求记住的事实和偏好保存在学习到的对话记忆中；一次性或周期性的计划、提醒、监测和未来命令由语义调度器保存。无需触发短语或 intent 路由。最多 16,000 个字符。",
+      "homeIntelligenceIntro": "在聊天中描述所需例行程序。Cerebrum 查询设备信息，并在必要时提出具体问题，再生成 JavaScript。",
+      "aiEducationHelp": "在此保存家庭信息和偏好，然后在聊天中请求创建例行程序。保存指令不会自动生成自动化程序。",
       "aiEducationFileHelp": "点击“完成”保存并应用指令。“取消”会放弃修改。此文件包含在备份中。",
       "aiEducationLoading": "正在加载 AI 教育…",
       "aiEducationSaving": "正在保存 AI 教育...",
@@ -176,9 +174,7 @@
       "aiEducationError": "无法读取或保存 AI 教育。",
       "aiEducationUnsaved": "点击“完成”保存修改。",
       "chatContextFileAiEducation": "用户管理的 AI 教育，从独立文件读取并包含在备份中。",
-      "llmModeChat": "Only during user chat (default)",
-      "llmModeInterval": "During chat and at an interval",
-      "llmPolicyHint": "History remains archived locally within the configured retention window. The LLM receives summaries and selected evidence during a Web/Telegram chat request or at the configured interval (1–10080 minutes; 1440 = 1 day, 10080 = 7 days). Startup and events do not trigger calls. AI Education compilation also waits for chat or the interval. Explicit assistant.run calls in .js remain authorized. An analysis may require multiple calls; this is not a spending cap."
+      "llmPolicyHint": "模型仅在用户聊天或 JavaScript 显式 assistant.run 任务中调用。习惯学习和定期住宅分析已停用，旧的间隔设置也不会重新启用这些功能。"
     },
     "placeholder": {
       "llmBaseUrl": "https://api.openai.com/v1/chat/completions (or your compatible endpoint)",

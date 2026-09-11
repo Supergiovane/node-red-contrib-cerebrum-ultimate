@@ -6,9 +6,9 @@
   <img src="img/cerebrum-ultimate-logo.png" alt="Cerebrum Ultimate" width="900">
 </p>
 
-## Proactive home intelligence for Node-RED
+## User-requested home automations for Node-RED
 
-Cerebrum Ultimate observes your Node-RED smart home, learns from events and evaluates situations even when nobody is chatting. It maintains a persistent model of the home, answers questions and can act within the permissions you define. KNX Ultimate, Home Assistant, HUE, Matter, UniFi Protect and TTS Ultimate are optional fully functional integrations.
+Cerebrum Ultimate turns occupants' requests into editable JavaScript routines. It retrieves installation details, asks focused questions when needed and runs schedules and event handlers locally. KNX Ultimate, Home Assistant, HUE, Matter, UniFi Protect and TTS Ultimate are optional integrations. It does not infer household habits or review the house in the background.
 
 <br/>
 
@@ -39,9 +39,9 @@ Cerebrum Ultimate observes your Node-RED smart home, learns from events and eval
 
 - Talk to your smart home in natural language.
 - Ask for summaries, current states and recent events.
-- Keep Cerebrum observing and reasoning without a chat request.
-- Define which situations deserve attention, notifications or permitted actions.
-- Receive supervised suggestions based on recurring habits.
+- Describe a routine and clarify missing details in conversation.
+- Review, edit, pause and resume the resulting JavaScript.
+- Define explicit conditions for notifications or permitted actions.
 - Create reminders and scheduled checks.
 - Use cameras and voice when compatible nodes are available.
 - Generate reviewable Node-RED flows with the **Node-RED Flow Builder**.
@@ -89,21 +89,19 @@ For a working Inject → Function → Debug flow, import [16 - Cerebrum Function
 
 Based on the official [Node-RED 5.0.7 Function](https://github.com/node-red/node-red/tree/5.0.7/packages/node_modules/@node-red/nodes/core/function), with [upstream attribution and license](nodes/vendor/node-red-function/README.md). Supported Node-RED versions start at 3.1.1; `node.linkcall` requires Node-RED 5 or later.
 
-## Autonomous thinking and working memory
+## Routine authoring and working context
 
-The **Cerebrum** Web menu opens on an animated brain. Its six connected neurons lead to Conversation, Learning, Memory, Goals, Web Research and Operations. Select a neuron or its section card to explore; use **Neural map** or the main **Cerebrum** menu to return. The animation is a visual navigation map. It supports keyboard navigation, a pause control and reduced-motion preferences.
+The **Cerebrum** Web menu offers five sections: Conversation, JavaScript automations, Saved instructions, Device data and Operations. The neural map and sidebar use the same definitions; decorative connections are navigation, not live AI activity.
 
-Observation, background reasoning and autonomous actions are built into Cerebrum, with no separate switches to enable. Background reasoning runs while the LLM assistant is enabled. Cerebrum collects device events, maintains current world state, consolidates observations into episodes and keeps track of situations that need another check. A chat request is one reason to think; incoming events and due situation checks are others.
+Describe the behavior you want in chat. Cerebrum retrieves exact device identities and capabilities locally. When a material detail is missing, it asks a specific question and waits for your answer before creating source or issuing actions. The original request and answers remain in the shared conversation memory across restarts. Clear requests proceed directly. The result is a real `.js` file with its actual activation status, visible in **JavaScript automations**.
 
-Native integration IDs remain the operational identity used for authorization and execution. Cerebrum also maintains a cross-integration entity registry above them: one semantic entity may have KNX, Home Assistant, HUE, Matter or UniFi bindings when an adapter supplies an explicit shared `semanticId`. Similar names or rooms alone never merge devices. State transitions and integration events become deterministic, evidence-linked observations before any LLM reasoning; hypotheses and correlated episodes remain distinguishable from those source facts.
-
-The persistent world model lives in `cerebrumultimatestorage/cerebrum/memory/cerebrum-world-model-NODEID.json`. The model receives a bounded working view of relevant entities, episodes and situations, rather than the complete memory file. Raw archives and learned home memory remain separate sources. This lets knowledge survive between reasoning passes without accumulating every previous pass in the prompt.
+Current device states, semantic device bindings and factual observations remain available. Similar names or rooms alone never merge devices, and a state change does not establish who caused it or what an occupant prefers. Habit inference, correlated behavioral episodes, comfort goals, proactive research and periodic LLM house reviews have been retired. Their old files remain archival data; restart and restore do not reactivate them.
 
 In the node editor, **AI Assistant → Maximum managed context (KB)** controls the application context ceiling. Leave it at `0` to use the selected model's known or detected maximum automatically; enter a positive value to set a lower ceiling. For an otherwise unknown OpenAI-compatible model, the value declares the endpoint's effective context limit. Cerebrum never uses it to exceed a known or locally detected physical model window.
 
 ### Shared conversation and situational context
 
-Web chat and Telegram use the same household memory. Every incoming message and outgoing reply is written in full to `cerebrumultimatestorage/cerebrum/memory/shared/cerebrum-memory.jsonl`, together with KNX and integration observations, model/tool results, catalog records and changes to learned home/world context. This append-only archive is flushed on each write and has no automatic expiry or total size cap. It is included as a streamed file in full ZIP backups.
+Web chat and Telegram use the same household memory. Every incoming message and outgoing reply is written in full to `cerebrumultimatestorage/cerebrum/memory/shared/cerebrum-memory.jsonl`, together with KNX and integration observations, model/tool results, catalog records and explicit saved context. Writes are durably batched; records expire according to the configured history retention. It is included as a streamed file in full ZIP backups.
 
 Recent conversations and explicit memories are shared across channels. The model can search the complete archive and read individual records, including messages outside the recent prompt. V3 chat records still present on disk migrate before the working view is bounded; records already discarded by older versions cannot be reconstructed. The editable `.knxctx` V4 file is a bounded working view, not the complete archive. Clearing one chat or reinitializing that view does not erase the historical archive.
 
@@ -115,65 +113,31 @@ ZIP backups include the current saved GA selection and read-only permissions in 
 
 ### Persistence across Node-RED restarts
 
-Cerebrum restores its retained knowledge and ongoing work from files automatically. No Node-RED context-storage setting is required.
+Cerebrum restores conversation memory, current device data and user-created routines from files. No Node-RED context-storage setting is required.
 
 | File under `cerebrumultimatestorage/cerebrum/` | Retained data |
 | --- | --- |
-| `memory/cerebrum-world-model-NODEID.json` | House model, evidence, behaviour patterns, goals, plans, reviews, Web sources, research reservations and action verification. |
-| `memory/cerebrum-world-model-NODEID.json.observations.jsonl` | Observations saved immediately before the next reasoning cycle; replayed once using the checkpoint sequence. |
-| `memory/cerebrum-runtime-state-NODEID.json` | Learned model context limits, hourly Web reservations, camera notification cooldowns and opening-duration baselines. |
-| `memory/cerebrum-chat-context.knxctx` | Shared conversation memories, recent exchanges and camera watches. |
-| `memory/cerebrum-home-memory.md` and `memory/cerebrum-habit-learning.json` | Shared household memory, recipient/language, occupant decisions and habits still being learned. |
-| `schedules/cerebrum-schedules-NODEID.json`, `operations/`, `history/`, `adapter-history/` | Scheduled work and retained activity archives. |
+| `automations/<node-id>/*.js` and the adjacent runtime JSON | Authoritative routine source, statuses, schedules, timers and durable script memory. |
+| `memory/cerebrum-runtime-state-NODEID.json` | Model context limits, Web reservations and explicit camera-watch cooldowns. |
+| `memory/cerebrum-chat-context.knxctx` | Shared saved instructions, recent conversations and camera watches. |
+| `memory/cerebrum-home-memory.md` | Current device state, factual observations, device metadata and existing legacy records. |
+| `operations/`, `history/`, `adapter-history/`, `memory/shared/` | Retained activity and conversation archives. |
 
-New observations are appended and flushed to disk individually; consolidation saves their applied sequence before compacting the journal. A restart between those steps does not duplicate learning. Chat memories save immediately. Frequent home-state updates share a fixed 1.5-second save deadline, and shutdown performs a final checkpoint and waits for pending archive writes. Atomic file replacement and filesystem flushes protect completed checkpoints. A partially written journal tail is preserved separately before replaying complete records; invalid memory files are retained rather than silently overwritten.
+Chat memory saves promptly; frequent device updates share a fixed save deadline. Shutdown waits for pending archive writes. Atomic replacement protects checkpoints. Old habit-learning checkpoints, world models and observation journals are included in backups when present, but no longer produced, replayed or used to initiate work.
 
-Web reservations and autonomous action claims are saved before execution. A restart preserves their budgets and uncertain outcomes; it does not blindly repeat device commands. Completed research stages retain their sources even when a later request is interrupted. The Web backup includes the world checkpoint, observation journal and runtime state together. Working views remain bounded independently; historical archives follow the configured disk retention.
+### Saved instructions and device data
 
-### Comfort goals and autonomous activity
-
-Use **AI Education (user managed)** to describe what matters in your home: what Cerebrum should observe, when to notify you, which actions are permitted and any quiet hours or limits. For example: “Watch for lights left on in empty rooms. Notify me only after 30 minutes, between 07:00 and 23:00. Keep observing when occupancy is uncertain.” Notifications use the current Cerebrum recipient configuration. Learned observations do not change these user-managed rules.
-
-AI Education is stored per node in `cerebrumultimatestorage/cerebrum/config/cerebrum-ai-education-<node-id>.md`. Press **Done** in the node editor to save the file and apply the instructions. **Cancel** discards unsaved changes; no Deploy is needed to apply saved Education. Deploy a new node before editing its file. The runtime reads the file for conversation and autonomous guidance; existing flow-property text migrates automatically only when the file is absent. An existing file, including an empty one, remains authoritative. The file is included in Cerebrum backups and restored to the destination node's filename. Older backups can recover education from the source node's migration flow; if no education was included, the destination keeps its current instructions.
-
-Cerebrum also formulates its own comfort goals during daily reviews. Each goal names the observed need, expected occupant benefit, measurable criterion, baseline, current readings, practical plan, supporting observations and next review time. Goals move through observing, active, paused and retired states; an assessment records what the available evidence supports. An active or executed plan does not prove that occupants are happier. AI Education remains the only user instruction field; goals live in learned memory and can be revised as the house changes.
-
-The engine aggregates received state transitions by entity, local hour and weekday/weekend across the last 28 days. A pattern becomes recurring only after observations on at least three distinct days. It retains numeric summaries, bounded categorical counts and timestamped source samples. Counts measure received transitions, not occupancy duration or continuous sensor coverage. Cerebrum's own matching command feedback is excluded from this learning. A reversal within ten minutes of an action pauses its linked goal and opens a review; the engine treats it as a possible occupant correction, another automation or device behaviour.
-
-With **Web access** enabled, Cerebrum can research lighting, thermal comfort, indoor air quality, quiet routines, accessible controls, energy savings that preserve comfort, and SMART-home updates. A weekly discovery review runs without a chat request; goals can trigger focused research sooner. Search queries are constructed from fixed public topics and the integration family, never household labels, routines, occupants or AI Education. The engine retains excerpts from supported primary domains with URLs, retrieval dates and expiry, then evaluates applicability against local devices. Retrieved material is external evidence, not instructions or action permission. Source availability, dates and applicability still need evaluation by the model; a search does not guarantee a usable recommendation.
-
-Describe the permitted actions in **AI Education**, the single user-managed instruction field for both conversation and autonomous behavior. Cerebrum can then act automatically within those instructions. The initial action path supports validated KNX state writes and Home Assistant `light`, `switch` and `input_boolean` state changes. Existing integration command permissions still apply: command access must be enabled and command confirmation must be disabled for autonomous execution. Read-only entities remain read-only. Confirming a learned habit does not itself authorize a device change.
-
-The engine limits reasoning to 24 evaluations per rolling hour with at least 60 seconds between evaluations. Each evaluation can continue local recall and research as evidence requires, with paginated local queries and detection of repeated unchanged evidence cycles. There is no fixed model-call count per evaluation. Working context remains selective and scales with the model window; shutdown or disabling autonomy stops the loop between calls. Goal planning and practical action evaluation use separate passes. Autonomous research is limited to two sessions per rolling day, with one search and at most one page opening per session, sharing the existing Web-operation budget. Successful topics have a seven-day cooldown; unsuccessful attempts wait six hours. These count logical operations; redirects and search fallback can make additional HTTP requests. Reservations persist before research starts. Knowledge expires after fourteen days. Up to twelve goals can be active/observing, with forty retained goals, 240 pattern buckets and 48 Web-source records.
-
-Notifications and actions share a limit of six per hour and a 30-minute cooldown per target. Each request passes through the normal model context budget. These limits meter background work; background calls use the selected AI provider and can consume tokens even when nobody is chatting. The previous proactive suggestion evaluator stays inactive to avoid duplicate evaluations.
-
-### Read the world model locally
-
-The Node-RED admin API exposes a read-only, bounded view:
-
-```text
-GET /cerebrumUltimate/world-model/:nodeId?operation=search&query=kitchen&limit=8&offset=0
-```
-
-Use `operation=search`, `get`, `episodes`, `situations`, `areas`, `habits`, `expectations`, `goals`, `patterns`, `knowledge` or `evidence`; `query` filters text, `entityIds` selects entities, and `limit`/`offset` page through results. `status` exposes collection counts and recent research outcomes. Responses are paginated and bounded; full memory files are not injected into prompts. The route uses Node-RED's `cerebrumUltimate.read` permission and respects the configured admin root. It reads the local store without calling the LLM or executing actions. An HTTP endpoint is a view of this memory service; continuous observation and reasoning are driven by the runtime engine.
-
-The Web dashboard uses `operation=overview` for actual runtime activity, counts and retention information, and `operation=inspect&collection=goals&limit=12&offset=0` for complete retained records. Human inspection keeps full provenance and reviews instead of using the shortened LLM projection. Search (`q`) and status filters run on the server. Pages contain at most twenty records and 96 KiB; an oversized record is explicitly reported. Reading these views never starts reasoning, research or device actions.
-
-### Understand what Cerebrum knows
-
-The **Cerebrum** menu separates the retained knowledge into readable views:
+**AI Education** remains an explicit user-managed file at `cerebrumultimatestorage/cerebrum/config/cerebrum-ai-education-<node-id>.md`. Press **Done** in the node editor to save it; **Cancel** discards edits. Existing flow text migrates only if the file is absent. Saving education does not generate routines automatically. Ask in chat to create a routine from specific saved instructions so missing details can be clarified in that conversation.
 
 | View | What you can inspect |
 | --- | --- |
-| Cerebrum Learning | Learned instructions, observed behaviour, conversation text and camera watches. |
-| Cerebrum Memory | Current device observations and their freshness, situations needing attention, expected events, evidence and episodes; shared habits, occupant corrections and known objects. |
-| Goals | Self-generated comfort objectives, plans, current assessments and status. |
-| Web Research | Retained source text, source URLs, retrieval times and research outcomes. |
-| Cerebrum Operations | Action records and outcomes, followed by the retained KNX/LLM/tool activity log. |
-| JavaScript automations | Actual functions created by Cerebrum: purpose, active/paused/error status, last execution, editable `.js` source, pause/resume and deletion. Deterministic handlers execute locally without LLM calls. |
+| Conversation | Requests, clarification questions and answers. |
+| JavaScript automations | Actual routines, source, status, last execution and editing/pause/resume/delete controls. |
+| Saved instructions | Explicit saved preferences, conversations and camera watches. |
+| Device data | Latest observed device states. Historical observations remain in the archives and advanced files. |
+| Cerebrum Operations | Retained KNX, model and tool activity with recorded outcomes. |
 
-Learning, memory, goals, research and activity lists use read-only textareas: one record per line, with date/time and readable text. Long text is preserved, with internal line breaks flattened. World-model collections load their pages locally into the same text field; there are no record cards or expandable JSON details. The technical activity endpoint retains its existing 2,000-record limit. Full records and metadata remain in the files and backups; these UI changes do not alter stored memories. Advanced file editors remain available separately.
+Read-only logs keep one record per line. Advanced file editors and complete backups remain available, including legacy records. The old `world-model/:nodeId` read-only API now projects current observed entities only; inferred collections are empty and autonomous status is disabled. Reading these views never starts model work.
 
 ## Example flows
 
@@ -282,7 +246,7 @@ Select the Home Assistant server in `ha-api` and deploy the flow. If Cerebrum re
 
 ## Safety and privacy
 
-Cerebrum separates observation, suggestion, authorization and execution. A learned habit alone never authorizes a command. Autonomous changes follow the instructions in AI Education and the existing integration command permissions. KNX group addresses marked read-only cannot receive writes.
+Cerebrum creates routines from explicit user intent and keeps observation separate from execution authority. Device writes require the existing integration command permissions. KNX group addresses marked read-only cannot receive writes.
 
 Home data used in chat or background reasoning is sent to the configured AI provider. For a fully local setup, use a compatible local provider such as Ollama or LM Studio.
 
@@ -302,13 +266,9 @@ UniFi Protect remains the source of truth for this high-volume stream. Cerebrum 
 
 ### Local JavaScript automations
 
-In the Node-RED node editor, **History updates to LLM** defaults to **Only during user chat** (also for existing flows without this setting). Observation, raw history storage, current states, local learning and JavaScript callbacks continue without background model calls. An open Web page or a Telegram session ID is not an active chat: a user request authorizes only its own reasoning and tool follow-ups.
+Model calls are allowed only during actual user chat or an explicit `assistant.run` inside a user-requested JavaScript routine. Incoming events, saved education, startup and open Web pages do not authorize model work. Legacy interval settings are ignored, including after restart and backup restore.
 
-Choose **During chat and at an interval** to also authorize periodic history/comfort reviews, from **1 to 10080 minutes (7 days)**. `1440` means one day. The first review waits the configured interval; the checkpoint preserves the last attempt across restarts. Missed intervals are not replayed, failures wait until the next interval, and a due review waits while a chat is being processed. Review timing and errors are retained in the runtime checkpoint. Each configured Cerebrum node owns its interval.
-
-The model receives aggregates and a bounded evidence selection from the collected period, plus current world memory; raw history remains locally archived and available to chat retrieval within the configured retention window. This is not a bulk upload of every telegram or a guarantee that every archived event has been analyzed. Useful tool follow-ups can require multiple model calls within an authorized task. Explicit `assistant.run` calls in active `.js` files remain independent of the interval; ordinary callbacks and `speak` use no LLM. Startup notifications are generated locally. AI tools outside chat wait for an authorized context or report the policy restriction.
-
-Ask Cerebrum in chat what to automate. For deterministic reminders, schedules and event rules, it can create a real `.js` function and keep it running locally. Saving **AI Education** queues generation of missing functions for the next user chat or configured periodic review. Saved instructions are also checked locally after startup. **Check AI Education** queues a retry under the same policy; compilation status and errors are retained in the runtime checkpoint. The Web sidebar’s **JavaScript automations** page displays these actual functions, their purpose, status and last run. It starts empty; no example files or programming task are presented to the user.
+Ask Cerebrum in chat what to automate, or use **Create a routine in chat** from **JavaScript automations**. It retrieves installation details, asks focused questions about unresolved behavior and waits before authoring. Saving AI Education does not queue another model request. The resulting function appears with its purpose, active/paused/error status and last invocation; no example files are created automatically.
 
 Open a function to inspect, edit or download its JavaScript. **Pause** stops future callbacks and cancels pending named timers; **Resume** validates the current source and permissions. Saving an active function applies the new code; saving a paused function leaves it paused. **Delete automation** stops the function, removes its `.js` file and retains its source in the common archive. Background planning cannot overwrite, resume or recreate an existing/deleted filename. Unsaved edits survive section navigation, and stale saves are rejected. An external source edit stops execution until you review and resume it.
 
@@ -316,7 +276,7 @@ Sources live under `cerebrumultimatestorage/cerebrum/automations/<node-id>/`. A 
 
 Functions run in a supervised QuickJS WebAssembly worker without access to Node, RED, files or the network. Supported triggers are KNX/integration state changes, incoming plugin events, daily/interval/one-time schedules and named timers. Effects are notifications and currently supported KNX/HA writes. Current command permissions, ETS selection, read-only access and DPT checks still apply; per-command confirmation prevents unattended writes. HA writes currently support lights, switches and input booleans. The interpreter has CPU, memory and output limits and stops a function on an error. Missed jobs are skipped, and uncertain deliveries are not automatically retried.
 
-Deterministic local executions do not invoke the LLM. A function can explicitly use `assistant.run` at its deadline for fresh Web research, sensor reads and a generated reply or TTS announcement. A daily weather announcement therefore has a visible `.js` schedule and uses the model only when the task fires. `speak` sends prepared text directly to the existing TTS output. The model is also used to author/revise functions; the authoring API is only added to its context when needed. Legacy semantic schedules are preserved for inspection/cancellation but suspended; create their replacements as real `.js` functions. Autonomous LLM reasoning follows the configured history review interval. After updating this package, restart Node-RED and reload the Web page to load the new runtime and assets.
+Deterministic local executions do not invoke the LLM. A function can explicitly use `assistant.run` at its deadline for fresh Web research, sensor reads and a generated reply or TTS announcement. A daily weather announcement therefore has a visible `.js` schedule and uses the model only when the task fires. `speak` sends prepared text directly to the existing TTS output. The model is also used to author/revise functions; the authoring API is only added to its context when needed. Legacy semantic schedules are preserved for inspection/cancellation but suspended; create their replacements as real `.js` functions. After updating this package, restart Node-RED and reload the Web page to load the new runtime and assets.
 
 ### Isolated installed-package inventory
 
@@ -328,13 +288,13 @@ Execution is synchronous and bounded to one action per model pass, at most two e
 
 ## Local memory and backup
 
-Cerebrum saves its memory automatically, including habits that are still being learned, so progress is not lost when Node-RED restarts. Confirmed routines remain available in the **Cerebrum Memory** Web interface, where they can be reviewed or removed. **Settings → Import / Export** provides an easy way to create and restore backups.
+Cerebrum saves conversations, explicit instructions and device data automatically. Requested routines remain available in **JavaScript automations** across restarts. **Settings → Import / Export** provides an easy way to create and restore backups.
 
-Set **History retention (days)** in the node editor under **AI Assistant** (`historyRetentionDays`, default **30**, valid range 1–36500). Existing flows without this property also use 30 days. On deploy, after restore and every hour, Cerebrum removes expired records from the shared conversation/observation/context/operation archive and deletes old daily KNX, adapter and operation files. Daily files covering the cutoff date remain until the following day; queries use the exact retention window. Cleanup also runs when the AI is disabled or idle. Deletion is permanent; increasing the value later cannot recover deleted history. Saved instructions, AI Education, learned habits and the current world/runtime state are kept separately and are not expired by this option.
+Set **History retention (days)** in the node editor under **AI Assistant** (`historyRetentionDays`, default **30**, valid range 1–36500). Existing flows without this property also use 30 days. After deploy (with a 60-second startup delay for the shared archive), after restore and once a day, Cerebrum removes expired records from the shared conversation/observation/context/operation archive and deletes old daily KNX, adapter and operation files. Daily files are also checked hourly when new events arrive. Daily files covering the cutoff date remain until the following day; queries use the exact retention window. Cleanup also runs when the AI is disabled or idle. Deletion is permanent; increasing the value later cannot recover deleted history. Saved instructions, AI Education, JavaScript routines, current state and legacy memory files are kept separately and are not expired by this option.
 
-Web, Telegram and nodes using the same storage directory share one archive. Configure the same retention on these nodes: a shorter enabled retention can delete records for every channel/node. Shared-archive compaction streams into a temporary file, preserves retained record IDs and replaces the original atomically; it needs temporary free space for retained data. Existing archives and backups remain readable; newly compacted shared archives require a Cerebrum version supporting history retention. Backups made before deletion retain their original contents; restored archives are cleaned according to the destination node's retention.
+Web, Telegram and nodes using the same storage directory share one archive. The shortest retention configured on any live node applies to this common archive, including when the AI is disabled. A partial deploy that changes a follower requests cleanup through the shared leader after the same startup delay; it does not wait for the leader's next daily check. Each node's daily files follow its own retention. Shared-archive compaction streams into a temporary file, preserves retained record IDs and replaces the original atomically; it needs temporary free space for retained data. Existing archives and backups remain readable; newly compacted shared archives require a Cerebrum version supporting history retention. Backups made before deletion retain their original contents; restored archives are cleaned according to the live destination policies.
 
-The **Download ZIP** button prepares a compressed `.zip` archive on disk and starts a native browser download. **Restore ZIP** lets you select that archive directly, without extracting it. The enclosed `cerebrum-backup.json` uses backup format **3**, with daily archives stored separately under `archives/` inside the ZIP. Keep the complete ZIP: its JSON manifest alone cannot restore the histories. The backup includes the selected node's AI configuration (areas, GA roles, ETS access, profiles, tests and results), shared conversations/instructions/camera watches, home memory and learning checkpoint, the node's persistent world model, observation journal and runtime state, scheduled tasks, all retained KNX and adapter event archives, the operations archive, the last prompt diagnostic and any legacy area file. World-model restoration uses the destination node's local filename and participates in backup validation and rollback. Pending archive writes finish before the snapshot is taken. History already deleted by the normal retention policy cannot be recovered by a backup.
+The **Download ZIP** button prepares a compressed `.zip` archive on disk and starts a native browser download. **Restore ZIP** lets you select that archive directly, without extracting it. The enclosed `cerebrum-backup.json` uses backup format **3**, with daily archives stored separately under `archives/` inside the ZIP. Keep the complete ZIP: its JSON manifest alone cannot restore the histories. The backup includes the selected node's AI configuration (areas, GA roles, ETS access, profiles, tests and results), shared conversations/instructions/camera watches, device memory and runtime state, plus legacy learning/world checkpoints and journals when present, scheduled tasks, all retained KNX and adapter event archives, the operations archive, the last prompt diagnostic and any legacy area file. World-model restoration uses the destination node's local filename and participates in backup validation and rollback. Pending archive writes finish before the snapshot is taken. History already deleted by the normal retention policy cannot be recovered by a backup.
 
 The ZIP includes `cerebrum-backup.json`, `cerebrum-flows.json`, `required-packages.json`, `README.txt` and the daily archive files. Export does not enumerate the deployed Node-RED runtime. The legacy-named `cerebrum-flows.json` contains only a sanitized snapshot of the selected Cerebrum node's saved settings: it contains no tab, position, wiring, referenced configuration node, credentials, ETS source text or runtime ETS catalog. `required-packages.json` is built only from one `RED.nodes.getNodeList()` inventory, filtered to installed packages whose module name contains `-ultimate`, plus Cerebrum itself. No API keys or integration credentials are included; nevertheless, keep the backup private because memories and archives may contain sensitive household information. Export requires the Node-RED `flows.write` permission. Browser downloads use a single-use link that expires after ten minutes.
 
@@ -352,7 +312,7 @@ Importing Cerebrum data does not deploy or overwrite Node-RED flows. Flow wiring
 
 Previous version 1 and 2 JSON backups and earlier ZIP backups remain importable. Version 1 backups cannot recover the archives and flow settings they never contained. Versions 2 and 3 check file sizes and SHA-256 digests before changing data, reject unsafe filenames, replace destination archives instead of merging stale history, and roll back on write errors. ZIP imports also validate CRC-32 checksums. ZIP size and total archive size have no fixed byte limit: export snapshots, uploads, decompressed daily archives and rollback copies use temporary files rather than accumulating history in RAM. Imports arrive in small chunks. Archive paths are mapped to private temporary filenames, then to the selected node's known storage directories. Temporary files are removed after completion or failure; abandoned uploads and pending downloads expire after ten minutes. The system temporary directory needs enough free disk space for these files. Only the JSON metadata and legacy JSON uploads retain the 256 MiB memory bound; it does not include the separately stored daily archives. New ZIP backups require a Cerebrum version supporting format 3.
 
-The adjacent **Cerebrum Operations** view provides a compact activity log for the configured retention window (30 days by default). It combines the existing daily KNX traffic archive with LLM requests, catalog/history/Web/JavaScript tools, KNX reads and writes, schedules, camera/TTS/memory actions and autonomous activities such as state reconciliation, habit learning, habit proposals and proactive notifications. Each line shows the recorded time, activity text and outcome. Complete direction and diagnostic metadata remain in the archive. The node-operation archive is stored per Cerebrum node under `cerebrumultimatestorage/cerebrum/operations/`; credentials and obvious secret fields are redacted, and expired daily files are removed automatically.
+The adjacent **Cerebrum Operations** view provides a compact activity log for the configured retention window (30 days by default). It combines the existing daily KNX traffic archive with LLM requests, catalog/history/Web/JavaScript tools, KNX reads and writes, schedules, camera/TTS/memory actions and local routine executions and state reconciliation. Each line shows the recorded time, activity text and outcome. Complete direction and diagnostic metadata remain in the archive. The node-operation archive is stored per Cerebrum node under `cerebrumultimatestorage/cerebrum/operations/`; credentials and obvious secret fields are redacted, and expired daily files are removed automatically.
 
 ## Adapter API
 

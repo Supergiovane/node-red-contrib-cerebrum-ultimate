@@ -174,7 +174,7 @@ describe('Cerebrum portable backup', () => {
     expect(restarted._chatContext.instructions.some(item => item.text === 'Keep Relax at 37%')).to.equal(true)
   })
 
-  it('maintains every local archive and applies the shortest live policy only from the shared archive leader', async () => {
+  it('maintains every local archive and requests the shortest shared policy even from a follower', async () => {
     const userDir = path.join(root, 'shared-retention')
     const leader = create('retention-a', { historyRetentionDays: 30 }, undefined, userDir)
     const follower = create('retention-b', { historyRetentionDays: 7 }, undefined, userDir)
@@ -192,11 +192,80 @@ describe('Cerebrum portable backup', () => {
     await follower.applyHistoryRetention()
     expect(fs.existsSync(path.join(storage(follower), 'history', follower.id, `${followerDay}.knxctx`))).to.equal(false)
     expect(fs.existsSync(path.join(storage(leader), 'history', leader.id, `${leaderDay}.knxctx`))).to.equal(true)
-    expect((await follower.querySharedMemory({ operation: 'get', text: sharedExpired.id })).ok).to.equal(true)
+    expect((await follower.querySharedMemory({ operation: 'get', text: sharedExpired.id })).ok).to.equal(false)
 
     await leader.applyHistoryRetention()
     expect(fs.existsSync(path.join(storage(leader), 'history', leader.id, `${leaderDay}.knxctx`))).to.equal(false)
     expect((await leader.querySharedMemory({ operation: 'get', text: sharedExpired.id })).ok).to.equal(false)
+  })
+
+  it('applies a changed retention on partial redeploy without waiting for the unchanged leader timer', async () => {
+    const userDir = path.join(root, 'retention-redeploy')
+    const leader = create('retention-a', { historyRetentionDays: 30 }, undefined, userDir)
+    let follower = create('retention-b', { historyRetentionDays: 30 }, undefined, userDir)
+    const at = days => new Date(Date.now() - days * 86400000).toISOString()
+    const expired = leader._sharedMemoryArchive.append({ kind: 'observation', at: at(20), data: { text: 'older observation' } })
+    const retained = leader._sharedMemoryArchive.append({ kind: 'episode', at: at(2), data: { summary: 'recent episode' } })
+    const day = at(20).slice(0, 10)
+    for (const group of ['history', 'adapter-history', 'operations']) {
+      seed(follower, `${group}/${follower.id}/${day}.jsonl`, '')
+    }
+    await leader.applyHistoryRetention()
+    expect((await leader.querySharedMemory({ operation: 'get', text: expired.id })).ok).to.equal(true)
+    await close(follower)
+    const startupTimers = new Map()
+    const originalSetTimeout = global.setTimeout
+    try {
+      global.setTimeout = (callback, delay, ...args) => {
+        const timer = originalSetTimeout(callback, delay, ...args)
+        startupTimers.set(timer, { callback, delay })
+        return timer
+      }
+      follower = create('retention-b', { historyRetentionDays: 7 }, undefined, userDir)
+    } finally { global.setTimeout = originalSetTimeout }
+    const startup = startupTimers.get(follower._historyRetentionStartupTimer)
+    expect(startup.delay).to.equal(60000)
+    clearTimeout(follower._historyRetentionStartupTimer)
+    startup.callback()
+    await follower._historyRetentionPromise
+    expect((await leader.querySharedMemory({ operation: 'get', text: expired.id })).ok).to.equal(false)
+    expect((await leader.querySharedMemory({ operation: 'get', text: retained.id })).ok).to.equal(true)
+    for (const group of ['history', 'adapter-history', 'operations']) {
+      expect(fs.existsSync(path.join(storage(follower), group, follower.id, `${day}.jsonl`))).to.equal(false)
+    }
+    await close(follower)
+    follower = create('retention-b', { historyRetentionDays: 90 }, undefined, userDir)
+    await follower.applyHistoryRetention()
+    expect((await follower.querySharedMemory({ operation: 'get', text: expired.id })).ok).to.equal(false)
+    expect((await follower.querySharedMemory({ operation: 'get', text: retained.id })).ok).to.equal(true)
+  })
+
+  it('rechecks a shared policy changed while compaction is yielding', async () => {
+    const userDir = path.join(root, 'retention-in-progress')
+    const leader = create('retention-a', { historyRetentionDays: 30 }, undefined, userDir)
+    leader._sharedMemoryArchive.appendMany(Array.from({ length: 80 }, () => ({
+      kind: 'context', at: new Date(Date.now() - 40 * 86400000).toISOString(), data: { text: 'x'.repeat(2048) }
+    })))
+    const expired = leader._sharedMemoryArchive.append({ kind: 'conversation', at: new Date(Date.now() - 20 * 86400000).toISOString(), data: { text: 'expires under new policy' } })
+    const pending = leader.applyHistoryRetention()
+    create('retention-b', { historyRetentionDays: 7 }, undefined, userDir)
+    await pending
+    expect((await leader.querySharedMemory({ operation: 'get', text: expired.id })).ok).to.equal(false)
+  })
+
+  it('cancels an obsolete shorter policy before replacing the archive during a follower redeploy', async () => {
+    const userDir = path.join(root, 'retention-increased-in-progress')
+    const leader = create('retention-a', { historyRetentionDays: 30 }, undefined, userDir)
+    const follower = create('retention-b', { historyRetentionDays: 7 }, undefined, userDir)
+    leader._sharedMemoryArchive.appendMany(Array.from({ length: 80 }, () => ({
+      kind: 'context', at: new Date(Date.now() - 40 * 86400000).toISOString(), data: { text: 'x'.repeat(2048) }
+    })))
+    const retained = leader._sharedMemoryArchive.append({ kind: 'conversation', at: new Date(Date.now() - 20 * 86400000).toISOString(), data: { text: 'retained under increased policy' } })
+    const pending = leader.applyHistoryRetention()
+    await close(follower)
+    const restarted = create('retention-b', { historyRetentionDays: 90 }, undefined, userDir)
+    await Promise.all([pending, restarted.applyHistoryRetention()])
+    expect((await leader.querySharedMemory({ operation: 'get', text: retained.id })).ok).to.equal(true)
   })
 
   it('round trips editable JavaScript source through ZIP, node migration and restart', async function () {
@@ -229,7 +298,7 @@ describe('Cerebrum portable backup', () => {
     expect(restarted.getAutomationFile({ name: saved.name }).content).to.equal(saved.content)
   })
 
-  it('keeps startup, education polling and local world observation off the LLM until a seven-day review is due', async function () {
+  it('keeps startup and device traffic off the LLM and retires legacy interval settings across restart', async function () {
     this.timeout(12000)
     const simpleGet = require('simple-get')
     const transport = simpleGet.concat
@@ -250,8 +319,6 @@ describe('Cerebrum portable backup', () => {
       const output = []
       node.send = messages => output.push(messages)
       node.handleSend({ knx: { event: 'GroupValue_Write', source: '1.1.1', destination: '1/2/3', dpt: '1.001' }, payload: true, devicename: 'Weekly archive marker' })
-      await node._educationCompiler.check()
-      await node._autonomyRuntime.tick()
       await new Promise(resolve => setTimeout(resolve, 2700))
       expect(calls).to.equal(0)
       expect(output.some(messages => messages[2]?.cerebrum?.llmTest === 'skipped_by_policy')).to.equal(true)
@@ -260,19 +327,18 @@ describe('Cerebrum portable backup', () => {
       expect(calls).to.equal(0)
       time++
       await node.runLlmPolicyTick()
-      expect(calls).to.equal(1)
-      expect(prompts[0]).to.include('Weekly archive marker').and.include('full-interval aggregates')
-      expect(node.getLlmPolicyStatus().lastContextAt).to.equal(time)
-      await node._autonomyRuntime.tick()
-      await node.runLlmPolicyTick()
-      expect(calls).to.equal(1)
+      expect(calls).to.equal(0)
+      expect(prompts).to.deep.equal([])
+      expect(node.getLlmPolicyStatus()).to.include({ mode: 'chat', nextRunAt: '' })
+      expect(node._autonomyRuntime).to.equal(undefined)
+      expect(node._educationCompiler).to.equal(undefined)
       const saved = await node.exportAiConfig()
-      expect(JSON.parse(saved.supplementalFiles.runtimeState.content).llmPolicy.lastAttemptAt).to.equal(time)
+      expect(saved.supplementalFiles.worldModel).to.equal(null)
+      expect(saved.supplementalFiles.habitLearning).to.equal(null)
       await close(node)
       const restarted = create('policy-week', config)
       await restarted.runLlmPolicyTick()
-      await restarted._autonomyRuntime.tick()
-      expect(calls).to.equal(1)
+      expect(calls).to.equal(0)
     } finally { simpleGet.concat = transport; Date.now = originalNow }
   })
 
@@ -290,12 +356,13 @@ describe('Cerebrum portable backup', () => {
     simpleGet.concat = (options, callback) => {
       calls++
       const prompt = JSON.stringify(JSON.parse(options.body).messages)
-      if (calls <= 3) expect(prompt).to.include('EDUCATION COMPILATION').and.include('2/3/0').and.include('2/3/1')
+      if (calls >= 2 && calls <= 4) expect(prompt).to.include('USER-REQUESTED ROUTINES').and.include('2/3/0').and.include('2/3/1')
       else if (calls > 4) expect(prompt).to.include('LOCAL AUTOMATION EXECUTION').and.include('2/3/0').and.include('2/3/1')
-      const action = calls === 1
+      const action = calls === 2
         ? { operation: 'api', name: '', revision: '', code: '', offset: 0 }
-        : calls === 2 ? { operation: 'create', name: 'meteo-mattino.js', revision: '', code, offset: 0 } : null
+        : calls === 3 ? { operation: 'create', name: 'meteo-mattino.js', revision: '', code, offset: 0 } : null
       const response = { reply: action ? '' : 'Ho creato meteo-mattino.js alle 08:40.', language: 'it', automationActions: action ? [action] : [], commands: [], cameraActions: [], speechActions: [], memoryActions: [], catalogActions: [], webActions: [], scheduleActions: [], historyActions: [], codeActions: [] }
+      if (calls === 1) response.reply = 'Buongiorno, come posso aiutarti?'
       if (calls === 5) response.speechActions = [{ text: 'Martedì otto settembre, ore otto e quaranta. La previsione meteo non è disponibile.', reason: 'Annuncio programmato' }]
       callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
     }
@@ -303,18 +370,16 @@ describe('Cerebrum portable backup', () => {
       const node = create('education-weather', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test', llmMaxTokens: 2400, llmContextLength: 32768 })
       node.send = output => outputs.push(output)
       await node.updateAiEducationFile({ ...(await node.getAiEducationFile()), content: education })
-      await node._educationCompiler.check()
       expect(calls).to.equal(0)
-      expect(node.listAutomationFiles().compilation.status).to.equal('waiting')
-      await node.compileEducationAutomations()
-      expect(calls).to.equal(0)
+      expect(node.compileEducationAutomations().status).to.equal('chat_required')
+      await node.sidebarAsk('Buongiorno, sei disponibile?')
+      expect(calls).to.equal(1)
+      expect(node.listAutomationFiles().files).to.have.length(0)
       await node.sidebarAsk('Genera le funzioni richieste in Educazione AI.')
       expect(calls).to.equal(4)
       const file = node.getAutomationFile({ name: 'meteo-mattino.js' })
       expect(file).to.include({ content: code, status: 'active', author: 'cerebrum' })
-      expect(node.listAutomationFiles().compilation.status).to.equal('ready')
       expect(outputs.some(output => output[3] || output[4])).to.equal(false)
-      await node._educationCompiler.check()
       expect(calls).to.equal(4)
       time += 60000
       await node._automationRuntime.tick(); await node._automationRuntime.drain()
@@ -322,13 +387,50 @@ describe('Cerebrum portable backup', () => {
       const speech = outputs.find(output => output[4])
       expect(speech[4][0].payload).to.include('ore otto e quaranta')
       const backup = await node.exportAiConfig()
-      expect(JSON.parse(backup.supplementalFiles.automationRuntime.content).compilation.status).to.equal('ready')
+      expect(backup.supplementalFiles.automationRuntime).not.to.equal(null)
       await close(node)
       const restarted = create('education-weather', { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test' })
-      await restarted._educationCompiler.check()
       expect(calls).to.equal(5)
       expect(restarted.getAutomationFile({ name: file.name }).status).to.equal('active')
     } finally { simpleGet.concat = transport; Date.now = originalNow }
+  })
+
+  it('asks a focused question without tools or files, then completes the routine from the answer after restart', async function () {
+    this.timeout(10000)
+    const simpleGet = require('simple-get')
+    const transport = simpleGet.concat
+    const request = 'Crea un promemoria serale per controllare la finestra della cucina.'
+    const clarification = 'A che ora vuoi il promemoria e in quali giorni?'
+    const answer = 'Alle 21:15, tutti i giorni, fuso Europe/Rome.'
+    const code = 'module.exports = c => { c.describe("Controlla finestra cucina"); c.schedule.daily("finestra", {at:"21:15", timeZone:"Europe/Rome"}, () => c.notify("Controlla la finestra della cucina")) }'
+    const config = { llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test', llmMaxTokens: 1800, llmContextLength: 32768 }
+    let calls = 0
+    simpleGet.concat = (options, callback) => {
+      calls++
+      const prompt = JSON.stringify(JSON.parse(options.body).messages)
+      expect(prompt).to.include('USER-REQUESTED ROUTINES').and.include('phase:\\"clarify\\"')
+      expect(prompt).not.to.include('LEGACY HABIT MUST NOT ENTER PROMPT')
+      if (calls > 1) expect(prompt).to.include(request).and.include(clarification).and.include(answer)
+      const action = calls === 2
+        ? { operation: 'api', name: '', revision: '', code: '', offset: 0 }
+        : calls === 1 || calls === 3 ? { operation: 'create', name: 'finestra-sera.js', revision: '', code, offset: 0 } : null
+      const response = { reply: calls === 1 ? clarification : action ? '' : 'Ho creato il promemoria quotidiano alle 21:15.', language: 'it', routine: { active: false, name: '', phase: calls === 1 ? 'clarify' : 'none' }, automationActions: action ? [action] : [], commands: [], cameraActions: [], speechActions: [], memoryActions: calls === 1 ? [{ operation: 'remember', text: 'Unrequested preference', all: false }] : [], catalogActions: [], webActions: [], scheduleActions: [], historyActions: [], codeActions: [] }
+      callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
+    }
+    try {
+      let node = create('routine-clarification', config)
+      node._homeMemory.habits = [{ id: 'old', type: 'temporal_state_pattern', source: 'knx', objectId: '1/2/3', label: 'LEGACY HABIT MUST NOT ENTER PROMPT', status: 'pending_confirmation', value: 'on' }]
+      expect((await node.sidebarAsk(request)).answer).to.equal(clarification)
+      expect(calls).to.equal(1)
+      expect(node.listAutomationFiles().files).to.have.length(0)
+      expect(node._chatContext.instructions.some(item => item.text === 'Unrequested preference')).to.equal(false)
+      await close(node)
+      node = create('routine-clarification', config)
+      expect((await node.sidebarAsk(answer)).answer).to.include('21:15')
+      expect(calls).to.equal(4)
+      expect(node.getAutomationFile({ name: 'finestra-sera.js' })).to.include({ content: code, status: 'active' })
+      expect(node.listAutomationFiles().files).to.have.length(1)
+    } finally { simpleGet.concat = transport }
   })
 
   it('lets the conversational model create a visible local function that the user can pause, edit and delete', async function () {
@@ -1267,7 +1369,7 @@ describe('Cerebrum portable backup', () => {
     const upload = await request(target, 'import-chunk', { index: 0, total: 1, chunk: download.body.toString('base64') })
     expect(upload.statusCode).to.equal(200)
     const imported = await request(target, 'import', { uploadId: upload.body.uploadId })
-    expect(imported.statusCode).to.equal(200)
+    expect(imported.statusCode, JSON.stringify(imported.body)).to.equal(200)
     expect(imported.body.etsAccessRestored).to.equal(true)
     expect(imported.body.etsAccess).to.deep.include({ ...access, selectedCount: 2, readOnlyCount: 1, catalogIncluded: true })
     expect(imported.body.etsAccess.items.map(({ ga, selected, readOnly }) => ({ ga, selected, readOnly }))).to.have.deep.members([
@@ -1462,8 +1564,10 @@ describe('Cerebrum portable backup', () => {
     source._webRequestTimestamps = [observedAt - 1000, observedAt]
     source._webAccessLastSuccessAt = observedAt
     source._cameraWatchLastTriggered.set('watch', observedAt)
-    source._proactiveStates.set('1/2/3', { ga: '1/2/3', open: true, openedAt: observedAt - 60000, lastSeenAt: observedAt, lastSentAt: observedAt, nextCheckAt: Infinity, value: true, confidence: 0.9 })
-    expect(source._autonomyRuntime.ingestState({ source: 'adapter', objectId: 'light.kitchen', label: 'Kitchen light', kind: 'light', area: 'Kitchen', value: 'on', observedAt: new Date(observedAt).toISOString() })).to.equal(true)
+    const legacyWorld = JSON.stringify({ version: 1, sequence: 0, evidence: [], episodes: [], habits: [], expectations: [], actionHistory: [], reasonHistory: [], entities: [{ id: 'adapter:light.kitchen', value: 'on' }], situations: [{ id: 'old-review', nextCheckAt: new Date(observedAt).toISOString() }] })
+    seed(source, 'memory/cerebrum-world-model-source.json', legacyWorld)
+    seed(source, 'memory/cerebrum-world-model-source.json.observations.jsonl', '')
+    seed(source, 'memory/cerebrum-habit-learning.json', JSON.stringify({ version: 1, habits: source._homeMemory.habits }))
     await source.saveEtsAccessConfiguration({ configured: true, exposedGAs: [], readOnlyGAs: [] })
     const day = new Date().toISOString().slice(0, 10)
     seed(source, `history/source/${day}.knxctx`, 'knx-data\n')
@@ -1480,7 +1584,7 @@ describe('Cerebrum portable backup', () => {
     const runtimeState = JSON.parse(backup.supplementalFiles.runtimeState.content)
     expect(runtimeState.webRequestTimestamps).to.deep.equal([observedAt - 1000, observedAt])
     expect(runtimeState.cameraWatchLastTriggered).to.deep.equal([['watch', observedAt]])
-    expect(runtimeState.proactiveStates[0].nextCheckAt).to.equal(Number.MAX_SAFE_INTEGER)
+    expect(runtimeState.proactiveStates).to.deep.equal([])
     expect(backup.supplementalFiles.worldObservations.content).to.be.a('string')
     expect(JSON.parse(backup.supplementalFiles.worldModel.content).entities.some(entity => entity.id === 'adapter:light.kitchen' && entity.value === 'on')).to.equal(true)
     expect(JSON.stringify(backup)).not.to.include('AI-SECRET-EXCLUDED')
@@ -1503,7 +1607,7 @@ describe('Cerebrum portable backup', () => {
       uploadId = response.body.uploadId
     }
     const imported = await request(target, 'import', { uploadId })
-    expect(imported.statusCode).to.equal(200)
+    expect(imported.statusCode, JSON.stringify(imported.body)).to.equal(200)
     expect(imported.body.ok).to.equal(true)
     expect(fs.existsSync(path.join(storage(target), 'history/target/2000-01-01.knxctx'))).to.equal(false)
     expect(target.llmApiKey).to.equal('DESTINATION-KEY')
@@ -1515,7 +1619,7 @@ describe('Cerebrum portable backup', () => {
     expect(target._homeMemory.habits[0]).to.include({ id: 'learning-progress', samples: 2 })
     expect(target._webRequestTimestamps).to.deep.equal([observedAt - 1000, observedAt])
     expect(target._cameraWatchLastTriggered.get('watch')).to.equal(observedAt)
-    expect(target._proactiveStates.get('1/2/3')).to.include({ open: true, openedAt: observedAt - 60000, nextCheckAt: Number.MAX_SAFE_INTEGER })
+    expect(target._proactiveStates).to.equal(undefined)
     for (const [group, dir] of [['history', 'history'], ['adapterHistory', 'adapter-history'], ['operations', 'operations']]) {
       for (const file of backup.supplementalFiles[group]) expect(fs.readFileSync(path.join(storage(target), dir, 'target', file.name), 'utf8')).to.equal(file.content)
     }
@@ -1526,8 +1630,10 @@ describe('Cerebrum portable backup', () => {
     expect(target._webRequestTimestamps).to.deep.equal([observedAt - 1000, observedAt])
     expect(target._webAccessLastSuccessAt).to.equal(observedAt)
     expect(target._cameraWatchLastTriggered.get('watch')).to.equal(observedAt)
-    expect(target._proactiveStates.get('1/2/3')).to.include({ open: true, openedAt: observedAt - 60000, nextCheckAt: Number.MAX_SAFE_INTEGER })
-    expect(target._autonomyRuntime.snapshot().entities.some(entity => entity.id === 'adapter:light.kitchen' && entity.value === 'on')).to.equal(true)
+    expect(target._proactiveStates).to.equal(undefined)
+    expect(target._autonomyRuntime).to.equal(undefined)
+    expect(fs.readFileSync(path.join(storage(target), 'memory/cerebrum-world-model-target.json'), 'utf8')).to.equal(legacyWorld)
+    expect(target.getObservedHomeState().entities.some(entity => entity.id === 'adapter:light.kitchen')).to.equal(false)
     expect(target.getCerebrumOperationsSnapshot({ limit: 20 }).items.some(item => item.operation === 'migration-marker')).to.equal(true)
     const restored = await target.exportAiConfig()
     expect(JSON.parse(restored.files.aiConfiguration.content).etsAccess).to.deep.equal(JSON.parse(backup.files.aiConfiguration.content).etsAccess)
@@ -1754,7 +1860,7 @@ describe('Cerebrum portable backup', () => {
       uploadId = response.body.uploadId
     }
     const imported = await request(target, 'import', { uploadId })
-    expect(imported.statusCode).to.equal(200)
+    expect(imported.statusCode, JSON.stringify(imported.body)).to.equal(200)
     for (const name of names) {
       const filePath = path.join(storage(target), 'history/large-target', name)
       expect(fs.statSync(filePath).size).to.equal(contentBytes)

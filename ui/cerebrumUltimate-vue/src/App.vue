@@ -8,7 +8,6 @@ import {
   ref,
   watch,
 } from "vue";
-import CerebrumWorldInsights from "./components/CerebrumWorldInsights.vue";
 import CerebrumSharedInsights from "./components/CerebrumSharedInsights.vue";
 import CerebrumRecordLog from "./components/CerebrumRecordLog.vue";
 import CerebrumBrain from "./components/CerebrumBrain.vue";
@@ -44,9 +43,9 @@ const sidebarKey = "cerebrumUltimate:sidebarExpanded";
 const areaSelectionKeyPrefix = "cerebrumUltimate:selectedAreaId:";
 const testAreaSelectionKeyPrefix = "cerebrumUltimate:selectedTestAreaId:";
 const PRESET_QUESTIONS = [
-  "Summarize the current KNX traffic and highlight the busiest group addresses.",
-  "Explain any anomalies you see and suggest what to check first.",
-  "Generate an SVG bar chart of Top Group Addresses with counts and title.",
+  "Remind me every evening at 21:00 to check the windows.",
+  "Notify me if a window stays open too long.",
+  "Show my saved JavaScript routines and explain what they do.",
 ];
 const TEST_PROMPT_PRESETS = [
   {
@@ -93,13 +92,11 @@ const CEREBRUM_PAYPAL_URL =
   "https://www.paypal.com/donate/?hosted_button_id=S8SKPUBSPK758";
 const CEREBRUM_YOUTUBE_URL = "https://www.youtube.com/@maxsupervibe";
 const CEREBRUM_SECTIONS = [
-  { id: "conversation", label: "Conversation", description: "Talk to your home and give shape to your ideas.", color: "#8fdcff" },
-  { id: "learning", label: "Cerebrum Learning", description: "Discover the patterns emerging from everyday life.", color: "#bdadff" },
-  { id: "memory", label: "Cerebrum Memory", description: "Explore what Cerebrum remembers about your home.", color: "#77e3cb" },
-  { id: "goals", label: "Goals", description: "Follow the improvements Cerebrum is working towards.", color: "#ffc782" },
-  { id: "research", label: "Web Research", description: "Explore discoveries and ideas from the Web.", color: "#edabdc" },
+  { id: "conversation", label: "Conversation", description: "Describe a routine and clarify its details together.", color: "#8fdcff" },
+  { id: "automations", label: "JavaScript automations", description: "Review and manage the routines you requested.", color: "#e7d686" },
+  { id: "learning", label: "Saved instructions", description: "Your saved preferences and conversations.", color: "#bdadff" },
+  { id: "memory", label: "Device data", description: "Current device states and recorded observations.", color: "#77e3cb" },
   { id: "operations", label: "Cerebrum Operations", description: "See the actions taken and their outcomes.", color: "#a8cbff" },
-  { id: "automations", label: "JavaScript automations", description: "Functions created by Cerebrum. Inspect their code and manage when they run.", color: "#e7d686" },
 ];
 const CEREBRUM_TAB_IDS = new Set(["brain", ...CEREBRUM_SECTIONS.map(section => section.id)]);
 
@@ -896,7 +893,7 @@ const workspacePage = computed(() => {
     results: { title: "Test Results", group: "KNX", description: "Review completed tests, feedback and the details of each step." },
     flowBuilder: { title: "Node-RED Flow Builder", group: "Tools", description: "Turn your ideas into Node-RED flows." },
     settings: { title: "Settings", group: "Tools", description: "Manage backups and move Cerebrum to a new installation." },
-    cerebrum: { title: "Neural map", group: "Explore", description: "Explore what Cerebrum knows, what it is trying to improve and what it has done." },
+    cerebrum: { title: "Neural map", group: "Explore", description: "Create routines, manage saved instructions and inspect device data." },
   };
   const section = state.activeTab === "cerebrum" && CEREBRUM_SECTIONS.find(item => item.id === state.cerebrumTab);
   const page = section ? { title: section.label, description: section.description, group: "Cerebrum", color: section.color } : pages[state.activeTab] || pages.overview;
@@ -1126,9 +1123,6 @@ function apiUrl(tail) {
 
 // The Web page lives under /sidebar; inspection shares the Node-RED admin
 // root and authentication, including installations behind an ingress proxy.
-function requestWorldInsight(tail) {
-  return requestJson(apiUrl(`../${tail}`), { cache: "no-store" });
-}
 
 function requestAutomationFiles(tail, options) {
   return requestJson(apiUrl(tail), { cache: "no-store", ...options });
@@ -1643,7 +1637,7 @@ function operationCategoryLabel(category) {
     knx: "KNX",
     llm: "LLM",
     tool: "Tool",
-    autonomous: "Autonomous",
+    autonomous: "Routine activities",
     system: "System",
   };
   return labels[String(category || "")] || String(category || "Activity");
@@ -4703,6 +4697,12 @@ async function persistTestResult(report) {
   return data;
 }
 
+function startRoutineRequest() {
+  navigateToCerebrum("conversation");
+  if (!String(state.chatDraft || "").trim()) state.chatDraft = `${localizeUiText("I would like a routine that")} `;
+  nextTick(() => document.querySelector(".ask-input")?.focus());
+}
+
 async function sendAsk(questionOverride = "") {
   const useOverride = String(questionOverride || "").trim();
   const typedQuestion = String(state.chatDraft || "").trim();
@@ -6676,7 +6676,7 @@ async function loadChatLearningFile({ force = false } = {}) {
   const operationGeneration = ++chatLearningOperationGeneration;
   state.chatLearningLoading = true;
   state.chatLearningError = "";
-  setStatus("Loading Cerebrum Learning...");
+  setStatus("Loading saved instructions...");
   try {
     const data = await requestJson(
       apiUrl(`chat-learning?nodeId=${encodeURIComponent(nodeId)}`),
@@ -6687,7 +6687,7 @@ async function loadChatLearningFile({ force = false } = {}) {
     )
       return;
     applyChatLearningSnapshot(data, nodeId);
-    setStatus("Cerebrum Learning loaded");
+    setStatus("Saved instructions loaded");
   } catch (error) {
     if (
       operationGeneration !== chatLearningOperationGeneration ||
@@ -6717,7 +6717,7 @@ async function saveChatLearningFile() {
   const operationGeneration = ++chatLearningOperationGeneration;
   state.chatLearningSaving = true;
   state.chatLearningError = "";
-  setStatus("Saving Cerebrum Learning...");
+  setStatus("Saving saved instructions...");
   try {
     const data = await requestJson(apiUrl("chat-learning/save"), {
       method: "POST",
@@ -6734,7 +6734,7 @@ async function saveChatLearningFile() {
     )
       return;
     applyChatLearningSnapshot(data, nodeId);
-    setStatus("Cerebrum Learning saved");
+    setStatus("Saved instructions saved");
   } catch (error) {
     if (
       operationGeneration !== chatLearningOperationGeneration ||
@@ -6768,7 +6768,7 @@ async function reinitializeChatLearningMemory() {
   const operationGeneration = ++chatLearningOperationGeneration;
   state.chatLearningResetting = true;
   state.chatLearningError = "";
-  setStatus("Reinitializing Cerebrum Learning...");
+  setStatus("Resetting conversation memory...");
   try {
     const data = await requestJson(apiUrl("chat-learning/reset"), {
       method: "POST",
@@ -6784,7 +6784,7 @@ async function reinitializeChatLearningMemory() {
     )
       return;
     applyChatLearningSnapshot(data, nodeId);
-    setStatus("Cerebrum Learning reinitialized");
+    setStatus("Conversation memory reset");
   } catch (error) {
     if (
       operationGeneration !== chatLearningOperationGeneration ||
@@ -7038,7 +7038,7 @@ async function reinitializeCerebrumMemory() {
     return;
   const confirmed = window.confirm(
     localizeUiText(
-      "This permanently deletes learned habits, occupant decisions and cached home states, and discards unsaved editor changes. Reinitialize Cerebrum memory from zero?",
+      "This permanently deletes cached device data and legacy memory records, and discards unsaved editor changes. Reinitialize device memory from zero?",
     ),
   );
   if (!confirmed) return;
@@ -9771,8 +9771,8 @@ onBeforeUnmount(() => {
           <div class="chat-log">
             <div v-if="!chatMessages.length && !state.asking" class="chat-welcome" data-cerebrum-localized>
               <span class="chat-welcome-icon"><CerebrumIcon name="brain" /></span>
-              <h3>{{ localizeUiText('What would you like to know about your home?') }}</h3>
-              <p>{{ localizeUiText('Start a conversation or choose a suggestion below.') }}</p>
+              <h3>{{ localizeUiText('Which routine would you like to create?') }}</h3>
+              <p>{{ localizeUiText('Describe the result you want. Cerebrum will ask about any missing details.') }}</p>
             </div>
             <article
               v-for="message in chatMessages"
@@ -10004,6 +10004,7 @@ onBeforeUnmount(() => {
               :request="requestAutomationFiles"
               :translate="localizeUiText"
               :drafts="automationEditorDrafts"
+              @request-routine="startRoutineRequest"
             />
           </article>
           <article
@@ -10011,7 +10012,7 @@ onBeforeUnmount(() => {
             class="area-detail settings-panel chat-learning-panel"
           >
             <div class="memory-section-toolbar memory-primary-heading">
-              <h3>Learned instructions</h3>
+              <h3>Saved instructions</h3>
               <button class="secondary-button" type="button"
                 :disabled="!state.selectedNodeId || chatLearningDirty || state.chatLearningLoading || state.chatLearningSaving || state.chatLearningResetting"
                 :title="chatLearningDirty ? localizeUiText('Unsaved changes') : ''"
@@ -10022,20 +10023,13 @@ onBeforeUnmount(() => {
             <CerebrumSharedInsights
               :key="`${state.selectedNodeId}:instructions`"
               mode="learning"
-              instructions-only
+              scope="instructions"
               :content="state.chatLearningBaseline"
               :language="uiLanguage"
               :loading="state.chatLearningLoading"
               :error="state.chatLearningError"
             />
 
-            <CerebrumWorldInsights
-              :key="`${state.selectedNodeId}:learning`"
-              :node-id="state.selectedNodeId"
-              :language="uiLanguage"
-              mode="learning"
-              :request="requestWorldInsight"
-            />
             <div class="memory-section-toolbar">
               <h4>From your conversations</h4>
               <button class="secondary-button" type="button"
@@ -10048,6 +10042,7 @@ onBeforeUnmount(() => {
             <CerebrumSharedInsights
               :key="`${state.selectedNodeId}:shared-learning`"
               mode="learning"
+              scope="conversations"
               :content="state.chatLearningBaseline"
               :language="uiLanguage"
               :loading="state.chatLearningLoading"
@@ -10097,7 +10092,7 @@ onBeforeUnmount(() => {
             <label class="flow-field chat-learning-path-field">
               <span>File path</span>
               <code>{{
-                state.chatLearningPath || "Loading Cerebrum Learning..."
+                state.chatLearningPath || "Loading saved instructions..."
               }}</code>
             </label>
             <textarea
@@ -10235,16 +10230,9 @@ onBeforeUnmount(() => {
             v-else-if="state.cerebrumTab === 'memory'"
             class="area-detail settings-panel chat-learning-panel"
           >
-            <CerebrumWorldInsights
-              :key="`${state.selectedNodeId}:memory`"
-              :node-id="state.selectedNodeId"
-              :language="uiLanguage"
-              mode="memory"
-              :request="requestWorldInsight"
-            />
 
             <div class="memory-section-toolbar">
-              <h4>Shared household learning</h4>
+              <h3>Latest observed device states</h3>
               <button class="secondary-button" type="button"
                 :disabled="!state.selectedNodeId || cerebrumMemoryDirty || state.cerebrumMemoryLoading || state.cerebrumMemorySaving || state.cerebrumMemoryResetting"
                 :title="cerebrumMemoryDirty ? localizeUiText('Unsaved changes') : ''"
@@ -10255,6 +10243,7 @@ onBeforeUnmount(() => {
             <CerebrumSharedInsights
               :key="`${state.selectedNodeId}:shared-memory`"
               mode="memory"
+              scope="states"
               :content="state.cerebrumMemoryBaseline"
               :language="uiLanguage"
               :loading="state.cerebrumMemoryLoading"
@@ -10439,26 +10428,10 @@ onBeforeUnmount(() => {
             </p>
             </details>
           </article>
-          <article v-else-if="['goals', 'research'].includes(state.cerebrumTab)" class="area-detail settings-panel">
-            <CerebrumWorldInsights
-              :key="`${state.selectedNodeId}:${state.cerebrumTab}`"
-              :node-id="state.selectedNodeId"
-              :language="uiLanguage"
-              :mode="state.cerebrumTab"
-              :request="requestWorldInsight"
-            />
-          </article>
           <article
             v-else-if="state.cerebrumTab === 'operations'"
             class="area-detail settings-panel cerebrum-operations-panel"
           >
-            <CerebrumWorldInsights
-              :key="`${state.selectedNodeId}:operations`"
-              :node-id="state.selectedNodeId"
-              :language="uiLanguage"
-              mode="operations"
-              :request="requestWorldInsight"
-            />
             <div class="memory-section-toolbar">
               <h4>Technical activity log · retained history <span v-if="state.cerebrumOperationsTruncated">({{ state.cerebrumOperationsItems.length }}/{{ state.cerebrumOperationsCounts.total }})</span></h4>
               <button class="secondary-button" type="button" :disabled="!state.selectedNodeId || state.cerebrumOperationsLoading" @click="loadCerebrumOperations({ force: true })">{{ state.cerebrumOperationsLoading ? 'Loading...' : 'Refresh' }}</button>
@@ -10471,7 +10444,7 @@ onBeforeUnmount(() => {
                   <option value="knx">KNX telegrams</option>
                   <option value="llm">LLM requests</option>
                   <option value="tool">Node tools</option>
-                  <option value="autonomous">Autonomous activities</option>
+                  <option value="autonomous">Routine activities</option>
                   <option value="system">System</option>
                 </select>
               </label>

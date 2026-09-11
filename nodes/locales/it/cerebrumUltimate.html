@@ -1,7 +1,7 @@
 <script type="text/markdown" data-help-name="cerebrumUltimate">
-Questo nodo ascolta **tutti i telegrammi KNX** dal gateway KNX Ultimate selezionato, costruisce statistiche di traffico, rileva anomalie e può interrogare opzionalmente un LLM.
+Cerebrum crea routine domotiche JavaScript modificabili dalle richieste degli utenti. Recupera i dettagli dell’impianto, pone domande mirate quando necessario ed esegue localmente orari e gestori degli eventi. Restano disponibili statistiche e diagnostica del traffico KNX.
 
-L'editor usa due schede orizzontali: **Assistente AI** contiene configurazione, conoscenza/contesto, provider e limiti; **Cerebrum (BETA)** contiene i PIN di input e output della chat, casa proattiva e memoria limitata.
+L’editor contiene configurazione AI, adattatori chat, integrazioni compatibili e istruzioni salvate. La Web UI offre Conversazione, Automazioni JavaScript, Istruzioni salvate, Dati dei dispositivi e Operazioni.
 
 ## Output
 1. **Summary/Statistiche** (`msg.payload` JSON)
@@ -12,7 +12,7 @@ L'editor usa due schede orizzontali: **Assistente AI** contiene configurazione, 
 
 Ogni messaggio emesso dalle uscite 3 e 4 contiene anche una copia del messaggio originale in ingresso in `msg.inputMessage`. In questo modo payload, topic, metadati della chat e qualsiasi altra proprietà di ingresso restano disponibili per i nodi successivi. Gli errori di clonazione o di invio vengono intercettati e segnalati senza propagarsi al runtime di Node-RED.
 
-All'avvio del nodo, l'uscita 3 emette un breve messaggio di supervisione Cerebrum con `msg.boot = true`. Quando l'AI è attiva, il testo viene generato dal modello selezionato come test reale di inferenza; `msg.cerebrum.llmTest` vale `passed`, mentre provider e modello indicano chi ha risposto. Se l'AI è disattivata o la chiamata fallisce, il messaggio di avvio viene comunque emesso con un fallback localizzato e trasparente e `llmTest` vale `disabled` o `failed`. Questo controllo non legge e non scrive sul bus KNX.
+All’avvio, l’uscita 3 emette un messaggio Cerebrum localizzato e preparato localmente, con `msg.boot = true`. L’avvio non chiama né verifica l’LLM e non aziona dispositivi KNX.
 
 ### Primo avvio sicuro
 
@@ -27,14 +27,12 @@ Ogni risposta basata sul Web contiene citazioni validate dal runtime con URL del
 
 Dopo che sono disponibili risultati Web verificati, il modello può comporre gli altri tool abilitati quando la chat corrente o Educazione AI lo autorizzano. L'accesso Web non amplia mai i permessi: disponibilità di telecamere, TTS e memoria, così come letture e scritture KNX, validazione locale ETS/DPT e conferma configurata per le scritture KNX, restano invariate. Le richieste Web espongono la query e l'IP pubblico del server ai siti esterni o al servizio di ricerca; dati KNX/ETS, contenuti delle telecamere, identificativi chat, memoria appresa e credenziali non vengono mai aggiunti automaticamente.
 
-### Pianificazioni e promemoria in linguaggio naturale
-Nel normale linguaggio della chat, l'utente può chiedere a Cerebrum di creare, elencare o annullare un promemoria, un monitoraggio o un futuro comando domestico, una sola volta oppure con ripetizione. Il modello sceglie semanticamente lo strumento strutturato di pianificazione `scheduleActions` partendo dalla richiesta completa e conserva l'obiettivo e tutte le condizioni come istruzione in linguaggio umano. Non esistono parole chiave per le pianificazioni, liste di frasi trigger o classificatori di intent rigidi: la formulazione e la lingua non limitano la funzione.
+### Routine e promemoria richiesti
+Descrivi in chat risultato, orari e condizioni. Cerebrum recupera identità e capacità esatte dei dispositivi e chiede gli eventuali dettagli essenziali ancora mancanti. Attende la risposta prima di creare il codice o inviare azioni. Richiesta e risposte restano nella memoria condivisa delle conversazioni.
 
-Le pianificazioni appartengono alla sessione chat e persistono per singolo nodo Cerebrum anche dopo il riavvio di Node-RED. Lo stato di runtime autorevole è `<userDir>/cerebrum/schedules/cerebrum-schedules-<node-id>.json`; Cerebrum genera anche `<userDir>/cerebrum/schedules/cerebrum-schedules-<node-id>.md` come vista leggibile. Un piano può essere eseguito una volta, ripetersi a intervalli di almeno cinque minuti e avere una scadenza facoltativa. Il modello può elencare o annullare solo le pianificazioni attive appartenenti alla chat corrente, salvo richiesta esplicita dell'utente di annullarle tutte per quella chat.
+Il risultato è un vero file `.js` in `cerebrumultimatestorage/cerebrum/automations/<node-id>/`, visibile in **Automazioni JavaScript**. Da lì puoi esaminarlo, modificarlo, sospenderlo, riattivarlo o eliminarlo. Orari e gestori degli eventi funzionano localmente anche dopo i riavvii.
 
-Quando arriva il momento di eseguire un'attività, Cerebrum avvia un passaggio separato del modello usando l'istruzione in linguaggio umano salvata come autorizzazione attendibile dell'utente. Un monitoraggio resta silenzioso se la condizione non è soddisfatta. Al momento dell'esecuzione valgono ancora i permessi esistenti: un monitoraggio meteo richiede **Consenti all'AI di usare il Web** e usa lo stesso budget Web, un risultato parlato esce dall'uscita 5 e richiede quindi un nodo TTS Ultimate collegato, mentre gli strumenti telecamera restano limitati agli adapter rilevati. Una scrittura KNX pianificata conserva tutti i controlli ETS/DPT e, se abilitata, mostra l'anteprima alla stessa sessione chat e attende la conferma prima di emettere qualsiasi messaggio dall'uscita 4.
-
-Per esempio, l'utente può scrivere: «Per i prossimi cinque giorni, controlla ogni 30 minuti le previsioni per Cortemaggiore e usa TTS Ultimate solo se sono previsti temporali». Cerebrum può conservare l'intera condizione e la durata in un unico monitoraggio ricorrente; restano necessari i permessi Web e il collegamento TTS descritti sopra.
+Il modello prepara le routine e interviene durante la loro esecuzione solo se il JavaScript richiesto chiama esplicitamente `assistant.run`, per esempio per ottenere previsioni meteo aggiornate. Restano validi i permessi Web, telecamere, ETS/DPT e la conferma dei comandi configurata. Le vecchie pianificazioni semantiche restano archiviate e sospese: richiedine la sostituzione con routine JavaScript.
 
 ## Comandi (input)
 Invia `msg.topic`:
@@ -59,7 +57,7 @@ Apri **Web UI Cerebrum → KNX → Accesso ETS** dalla scheda KNX Ultimate in **
 
 Lo stato del nodo sul canvas è riservato intenzionalmente all'ultima richiesta in ingresso e al messaggio localizzato «Sto pensando…» mentre l'LLM è in esecuzione. Telegrammi KNX, aggiornamenti del gateway, frequenze del traffico, messaggi ready e risultati tecnici non lo sovrascrivono mai; restano disponibili tramite uscite, log e dati dell'Assistente.
 
-Chat web e Telegram usano una memoria comune della casa. Conversazioni complete in ingresso e in uscita, osservazioni KNX e delle integrazioni, risultati degli strumenti e cambiamenti di contesto vengono aggiunti e sincronizzati su `cerebrumultimatestorage/cerebrum/memory/shared/cerebrum-memory.jsonl`, senza scadenza automatica né limite totale dell’archivio. Il modello può cercare nell’archivio e recuperare i record completi. Gli ID dei canali identificano origine e destinatario delle risposte, senza separare le conoscenze. Quando il controllo KNX è abilitato, collega l'uscita 3 al nodo di risposta della chat e l'uscita 4 a un nodo KNX Ultimate configurato in **Modalità Universale**. Con la conferma attiva, la prima risposta mostra GA, DPT e payload delle scritture senza emetterle; la stessa sessione deve poi rispondere `CONFERMA`/`ANNULLA` entro 5 minuti. Una nuova richiesta sostituisce l'eventuale piano precedente. Ogni comando confermato contiene `msg.destination`, `msg.dpt`, `msg.payload` e `msg.event = "GroupValue_Write"`.
+Chat web e Telegram usano una memoria comune della casa. Conversazioni complete in ingresso e in uscita, osservazioni KNX e delle integrazioni, risultati degli strumenti e cambiamenti di contesto vengono aggiunti e sincronizzati su `cerebrumultimatestorage/cerebrum/memory/shared/cerebrum-memory.jsonl`, secondo la conservazione dello storico configurata (30 giorni per impostazione predefinita). Il modello può cercare nell’archivio e recuperare i record completi. Gli ID dei canali identificano origine e destinatario delle risposte, senza separare le conoscenze. Quando il controllo KNX è abilitato, collega l'uscita 3 al nodo di risposta della chat e l'uscita 4 a un nodo KNX Ultimate configurato in **Modalità Universale**. Con la conferma attiva, la prima risposta mostra GA, DPT e payload delle scritture senza emetterle; la stessa sessione deve poi rispondere `CONFERMA`/`ANNULLA` entro 5 minuti. Una nuova richiesta sostituisce l'eventuale piano precedente. Ogni comando confermato contiene `msg.destination`, `msg.dpt`, `msg.payload` e `msg.event = "GroupValue_Write"`.
 La memoria recente della sessione viene collocata immediatamente accanto alla richiesta corrente, così i modelli locali mantengono fatti forniti dall'utente, come nome preferito o lingua, anche dentro un prompt KNX molto grande. Il modello può rendere persistenti fatti, preferenze e istruzioni durevoli tramite `memoryActions`; resta una scelta semantica dello strumento, senza classificatori di frasi o routing per intent. Credenziali, codici di sicurezza e API key non devono mai essere appresi.
 
 Per le scritture DPT 1.xxx, gli equivalenti sicuri prodotti dall'AI `true`/`false`, `1`/`0` e `on`/`off` vengono normalizzati in un vero booleano prima della validazione locale e dell'uscita.
@@ -91,7 +89,7 @@ Per cercare gli eventi registrati di UniFi Protect e recuperarne gli snapshot, i
 
 L'utente può chiedere uno snapshot aggiornato oppure domandare al modello vision che cosa è visibile. I preset Telegram e RedBot inviano l'immagine come foto nativa con didascalia. L'utente può anche creare notifiche persistenti per movimento, attraversamento di una linea intelligente o ingresso in una zona di intrusione/stazionamento, limitandole facoltativamente alle persone rilevate e a una linea o zona nominata esatta. Le regole vengono salvate nello stesso file `cerebrum-chat-context.knxctx` e ripristinate dopo i riavvii di Node-RED. Le sottoscrizioni agli eventi UniFi e le richieste snapshot avvengono direttamente tramite il provider rilevato: l'uscita 4 di Cerebrum non è coinvolta e non servono collegamenti intermedi nel flow.
 
-Gli eventi pubblicati da un adapter rilevato automaticamente vengono normalmente normalizzati e aggiunti nel formato nativo compatto a righe di Cerebrum a un file giornaliero `YYYY-MM-DD.knxctx` sotto `cerebrumultimatestorage/cerebrum/adapter-history/<id-nodo>/`. Un provider molto verboso che possiede già lo storico può dichiarare il feed transitorio: UniFi Protect lo fa, quindi Cerebrum non archivia i suoi messaggi spontanei e interroga il controller solo su richiesta. L'archivio dei telegrammi KNX usa lo stesso formato compatto, senza serializzazione JSON intermedia. Gli archivi persistenti conservano 10 giorni, garantiscono più di 24 ore di storico e salvano i metadati degli eventi, non le immagini. Gli archivi JSONL esistenti non vengono letti né migrati. Nel prompt entrano le righe persistenti esatte più recenti dell'intervallo fornito, limitate automaticamente alla finestra attiva del modello locale.
+Gli eventi KNX e delle integrazioni da conservare usano archivi giornalieri `YYYY-MM-DD.knxctx` sotto `cerebrumultimatestorage/cerebrum/`. **Conservazione storico (giorni)** vale 30 per impostazione predefinita e si applica anche all’archivio comune delle conversazioni/osservazioni e al registro operativo. La pulizia avviene dopo il deploy, dopo un ripristino e giornalmente, anche con AI disattivata; l’archivio condiviso attende 60 secondi all’avvio e segue il periodo più breve fra i nodi che condividono lo stesso archivio. Aumentare la conservazione non recupera i record già eliminati. Gli eventi live UniFi Protect restano transitori; lo storico registrato viene interrogato alla fonte su richiesta.
 
 ### Annunci con TTS Ultimate
 Collega l'uscita 5 a uno o più nodi `ttsultimate` del pacchetto opzionale `node-red-contrib-tts-ultimate`. I normali collegamenti di Node-RED determinano destinazione e fan-out; usa Link Out/Link In quando il nodo TTS si trova in un'altra scheda del flow. Il precedente selettore del nodo TTS e l'iniezione interna sono stati rimossi. Le posizioni delle uscite 1–4 restano invariate, ma nei flow aggiornati occorre collegare fisicamente l'uscita 5 prima che gli annunci vocali possano raggiungere TTS Ultimate.
@@ -115,41 +113,15 @@ Apri **Cerebrum → Memoria Cerebrum** per esaminare il file condiviso `cerebrum
 ### Accesso agli oggetti ETS
 L'accesso agli oggetti ETS è l'unica autorità operativa. Ogni indirizzo selezionato in **Accesso agli oggetti ETS** è attivo e leggibile; è anche scrivibile, a meno che sia marcato **Sola lettura**. Nessuna classificazione di ruolo dedotta viene inviata al modello della chat o usata per autorizzare una scrittura.
 
-## Intelligenza domestica proattiva guidata dall'Educazione e memoria limitata
-Da gerarchia ETS, nomi, ruoli e DPT, il nodo crea un modello semantico deterministico per persiane, finestre, porte, luci, temperatura, clima, presenza e allarmi usando termini italiani, inglesi, tedeschi, francesi, spagnoli e cinesi. Il rilevatore proattivo osserva soltanto stati non di comando di persiane, finestre e porte riconosciuti con sufficiente affidabilità.
+## Routine JavaScript richieste dall’utente
 
-Non esistono un interruttore o impostazioni proattive avanzate separate. Una condizione viene valutata soltanto quando l'LLM è attivo e **Educazione AI** richiede esplicitamente quella notifica. L'Educazione è l'unica policy per condizioni, durata dell'apertura, ore silenziose e ripetizione. L'AI riceve durata attuale, data/ora locale e storico recente delle notifiche; decide se avvisare e quando rivalutare la stessa apertura. Senza una regola esplicita nell'Educazione, o se l'LLM non riesce a valutarla, non viene inviato alcun messaggio.
+Descrivi una routine in chat. Cerebrum recupera i dettagli dei dispositivi e, se necessario, fa domande mirate prima di creare il JavaScript.
 
-Cerebrum apprende anche pattern temporali limitati fra giorni feriali e fine settimana, ricavati dalle scritture KNX e dai cambi di stato HUE, Matter o Home Assistant. Un pattern diventa utilizzabile solo dopo almeno otto osservazioni coerenti, distribuite su sei date distinte e su un intervallo minimo di 14 giorni, con confidenza non inferiore a 0,70. Telegrammi ripetuti nella stessa giornata non possono anticipare la richiesta di conferma. Se **Educazione AI** chiede esplicitamente a Cerebrum di anticipare le abitudini apprese, può inviare un suggerimento fino a 30 minuti prima dell'orario abituale. Il suggerimento non è mai un'esecuzione: le azioni KNX e Home Assistant richiedono ancora il normale percorso di autorizzazione e conferma, e resta valido il limite globale di tre messaggi proattivi all'ora.
+Salva qui informazioni sulla casa e preferenze, poi richiedi le routine in chat. Salvare le istruzioni non genera automazioni.
 
-Cerebrum osserva passivamente, tramite un hook runtime, gli output limitati e sanificati dei nodi utili di logica Node-RED, HUE, Matter e degli eventi Home Assistant; non servono collegamenti di monitoraggio aggiuntivi. Credenziali, header di autorizzazione, contenuti multimediali opachi e payload binari vengono scartati. Per lo stato Home Assistant live, collega `uscita 6 Cerebrum (Home Assistant) → API (ha-api) → ingresso Cerebrum`.
+Il modello viene chiamato solo dalla chat o da attività assistant.run esplicite nei JavaScript. Apprendimento delle abitudini e analisi periodiche della casa sono disattivati, anche con vecchie impostazioni a intervallo.
 
-L'ultima sessione chat viene ricordata come proprietario e riceve i messaggi spontanei. L'uscita 3 emette un messaggio localizzato con `msg.cerebrum.type = "proactive_notification"`; un `msg.inputMessage` sintetico conserva la sessione per l'adattatore chat. Un limite rigido di tre notifiche proattive all'ora evita abusi. Il nodo non emette mai l'uscita 4 e non modifica autonomamente KNX; un'eventuale richiesta successiva passa sempre dalla normale validazione e conferma.
-
-Il riferimento appreso condiviso viene caricato all'avvio da `<userDir>/cerebrum/memory/cerebrum-home-memory.md`, riscritto atomicamente ogni 15 minuti e sempre limitato rigidamente a 5 MB. Conserva al massimo 120 osservazioni significative, 80 abitudini aggregate, 80 notifiche e 300 oggetti ETS semantici, mai un flusso illimitato di telegrammi raw. Gli elementi vecchi e meno importanti vengono eliminati per primi.
-
-**Educazione AI** è limitata a 16.000 caratteri e salvata in `cerebrumultimatestorage/cerebrum/config/cerebrum-ai-education-<node-id>.md`. Premi **Done (Fatto)** nell’editor del nodo per salvare il file e applicare le istruzioni. **Annulla** scarta le modifiche non salvate; non serve un Deploy per applicare l’Educazione salvata. Il testo dei vecchi flow viene migrato solo se il file non esiste; il restore scrive il file del nodo di destinazione. Il modello la legge come istruzione autorevole, ma non può mai scriverla o sovrascriverla. Fatti e preferenze richiesti in chat appartengono alla memoria appresa della chat; pianificazioni, promemoria, monitoraggi e comandi futuri, singoli o ricorrenti, appartengono allo scheduler semantico. Il file della memoria appresa non contiene intenzionalmente il testo dell'Educazione.
-
-## Esempio pratico di configurazione
-Inserisci l'intera policy di notifica in **Educazione AI**:
-
-```text
-Chiamami Massimo e rispondi nella stessa lingua che uso.
-Mantieni le risposte brevi, salvo quando chiedo dettagli tecnici.
-Avvisa la mia ultima chat quando una persiana, finestra o porta resta aperta per almeno 120 minuti.
-Non avvisarmi tra le 23:00 e le 07:00 e non ripetere lo stesso avviso prima di sei ore.
-La persiana dello studio può restare aperta durante il giorno: non avvisarmi.
-Quando "luce soggiorno" è ambiguo, chiedimi quale luce intendo.
-Non dire mai che un attuatore è cambiato finché un oggetto di stato KNX non lo conferma.
-```
-
-Con questa Educazione:
-
-1. Se lo stato della persiana del soggiorno rimane aperto per 120 minuti fuori dalle ore silenziose indicate, l'uscita 3 può emettere una `proactive_notification` localizzata verso l'ultima sessione chat.
-2. Se rimane aperta la persiana dello studio, l'LLM legge l'Educazione e sopprime quella notifica candidata.
-3. Se Massimo chiede poi di chiudere la persiana del soggiorno, Cerebrum prepara il comando ETS esatto e applica comunque la normale validazione e conferma prima dell'uscita 4.
-
-Usa gerarchie e nomi oggetto ETS descrittivi, con ruoli di stato/comando corretti. L'Educazione può personalizzare decisioni e formulazione, ma non può autorizzare un group address inventato, cambiare un DPT o aggirare la validazione KNX.
+Consulta dati attuali dei dispositivi, osservazioni registrate e vecchi record di memoria archiviati.
 
 ## Workflow rapido: controllo KNX
 1. Importa il CSV ETS nel gateway e configura provider, modello e credenziali LLM.

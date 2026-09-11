@@ -42,8 +42,6 @@
       "chatInputCode": "Eingangszuordnung (Nachricht → Cerebrum)",
       "chatOutputCode": "Ausgangszuordnung (Cerebrum → Nachricht)",
       "aiEducation": "KI-Erziehung (vom Benutzer verwaltet)",
-      "llmBackgroundMode": "History updates to LLM",
-      "llmBackgroundIntervalMinutes": "Interval (minutes)",
       "historyRetentionDays": "Verlauf aufbewahren (Tage)"
     },
     "outputs": {
@@ -138,7 +136,7 @@
       "chatContextLoading": "Zusammenfassung des Cerebrum-Kontexts wird geladen…",
       "chatContextUnavailable": "Die Zusammenfassung des Cerebrum-Kontexts ist vorübergehend nicht verfügbar.",
       "chatLearningOpenHint": "Öffnet die Weboberfläche direkt im gemeinsamen Cerebrum-Lerneditor, um die persistente Datei anzuzeigen, zu bearbeiten, zu kopieren oder zu sichern.",
-      "cerebrumMemoryOpenHint": "Öffnet den lesbaren Cerebrum-Speicher für gelernte Gewohnheiten, Entscheidungen der Bewohner und zwischengespeicherte Hauszustände.",
+      "cerebrumMemoryOpenHint": "Aktuelle Gerätedaten, aufgezeichnete Beobachtungen und archivierte ältere Speicherdaten anzeigen.",
       "chatContextIntro": "Cerebrum erhält diese Quellen automatisch. Die folgenden Pfade werden von dieser Node-RED-Installation tatsächlich verwendet.",
       "chatContextLimitLabel": "Maximaler operativer Kontext",
       "chatContextProviderManaged": "vom ausgewählten Anbieter/Modell verwaltet",
@@ -158,7 +156,7 @@
       "chatContextSourceCameras": "Erkannte Kameras und ihre verfügbaren Funktionen.",
       "chatContextSourceBadge": "Quelle",
       "chatContextFileChatContext": "Dauerhafte Gesprächsverläufe, Anweisungen und Regeln für Kamerabenachrichtigungen.",
-      "chatContextFileHomeMemory": "Begrenztes gelerntes Hausgedächtnis, getrennt von der benutzerverwalteten KI-Erziehung.",
+      "chatContextFileHomeMemory": "Aktuelle Gerätedaten und tatsächliche Beobachtungen, getrennt von gespeicherten Benutzeranweisungen.",
       "chatContextFileSchedules": "Verbindlicher dauerhafter Laufzeitstatus der Pläne und Erinnerungen dieses Nodes.",
       "chatContextFileSchedulesReadable": "Erzeugte menschenlesbare Ansicht der Pläne und Erinnerungen dieses Nodes.",
       "chatContextFileAssistantConfig": "Dauerhafte Cerebrum-Konfiguration und semantische Bereiche dieses Nodes.",
@@ -173,8 +171,8 @@
       "chatContextTelegramPattern": "Tagesdateien",
       "chatAdapterIntro": "Wählen Sie eine Vorlage, um den Code für Ein- und Ausgang einzufügen. Die Liste wird aus der mitgelieferten Nachrichtenadapter-Datei geladen; der erzeugte Code bleibt bearbeitbar.",
       "chatAdapterCodeHelp": "Zuordnungen laufen synchron. Geben Sie msg zurück, um fortzufahren, oder keinen Wert, um die Nachricht zu verwerfen. Fehler werden abgefangen und gemeldet, ohne Node-RED anzuhalten.",
-      "homeIntelligenceIntro": "Der Node erstellt ein mehrsprachiges semantisches ETS-Modell. Proaktive Benachrichtigungen werden nur berücksichtigt, wenn die KI-Erziehung sie ausdrücklich verlangt; der Node sendet niemals selbstständig einen KNX-Befehl.",
-      "aiEducationHelp": "Nur der Benutzer kann diese Node-Eigenschaft bearbeiten. Verwenden Sie sie für dauerhafte Vorgaben und Regeln für proaktive Benachrichtigungen, einschließlich Bedingungen, Dauer, Ruhezeiten und Wiederholung. Das Modell liest sie als verbindliche Vorgabe, schreibt sie aber niemals. Über Cerebrum angeforderte Fakten und Präferenzen werden im gelernten Gesprächsgedächtnis gespeichert; einmalige oder wiederkehrende Pläne, Erinnerungen, Überwachungen und zukünftige Befehle speichert der semantische Scheduler. Es sind weder Auslösephrasen noch Intent-Routing erforderlich. Maximal 16.000 Zeichen.",
+      "homeIntelligenceIntro": "Beschreiben Sie eine Routine im Chat. Cerebrum ruft Gerätedaten ab und stellt bei Bedarf gezielte Rückfragen, bevor es JavaScript erstellt.",
+      "aiEducationHelp": "Speichern Sie hier Angaben zum Haushalt und Ihre Präferenzen. Fordern Sie Routinen im Chat an; das Speichern erzeugt keine Automationen.",
       "aiEducationFileHelp": "Mit Fertig werden die Vorgaben gespeichert und angewendet. Abbrechen verwirft Änderungen. In Backups enthalten.",
       "aiEducationLoading": "KI-Erziehung wird geladen...",
       "aiEducationSaving": "KI-Erziehung wird gespeichert...",
@@ -183,9 +181,7 @@
       "aiEducationError": "KI-Erziehung konnte nicht gelesen oder gespeichert werden.",
       "aiEducationUnsaved": "Mit Fertig werden die Änderungen gespeichert.",
       "chatContextFileAiEducation": "Benutzerverwaltete KI-Erziehung aus einer eigenen Datei, in Backups enthalten.",
-      "llmModeChat": "Only during user chat (default)",
-      "llmModeInterval": "During chat and at an interval",
-      "llmPolicyHint": "History remains archived locally within the configured retention window. The LLM receives summaries and selected evidence during a Web/Telegram chat request or at the configured interval (1–10080 minutes; 1440 = 1 day, 10080 = 7 days). Startup and events do not trigger calls. AI Education compilation also waits for chat or the interval. Explicit assistant.run calls in .js remain authorized. An analysis may require multiple calls; this is not a spending cap."
+      "llmPolicyHint": "Modellaufrufe erfolgen nur im Benutzerchat oder durch explizite assistant.run-Aufgaben in JavaScript. Gewohnheitslernen und regelmäßige Hausanalysen sind auch bei alten Intervalleinstellungen deaktiviert."
     },
     "sidebar": {
       "ui": {

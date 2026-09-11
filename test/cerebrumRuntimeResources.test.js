@@ -82,7 +82,9 @@ describe('Cerebrum background resource use', function () {
   it('keeps background checks relaxed and does not arm suspended work or an absent gateway', () => {
     const { timers } = captureTimers(() => construct())
     assert.equal(node._busConnectionWatchTimer, null)
-    assert.equal(node._proactiveCheckTimer, null)
+    assert.equal(node._proactiveCheckTimer, undefined)
+    assert.equal(node._autonomyRuntime, undefined)
+    assert.equal(node._educationCompiler, undefined)
     assert.equal(node._scheduleTickTimer, null)
     assert.equal(node._scheduleStartupTimer, null)
     assert.equal(timers.get(node._cerebrumStateTimer).delay, 30000)
@@ -103,11 +105,36 @@ describe('Cerebrum background resource use', function () {
     assert.equal(records().filter(record => record.kind === 'knx').length, 360)
   })
 
+  it('keeps KNX light and cover transitions factual without learning habits or generating episodes', async () => {
+    const gateway = {
+      id: 'test-gateway',
+      csv: [
+        { ga: '1/2/3', dpt: '1.001', devicename: 'Cucina luce stato' },
+        { ga: '1/2/4', dpt: '5.001', devicename: 'Soggiorno persiana stato' }
+      ],
+      addClient: noop,
+      removeClient: noop
+    }
+    construct(gateway)
+    for (let index = 0; index < 20; index++) {
+      node.handleSend({ knx: { destination: '1/2/3', source: '1.1.1', event: 'GroupValue_Write', dpt: '1.001' }, payload: index % 2 === 0 })
+      node.handleSend({ knx: { destination: '1/2/4', source: '1.1.2', event: 'GroupValue_Write', dpt: '5.001' }, payload: index % 2 === 0 ? 100 : 0 })
+    }
+    const memory = JSON.parse((await node.getCerebrumMemoryFile()).jsonContent)
+    assert.deepEqual(memory.habits, [])
+    assert.deepEqual(memory.episodes, [])
+    assert(memory.states.some(state => state.key === 'knx:1/2/3' && state.value === 'false'))
+    const archive = records()
+    assert.equal(archive.filter(record => record.kind === 'knx').length, 40)
+    assert(archive.some(record => record.kind === 'observation'))
+    assert.equal(archive.some(record => record.kind === 'episode'), false)
+    assert.equal(fs.existsSync(path.join(userDir, 'cerebrumultimatestorage', 'cerebrum', 'memory', 'cerebrum-habit-learning.json')), false)
+  })
+
   it('coalesces derived memory saves at a fixed deadline while immediately archiving observations', async () => {
     const gateway = { id: 'test-gateway', csv: [{ ga: '1/2/3', dpt: '9.001', devicename: 'Kitchen temperature' }], addClient: noop, removeClient: noop }
     const initial = captureTimers(() => construct(gateway))
     assert.equal(initial.timers.get(node._busConnectionWatchTimer).delay, 5000)
-    await node._autonomyRuntime.tick()
     // Finish the startup save before testing a new batch of live events.
     if (node._homeMemoryWriteTimer) {
       const timer = node._homeMemoryWriteTimer
