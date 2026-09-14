@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.9 — 2026-09-14
+## 0.4.0 — 2026-09-14
 
 - Recover empty or incomplete chat replies and show clearer error messages.
 - Improve scheduling reliability while keeping the timer lightweight.
