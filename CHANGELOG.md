@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.9 — 2026-09-14
+
+- Recover empty or incomplete chat replies and show clearer error messages.
+- Improve scheduling reliability while keeping the timer lightweight.
+
 ## 0.3.8 — 2026-09-11
 
 - Focus Cerebrum on user-requested JavaScript routines: remove active habit inference, behavioral episode consolidation, autonomous goals/research, periodic LLM reviews and automatic AI Education compilation. Prepare startup notifications locally without calling the model. Preserve current device data, requested routines and legacy backup files; old interval settings remain inactive after restart/restore.

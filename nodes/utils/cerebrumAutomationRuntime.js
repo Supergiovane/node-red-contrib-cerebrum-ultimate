@@ -12,6 +12,8 @@ const hash = value => crypto.createHash('sha256').update(String(value)).digest('
 const idOk = id => typeof id === 'string' && id.length > 0 && id.length <= 200 && !/[\u0000-\u001f]/.test(id) // eslint-disable-line no-control-regex
 const entityOk = id => idOk(id) && /^[a-z][a-z0-9-]*:.+/.test(id)
 const MAX_TIMER_DELAY_MS = 0x7fffffff
+const LIVE_SCHEDULE_GRACE_MS = 5 * 60000
+const RESTART_SCHEDULE_GRACE_MS = 60000
 const clockFormatters = new Map()
 
 function parseAutomationCheckpoint (content) {
@@ -208,6 +210,9 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
   let compilation = checkpoint.compilation || { status: 'pending', revision: '' }
   const entries = Object.assign(Object.create(null), checkpoint.entries)
   const programs = new Map()
+  // Keep the selected civil occurrence until it is claimed. Recomputing from
+  // the wall clock on every event rearm can silently move a late job to tomorrow.
+  const dailyDeadlines = new Map()
   const jobs = new Map()
   const initializing = new Set()
   const edits = new Map()
@@ -263,7 +268,10 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     for (const [name, entry] of Object.entries(entries)) {
       if (entry.status !== 'active') continue
       if (!programs.has(name)) return timestamp
-      for (const rule of registrationsFor(name, entry)) deadline = Math.min(deadline, nextRuleDeadline(rule, entry, timestamp))
+      for (const rule of registrationsFor(name, entry)) {
+        const next = rule.kind === 'daily' ? dailyDeadlines.get(name)?.get(rule.id) : nextRuleDeadline(rule, entry, timestamp)
+        if (Number.isFinite(next)) deadline = Math.min(deadline, next)
+      }
     }
     return deadline
   }
@@ -321,11 +329,11 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
   }
   const available = () => { if (closed) throw fail('Local automations are closed', 409) }
   const current = (name, generation) => !closed && entries[name]?.status === 'active' && entries[name].generation === generation
-  const inspect = async (source, handler = '', event = {}, entry = {}) => {
+  const inspect = async (source, handler = '', event = {}, entry = {}, timestamp = now()) => {
     if (typeof source !== 'string' || Buffer.byteLength(source) > 128 * 1024) throw fail('JavaScript source exceeds 128 KiB')
     const snapshot = states()
     if (Buffer.byteLength(JSON.stringify(snapshot)) > 1024 * 1024) throw fail('Local state snapshot exceeds 1 MiB')
-    return validateProgram(await interpreter.run(source, { now: now(), handler, event, states: snapshot, memory: clone(entry.memory || {}) }))
+    return validateProgram(await interpreter.run(source, { now: timestamp, handler, event, states: snapshot, memory: clone(entry.memory || {}) }))
   }
   const setError = (name, error) => {
     if (!entries[name] || closed) return
@@ -333,6 +341,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     entries[name].generation++
     entries[name].error = String(error.message || error)
     programs.delete(name)
+    dailyDeadlines.delete(name)
     persist()
     requestSchedulerRearm()
     scheduleEventFiltersChanged()
@@ -355,7 +364,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     if (entry.authority === 'education' && entry.educationHash !== hash(education())) throw fail('AI Education changed. Review this automation before resuming.')
     authorize({ targets: entry.targets || [], authority: entry.authority, sessionId: entry.sessionId })
   }
-  const activate = async (name, { cancelled = () => false } = {}) => {
+  const activate = async (name, { cancelled = () => false, fromCheckpoint = false } = {}) => {
     available()
     const entry = entries[name]
     const generation = entry.generation
@@ -369,7 +378,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     entry.revision = file.revision
     entry.description = program.description
     entry.status = 'active'
-    entry.error = ''
+    if (!fromCheckpoint) entry.error = ''
     entry.cursors ||= {}
     for (const id of Object.keys(entry.cursors)) {
       const oldRule = entry.rules?.find(rule => rule.id === id)
@@ -379,14 +388,22 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     entry.rules = program.registrations
     entry.timers ||= {}
     entry.memory ||= {}
+    const timestamp = now()
     for (const rule of program.registrations) {
-      if (entry.cursors[rule.id] !== undefined) continue
-      if (rule.kind === 'daily') { const clock = localClock(rule, now()); entry.cursors[rule.id] = clock.time > rule.at ? clock.day : '' }
-      if (rule.kind === 'every') entry.cursors[rule.id] = now() + rule.milliseconds
-      if (rule.kind === 'at' && rule.timestamp < now() - 60000) entry.cursors[rule.id] = true
+      // A restart/resume does not replay old deadlines. Once activated, the
+      // live scheduler can tolerate a delayed wake without treating it as boot.
+      if (rule.kind === 'daily') {
+        const clock = localClock(rule, timestamp)
+        if (clock.time > rule.at) entry.cursors[rule.id] = clock.day
+        else entry.cursors[rule.id] ??= ''
+      }
+      if (rule.kind === 'every' && (!Number.isSafeInteger(entry.cursors[rule.id]) || entry.cursors[rule.id] < timestamp - RESTART_SCHEDULE_GRACE_MS)) entry.cursors[rule.id] = timestamp + rule.milliseconds
+      if (rule.kind === 'at' && rule.timestamp < timestamp - RESTART_SCHEDULE_GRACE_MS) entry.cursors[rule.id] = true
+      if (rule.kind === 'timer' && entry.timers[rule.id] < timestamp - RESTART_SCHEDULE_GRACE_MS) delete entry.timers[rule.id]
     }
     persist()
     programs.set(name, { source: file.content, ...program })
+    dailyDeadlines.set(name, new Map(program.registrations.filter(rule => rule.kind === 'daily').map(rule => [rule.id, nextDailyDeadline(rule, entry, timestamp)])))
     requestSchedulerRearm()
     scheduleEventFiltersChanged()
     return read({ name })
@@ -401,6 +418,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     entry.timers = {}
     for (const rule of entry.rules || []) if (rule.kind === 'every') delete entry.cursors?.[rule.id]
     programs.delete(file.name)
+    dailyDeadlines.delete(file.name)
     persist()
     requestSchedulerRearm()
     scheduleEventFiltersChanged()
@@ -475,7 +493,8 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
       if (!program) return
       if (files.read({ name }).revision !== entry.revision) throw fail('Source changed outside Cerebrum. Review it and resume to apply the changes.')
       checkAuthority(entry)
-      const result = await inspect(program.source, handler, event, entry)
+      const invocationAt = now()
+      const result = await inspect(program.source, handler, event, entry, invocationAt)
       if (!current(name, generation)) return
       if (files.read({ name }).revision !== entry.revision) throw fail('Source changed during execution')
       if (JSON.stringify(result.registrations) !== JSON.stringify(program.registrations) || JSON.stringify(result.targets) !== JSON.stringify(program.targets)) throw fail('Handler registration must not depend on time, state or memory')
@@ -491,7 +510,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
           if (!program.registrations.some(rule => rule.id === effect.id && rule.kind === 'timer')) throw fail('Unknown timer handler')
           if (effect.kind === 'cancelTimer') delete timers[effect.id]
           else {
-            if (!Number.isSafeInteger(effect.timestamp) || effect.timestamp < now() + 1000 || effect.timestamp > now() + 366 * 86400000) throw fail('Timer deadline must be between 1 second and 366 days from now')
+            if (!Number.isSafeInteger(effect.timestamp) || effect.timestamp < invocationAt + 1000 || effect.timestamp > invocationAt + 366 * 86400000) throw fail('Timer deadline must be between 1 second and 366 days from now')
             if (timers[effect.id] === undefined) timers[effect.id] = effect.timestamp
           }
         } else if (effect.kind === 'write') {
@@ -507,6 +526,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
       entry.memory = memory
       entry.timers = timers
       entry.lastRunAt = new Date(now()).toISOString()
+      entry.error = ''
       persist()
       requestSchedulerRearm()
       for (const effect of result.effects) {
@@ -515,19 +535,31 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
         checkAuthority(entry)
         // Claims survive restarts. An uncertain delivery is never blindly retried.
         archive({ phase: 'effect_claimed', name, revision: entry.revision, occurrence, effect })
-        if (effect.kind === 'write') await write({ ...effect, authority: entry.authority, name, sessionId: entry.sessionId })
-        else if (effect.kind === 'assistant') {
-          await assistant({
-            instruction: effect.instruction,
-            name,
-            sessionId: entry.sessionId,
-            isCancelled: () => {
-              if (!current(name, generation)) return true
-              try { checkAuthority(entry); return files.read({ name }).revision !== entry.revision } catch (_) { return true }
-            }
-          })
-        } else if (effect.kind === 'speak') await speak({ text: effect.text, name, sessionId: entry.sessionId })
-        else if (await notify({ text: effect.text, name, sessionId: entry.sessionId }) === false) throw fail('Notification could not be delivered')
+        try {
+          if (effect.kind === 'write') await write({ ...effect, authority: entry.authority, name, sessionId: entry.sessionId })
+          else if (effect.kind === 'assistant') {
+            await assistant({
+              instruction: effect.instruction,
+              name,
+              sessionId: entry.sessionId,
+              isCancelled: () => {
+                if (!current(name, generation)) return true
+                try { checkAuthority(entry); return files.read({ name }).revision !== entry.revision } catch (_) { return true }
+              }
+            })
+          } else if (effect.kind === 'speak') await speak({ text: effect.text, name, sessionId: entry.sessionId })
+          else if (await notify({ text: effect.text, name, sessionId: entry.sessionId }) === false) throw fail('Notification could not be delivered')
+        } catch (error) {
+          // Delivery may already have happened. Consume this occurrence, record
+          // the failure, and leave future independently scheduled work active.
+          // Source/permission/interpretation/storage failures still stop below.
+          if (current(name, generation)) {
+            entry.error = String(error.message || error).slice(0, 1000)
+            archive({ phase: 'effect_failed', name, occurrence, kind: effect.kind, error: entry.error })
+            persist()
+          }
+          return
+        }
         archive({ phase: 'effect_sent', name, occurrence, effect })
       }
     } catch (error) { if (current(name, generation)) setError(name, error) }
@@ -560,7 +592,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
         initializing.add(name)
         try {
           if (files.read({ name }).revision !== entry.revision) throw fail('Source changed outside Cerebrum. Review it and resume.')
-          await activate(name)
+          await activate(name, { fromCheckpoint: true })
         } catch (error) { if (!closed && entry.status === 'active') setError(name, error) } finally { initializing.delete(name) }
       }
       const program = programs.get(name)
@@ -569,8 +601,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
         const timestamp = now()
         const hasDueRule = program.registrations.some(rule => {
           if (rule.kind === 'daily') {
-            const clock = localClock(rule, timestamp)
-            return clock.time >= rule.at && entry.cursors[rule.id] !== clock.day
+            return timestamp >= dailyDeadlines.get(name)?.get(rule.id)
           }
           if (rule.kind === 'every') return timestamp >= entry.cursors[rule.id]
           if (rule.kind === 'at') return !entry.cursors[rule.id] && timestamp >= rule.timestamp
@@ -583,32 +614,35 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
         for (const rule of program.registrations) {
           let due = false
           let occurrence = ''
+          let scheduledFor = 0
           if (rule.kind === 'daily') {
-            const clock = localClock(rule, now())
-            if (clock.time >= rule.at && entry.cursors[rule.id] !== clock.day) {
-              entry.cursors[rule.id] = clock.day
-              // Do not replay missed daily jobs after downtime or DST jumps.
-              due = clock.time === rule.at
-              occurrence = `${rule.id}:${clock.day}`
-              persist()
+            const deadline = dailyDeadlines.get(name)?.get(rule.id)
+            if (timestamp >= deadline) {
+              scheduledFor = deadline
+              const day = localClock(rule, deadline).day
+              entry.cursors[rule.id] = day
+              dailyDeadlines.get(name).set(rule.id, nextDailyDeadline(rule, entry, timestamp))
+              occurrence = `${rule.id}:${day}`
             }
-          } else if (rule.kind === 'every' && now() >= entry.cursors[rule.id]) {
-            occurrence = `${rule.id}:${entry.cursors[rule.id]}`
-            due = now() - entry.cursors[rule.id] <= 60000
-            entry.cursors[rule.id] = now() + rule.milliseconds
-            persist()
-          } else if (rule.kind === 'at' && !entry.cursors[rule.id] && now() >= rule.timestamp) {
+          } else if (rule.kind === 'every' && timestamp >= entry.cursors[rule.id]) {
+            scheduledFor = entry.cursors[rule.id]
+            occurrence = `${rule.id}:${scheduledFor}`
+            const elapsedIntervals = Math.floor((timestamp - scheduledFor) / rule.milliseconds) + 1
+            entry.cursors[rule.id] = scheduledFor + elapsedIntervals * rule.milliseconds
+          } else if (rule.kind === 'at' && !entry.cursors[rule.id] && timestamp >= rule.timestamp) {
+            scheduledFor = rule.timestamp
             entry.cursors[rule.id] = true
-            due = now() - rule.timestamp <= 60000
             occurrence = `${rule.id}:${rule.timestamp}`
-            persist()
-          } else if (rule.kind === 'timer' && entry.timers[rule.id] && now() >= entry.timers[rule.id]) {
-            occurrence = `${rule.id}:${entry.timers[rule.id]}`
-            due = now() - entry.timers[rule.id] <= 60000
+          } else if (rule.kind === 'timer' && entry.timers[rule.id] && timestamp >= entry.timers[rule.id]) {
+            scheduledFor = entry.timers[rule.id]
+            occurrence = `${rule.id}:${scheduledFor}`
             delete entry.timers[rule.id]
-            persist()
           }
-          if (due) enqueue(name, rule.id, { type: 'schedule', at: now() }, occurrence)
+          if (!occurrence) continue
+          due = timestamp - scheduledFor <= LIVE_SCHEDULE_GRACE_MS
+          persist()
+          if (due) enqueue(name, rule.id, { type: 'schedule', at: timestamp, scheduledFor }, occurrence)
+          else archive({ phase: 'schedule_skipped', name, handler: rule.id, occurrence, scheduledFor, at: timestamp, reason: 'late' })
         }
       } catch (error) { setError(name, error) }
     }
@@ -640,6 +674,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
       closed = true
       clearScheduler()
       programs.clear()
+      dailyDeadlines.clear()
       await interpreter.close()
       await Promise.allSettled([tickInFlight, ...[...jobs.values()].map(queue => queue.promise)].filter(Boolean))
     }

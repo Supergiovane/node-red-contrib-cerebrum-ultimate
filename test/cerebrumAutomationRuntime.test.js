@@ -207,6 +207,146 @@ describe('Persistent local JavaScript automations', function () {
     assert.equal(scheduler.pending.size, 0)
   })
 
+  it('runs an armed daily occurrence once when a relaxed wake arrives after its minute', async () => {
+    await runtime.close()
+    const scheduler = fakeScheduler()
+    at = Date.parse('2026-09-08T06:39:00Z')
+    runtime = make({ intervalMs: 30000, setTimeoutFn: scheduler.setTimeoutFn, clearTimeoutFn: scheduler.clearTimeoutFn })
+    await create('module.exports = c => c.schedule.daily("weather", {at:"08:40",timeZone:"Europe/Rome"}, () => c.notify("weather"))')
+    assert.equal(scheduler.pending.size, 1)
+    assert.equal(scheduler.next().delay, 60000)
+    at += 90000 // Simulate a busy event loop delivering the timer 90 seconds late.
+    await scheduler.fire(); await runtime.drain()
+    assert.deepEqual(messages.map(message => message.text), ['weather'])
+    assert.equal(scheduler.pending.size, 1)
+    assert.equal(scheduler.next().delay, 86400000 - 90000)
+    await runtime.tick(); await runtime.drain()
+    assert.equal(messages.length, 1)
+  })
+
+  it('retains an overdue daily deadline when an unrelated event rearms the scheduler', async () => {
+    await runtime.close()
+    const scheduler = fakeScheduler()
+    at = Date.parse('2026-09-08T21:58:00Z')
+    runtime = make({ intervalMs: 30000, setTimeoutFn: scheduler.setTimeoutFn, clearTimeoutFn: scheduler.clearTimeoutFn })
+    await create('module.exports = c => { c.schedule.daily("night", {at:"23:59",timeZone:"Europe/Rome"}, () => c.notify("night")); c.onEvent("seen",{source:"test"},()=>c.memory.set("seen",true)) }')
+    at += 150000 // Now 00:00:30 on the next civil day, before the delayed timer fires.
+    runtime.ingest({ source: 'test' }); await runtime.drain()
+    assert.equal(scheduler.pending.size, 1)
+    assert.equal(scheduler.next().delay, 0)
+    await scheduler.fire(); await runtime.drain()
+    assert.equal(messages.length, 1)
+    assert.equal(scheduler.next().delay, 86400000 - 90000)
+    await scheduler.fire(); await runtime.drain()
+    assert.equal(messages.length, 2)
+  })
+
+  it('tolerates a short live delay for interval, one-time and named timers without replaying intervals', async () => {
+    await create(`module.exports = c => {
+      c.schedule.every("repeat",60000,()=>c.notify("repeat"));
+      c.schedule.at("once",${at + 60000},()=>c.notify("once"));
+      c.onEvent("arm",{source:"test"},()=>c.timers.ensureAt("later",c.now()+60000));
+      c.timers.define("later",()=>c.notify("later"));
+    }`)
+    runtime.ingest({ source: 'test' }); await runtime.drain()
+    await step(155000)
+    assert.deepEqual(messages.map(message => message.text), ['repeat', 'once', 'later'])
+    await step(25000)
+    assert.deepEqual(messages.map(message => message.text), ['repeat', 'once', 'later', 'repeat'])
+  })
+
+  it('skips stale deadlines after downtime and reports excessive live delays', async () => {
+    at = Date.parse('2026-09-08T06:39:00Z')
+    await create(`module.exports = c => {
+      c.schedule.daily("daily",{at:"08:40",timeZone:"Europe/Rome"},()=>c.notify("daily"));
+      c.schedule.every("repeat",60000,()=>c.notify("repeat"));
+      c.schedule.at("once",${at + 60000},()=>c.notify("once"));
+      c.onEvent("arm",{source:"test"},()=>c.timers.ensureAt("later",c.now()+60000));
+      c.timers.define("later",()=>c.notify("later"));
+    }`)
+    runtime.ingest({ source: 'test' }); await runtime.drain()
+    await runtime.close()
+    at += 150000
+    runtime = make()
+    await runtime.tick(); await runtime.drain()
+    assert.equal(messages.length, 0)
+    await step(60000)
+    assert.deepEqual(messages.map(message => message.text), ['repeat'])
+    await step(7 * 60000)
+    assert.equal(messages.length, 1)
+    assert.ok(archive.some(record => record.phase === 'schedule_skipped' && record.reason === 'late'))
+    assert.equal(runtime.read({ name: 'rule.js' }).status, 'active')
+  })
+
+  it('validates a one-second named timer against the callback clock despite interpreter latency', async () => {
+    await runtime.close()
+    let inspected
+    runtime = make({ states: () => { inspected?.(); return {} } })
+    await create('module.exports = c => { c.onEvent("arm",{source:"test"},()=>c.timers.ensureAt("later",c.now()+1000)); c.timers.define("later",()=>c.notify("timer")) }')
+    const started = new Promise(resolve => { inspected = resolve })
+    runtime.ingest({ source: 'test' })
+    await started
+    at += 20 // The interpreter returns after the callback's captured clock.
+    await runtime.drain()
+    assert.equal(runtime.read({ name: 'rule.js' }).status, 'active')
+    await step(980)
+    assert.deepEqual(messages.map(message => message.text), ['timer'])
+  })
+
+  it('keeps future occurrences active after a delivery failure without retrying the claimed effect', async () => {
+    await runtime.close()
+    let attempts = 0
+    runtime = make({ notify: async request => { attempts++; if (attempts === 1) throw new Error('Temporary delivery failure'); messages.push(request) } })
+    await create('module.exports = c => c.schedule.every("minute",60000,()=>c.notify("message"))')
+    await step(60000)
+    assert.equal(attempts, 1)
+    assert.equal(runtime.read({ name: 'rule.js' }).status, 'active')
+    assert.match(runtime.read({ name: 'rule.js' }).error, /Temporary delivery failure/)
+    assert.ok(archive.some(record => record.phase === 'effect_failed'))
+    await runtime.tick(); await runtime.drain()
+    assert.equal(attempts, 1)
+    await step(60000)
+    assert.equal(attempts, 2)
+    assert.equal(messages.length, 1)
+    assert.equal(runtime.read({ name: 'rule.js' }).error, '')
+  })
+
+  for (const kind of ['assistant', 'speak', 'write']) {
+    it(`preserves future scheduled ${kind} calls after a service failure`, async () => {
+      await runtime.close()
+      let attempts = 0
+      runtime = make({ [kind]: async () => { attempts++; if (attempts === 1) throw new Error('Service unavailable') } })
+      const callback = kind === 'assistant' ? 'c.assistant.run("Report the weather")' : kind === 'speak' ? 'c.speak("Reminder")' : 'c.actions.write("knx:1/2/4",false)'
+      await create(`module.exports = c => { c.targets(["knx:1/2/4"]); c.schedule.every("minute",60000,()=>${callback}) }`)
+      await step(60000)
+      assert.equal(attempts, 1)
+      assert.equal(runtime.read({ name: 'rule.js' }).status, 'active')
+      assert.ok(archive.some(record => record.phase === 'effect_failed' && record.kind === kind))
+      await runtime.tick(); await runtime.drain()
+      assert.equal(attempts, 1)
+      await step(60000)
+      assert.equal(attempts, 2)
+      assert.equal(runtime.read({ name: 'rule.js' }).error, '')
+    })
+  }
+
+  it('keeps a user pause authoritative when an in-flight service call fails', async () => {
+    await runtime.close()
+    let started, rejectDelivery
+    const deliveryStarted = new Promise(resolve => { started = resolve })
+    runtime = make({ assistant: () => new Promise((resolve, reject) => { rejectDelivery = reject; started() }) })
+    await create('module.exports = c => c.schedule.every("minute",60000,()=>c.assistant.run("Report the weather"))')
+    at += 60000
+    await runtime.tick()
+    await deliveryStarted
+    await manage('pause')
+    rejectDelivery(new Error('Delivery failed after pause'))
+    await runtime.drain()
+    assert.equal(runtime.read({ name: 'rule.js' }).status, 'paused')
+    await step(60000)
+    assert.equal(archive.filter(record => record.phase === 'effect_claimed').length, 1)
+  })
+
   it('persists timer deadlines and memory across restart without duplicate interval effects', async () => {
     await create('module.exports = c => { c.describe("Window"); c.onState("observe", ["knx:1/2/3"], () => { c.memory.set("seen", true); c.timers.ensureAt("later", c.now()+10000) }); c.timers.define("later", () => { if (c.memory.get("seen")) c.notify("Still open") }) }')
     runtime.ingest(event); await runtime.drain()
@@ -327,10 +467,12 @@ describe('Persistent local JavaScript automations', function () {
     const file = runtime.read({ name: 'rule.js' })
     await runtime.save({ ...file, content: file.content.replace('1788894001000', String(at + 1000)) })
     await step(1000)
-    assert.equal(runtime.read({ name: 'rule.js' }).status, 'error')
+    assert.equal(runtime.read({ name: 'rule.js' }).status, 'active')
+    assert.match(runtime.read({ name: 'rule.js' }).error, /Delivery uncertain/)
     assert.ok(archive.some(record => record.phase === 'effect_claimed'))
     await runtime.close(); runtime = make(); await step(1000)
     assert.equal(messages.length, 0)
+    assert.match(runtime.read({ name: 'rule.js' }).error, /Delivery uncertain/)
   })
 
   it('rejects registration effects, async handlers, host access and infinite loops', async () => {
