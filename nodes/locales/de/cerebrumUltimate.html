@@ -69,6 +69,19 @@ Anfragen wie „Ich gehe“, „Gute Nacht“ oder „Kinomodus“ können ohne 
 ### Bestätigungsanfrage für Chat-Schaltflächen
 Solange ein Plan aussteht, enthält Ausgang 3 `msg.cerebrum.confirmationRequest`. Das Objekt enthält `required`, `status`, `sessionId`, `expiresAt`, `commandCount` und zwei Einträge in `actions`. Verwenden Sie `action.label` als Text der Telegram-Schaltfläche, `action.callbackData` als Callback und senden Sie `action.message` an Cerebrum zurück, um ohne Texteingabe zu bestätigen oder abzubrechen.
 
+### Ereignisse aus dem Haus melden
+
+Sie können Cerebrum über einen Gerätefehler oder ein anderes Ereignis informieren, auch wenn ein Telegram-Adapter ausgewählt ist. Verbinden Sie einen **Function**-Knoten mit dem Eingang von Cerebrum und tragen Sie dort zum Beispiel ein:
+
+```javascript
+msg.bypassAdapter = { payload: 'Die Wärmebildkamera in der Garage meldet eine Störung.' };
+return msg;
+```
+
+Ersetzen Sie den Beispieltext durch Ihre Meldung. Cerebrum speichert jede Meldung und beurteilt ihre Bedeutung anhand dessen, was es über Ihr Haus weiß. Nur wichtige Meldungen führen zu einer Benachrichtigung; gewöhnliche oder unveränderte Meldungen können ohne Benachrichtigung gespeichert werden. Bei ausgeschalteter KI wird die Meldung nur gespeichert. Eine solche Meldung führt keine Gerätebefehle aus.
+
+Für Benachrichtigungen über Telegram wählen Sie die Vorlage **windkh** oder **RedBot Telegram** und verbinden Ausgang 3 mit dem passenden Telegram-Sendeknoten. Schreiben Sie dem Bot zuerst eine Nachricht: Cerebrum sendet Benachrichtigungen an den zuletzt eingegangenen Telegram-Chat und merkt sich dieses Ziel auch nach einem Neustart. Solange kein Telegram-Ziel bekannt ist, erscheint eine wichtige Meldung als normaler Text an Ausgang 3. Ohne Telegram-Adapter werden Benachrichtigungen ebenfalls dort als Text ausgegeben.
+
 ### Adapter für Ein-/Ausgangsnachrichten
 Der Bereich **Cerebrum-Pins für Ein- und Ausgang** lädt seine auswählbaren Zuordnungen aus `resources/CerebrumChatAdapterMappings.js`. Die Auswahl eines Adapters installiert intern zwei vordefinierte synchrone JavaScript-Zuordnungen: eine vor der Verarbeitung des Eingangs durch Cerebrum und eine vor der Ausgabe an Ausgang 3. Die Zuordnungen bleiben im Editor verborgen. Syntax- und Laufzeitfehler werden abgefangen und gemeldet, ohne Node-RED anzuhalten.
 

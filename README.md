@@ -145,6 +145,21 @@ The package includes 15 ready-to-import flows for conversations, summaries, inde
 
 Open **Node-RED → Menu → Import → Examples → node-red-contrib-cerebrum-ultimate** and start with **01 - First Conversation**. Each flow contains a short instruction directly in the workspace; integrations that require another package are clearly marked and never include credentials or gateway addresses.
 
+## Messages from Node-RED flows
+
+To tell Cerebrum about an important household event while a Telegram adapter is selected, connect a Function node to Cerebrum's input and send:
+
+```javascript
+msg.bypassAdapter = { payload: 'The garage thermal camera is reporting a fault.' };
+return msg;
+```
+
+`msg.bypassAdapter.payload` must be a non-empty string. It bypasses the input adapter and is recorded as a household report, with its source, in the shared archive. The AI evaluates its importance using the household context and can notify you about significant faults or other important events. Routine updates and repeated reports can remain silent. With AI disabled, the report is archived without an assessment.
+
+Notifications leave output 3 (**AI Assistant**). With the **windkh** or **RedBot Telegram** preset selected, they use the last chat ID received from a real Telegram message by this Cerebrum node; that destination survives restarts. Send the bot an initial message and connect output 3 to the corresponding Telegram sender. Without a known Telegram destination, an important alert still leaves output 3 as plain text in `msg.payload`, with `msg.cerebrum.telegramStatus = "no_recipient"`; Cerebrum does not invent a recipient. Without a Telegram preset, alerts use plain text on output 3.
+
+These reports provide information, not permission to issue commands or control devices. Ordinary Telegram conversations continue to use the selected adapter.
+
 ## Compatible nodes detected
 
 Open the Cerebrum node and use **Compatible nodes detected**. Cerebrum shows the integrations available in the current Node-RED project.

@@ -69,6 +69,19 @@ Des demandes comme « Je pars », « Bonne nuit » ou « Mode cinéma » peuvent
 ### Demande de confirmation pour les boutons du chat
 Lorsqu'un plan est en attente, la sortie 3 contient `msg.cerebrum.confirmationRequest`. L'objet comprend `required`, `status`, `sessionId`, `expiresAt`, `commandCount` et deux éléments dans `actions`. Utilisez `action.label` comme texte du bouton Telegram, `action.callbackData` comme callback et renvoyez `action.message` à Cerebrum pour confirmer ou annuler sans saisir de texte.
 
+### Signaler un événement dans la maison
+
+Vous pouvez informer Cerebrum d’une panne ou d’un autre événement, même si un adaptateur Telegram est sélectionné. Reliez un nœud **Function** à l’entrée de Cerebrum et ajoutez-y, par exemple :
+
+```javascript
+msg.bypassAdapter = { payload: 'La caméra thermique du garage signale une panne.' };
+return msg;
+```
+
+Remplacez le texte par votre signalement. Cerebrum enregistre chaque signalement et évalue son importance à partir de ce qu’il sait de votre maison. Il vous avertit seulement si l’événement est important ; les nouvelles ordinaires ou inchangées peuvent être enregistrées sans notification. Si l’IA est désactivée, le signalement est seulement enregistré. Un tel signalement ne déclenche aucune commande sur les appareils.
+
+Pour recevoir les notifications sur Telegram, sélectionnez le préréglage **windkh** ou **RedBot Telegram** et reliez la sortie 3 au nœud d’envoi Telegram correspondant. Envoyez d’abord un message au bot : Cerebrum utilise la dernière conversation Telegram qui lui a écrit et conserve cette destination après un redémarrage. Tant qu’aucune destination Telegram n’est connue, une alerte importante sort sous forme de texte ordinaire sur la sortie 3. Sans adaptateur Telegram, les notifications sortent également sous forme de texte à cet endroit.
+
 ### Adaptateurs des messages d’entrée/sortie
 La section **Ports d’entrée et de sortie du chat** charge ses mappages sélectionnables depuis `resources/CerebrumChatAdapterMappings.js`. Le choix d’un adaptateur installe en interne deux mappages JavaScript synchrones prédéfinis : un avant le traitement de l’entrée par Cerebrum et un avant l’émission sur la sortie 3. Les mappages restent masqués dans l’éditeur. Les erreurs de syntaxe et d’exécution sont interceptées et signalées sans arrêter Node-RED.
 

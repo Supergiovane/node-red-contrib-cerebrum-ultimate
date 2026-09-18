@@ -69,6 +69,19 @@ Canvas 上的节点状态专门用于显示最近收到的请求，以及 LLM �
 ### 用于聊天按钮的确认请求
 计划等待确认时，输出 3 包含 `msg.cerebrum.confirmationRequest`。该对象包括 `required`、`status`、`sessionId`、`expiresAt`、`commandCount`，以及 `actions` 中的两个项目。使用 `action.label` 作为 Telegram 按钮文本，使用 `action.callbackData` 作为回调，并将 `action.message` 发送回 Cerebrum，即可在无需输入文本的情况下确认或取消。
 
+### 告知 Cerebrum 家中发生的事情
+
+即使已选择 Telegram 适配器，你也可以向 Cerebrum 报告设备故障或家中发生的其他事情。将一个 **Function** 节点连接到 Cerebrum 的输入端，在 Function 中填入以下示例：
+
+```javascript
+msg.bypassAdapter = { payload: '车库的热成像摄像机报告故障。' };
+return msg;
+```
+
+把示例文字替换成你要报告的内容。Cerebrum 会保存每条报告，并结合它对你家的了解判断重要程度。只有重要事件才会触发提醒；普通更新或没有变化的重复报告可以只保存、不提醒。如果关闭了 AI，报告只会被保存。这类报告不会执行设备控制命令。
+
+要通过 Telegram 接收提醒，请选择 **windkh** 或 **RedBot Telegram** 预设，并将输出 3 连接到对应的 Telegram 发送节点。先给机器人发一条消息：Cerebrum 会把提醒发送到最近向机器人发送消息的 Telegram 聊天中，重启后仍会记住这个接收位置。如果尚不知道 Telegram 接收位置，重要提醒仍会以普通文字从输出 3 发出。未选择 Telegram 适配器时，提醒也会以普通文字从输出 3 发出。
+
 ### 输入/输出消息适配器
 **Cerebrum 输入/输出端口**部分从 `resources/CerebrumChatAdapterMappings.js` 加载可选映射。选择适配器会在内部安装两段预定义的同步 JavaScript 映射：一段在 Cerebrum 处理输入前运行，另一段在输出 3 发出消息前运行。这些映射在编辑器中始终保持隐藏。语法和执行错误会被捕获并报告，不会停止 Node-RED。
 

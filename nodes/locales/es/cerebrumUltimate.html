@@ -69,6 +69,19 @@ Solicitudes como «Me voy», «Buenas noches» o «Modo cine» pueden coordinar 
 ### Solicitud de confirmación para botones de chat
 Mientras un plan está pendiente, la salida 3 contiene `msg.cerebrum.confirmationRequest`. El objeto incluye `required`, `status`, `sessionId`, `expiresAt`, `commandCount` y dos elementos en `actions`. Usa `action.label` como texto del botón de Telegram, `action.callbackData` como callback y devuelve `action.message` a Cerebrum para confirmar o cancelar sin escribir texto.
 
+### Informar de un evento en casa
+
+Puedes informar a Cerebrum de una avería o de otro evento aunque esté seleccionado un adaptador Telegram. Conecta un nodo **Function** a la entrada de Cerebrum y añade, por ejemplo:
+
+```javascript
+msg.bypassAdapter = { payload: 'La cámara térmica del garaje informa de una avería.' };
+return msg;
+```
+
+Sustituye el texto por tu aviso. Cerebrum guarda todos los avisos y valora su importancia según lo que sabe de tu casa. Solo envía una notificación si el evento es importante; las novedades habituales o sin cambios pueden guardarse sin notificar. Con la IA desactivada, el aviso solo se guarda. Estos avisos no ejecutan órdenes en los dispositivos.
+
+Para recibir notificaciones por Telegram, selecciona el preajuste **windkh** o **RedBot Telegram** y conecta la salida 3 al nodo de envío Telegram correspondiente. Envía primero un mensaje al bot: Cerebrum utiliza el último chat de Telegram que le ha escrito y recuerda ese destino después de reiniciarse. Mientras no conozca un destinatario Telegram, una alerta importante sale como texto normal por la salida 3. Sin adaptador Telegram, las notificaciones también salen como texto por esa salida.
+
 ### Adaptadores de mensajes de entrada/salida
 La sección **Pines de entrada y salida del chat** carga sus mapeos seleccionables desde `resources/CerebrumChatAdapterMappings.js`. Al elegir un adaptador se instalan internamente dos mapeos JavaScript síncronos predefinidos: uno antes de que Cerebrum procese la entrada y otro antes de emitir por la salida 3. Los mapeos permanecen ocultos en el editor. Los errores de sintaxis y ejecución se capturan y notifican sin detener Node-RED.
 

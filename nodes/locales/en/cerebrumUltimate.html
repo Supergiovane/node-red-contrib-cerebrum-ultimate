@@ -72,7 +72,32 @@ Requests such as “I’m leaving”, “Good night”, or “Cinema mode” can
 While a plan is pending, output 3 contains `msg.cerebrum.confirmationRequest`. The object includes `required`, `status`, `sessionId`, `expiresAt`, `commandCount`, and two entries in `actions`. Use `action.label` as the Telegram button text, `action.callbackData` as its callback, and send `action.message` back to Cerebrum to confirm or cancel without typed text.
 
 ### Input/output message adapters
-The **Cerebrum input and output pins** section loads its selectable mappings from `resources/CerebrumChatAdapterMappings.js`. Selecting an adapter installs two predefined synchronous JavaScript mappings internally: one before Cerebrum processes an input and one before output 3 is emitted. The mappings remain hidden in the editor. Syntax and execution failures are caught and reported without stopping Node-RED.
+In **Cerebrum input and output pins**, choose the adapter for your chat service. Cerebrum will automatically prepare incoming messages and replies in the correct format.
+
+#### Sending updates from your home
+
+You can tell Cerebrum about a fault or another event even when you use Telegram. Add a **Function** node, connect its output to Cerebrum's input, and paste this example:
+
+```javascript
+msg.bypassAdapter = { payload: 'The garage thermal camera is reporting a fault.' };
+return msg;
+```
+
+Replace the example text with what happened. The `msg.bypassAdapter.payload` field must contain text and cannot be empty. This format sends the update straight to Cerebrum, without having to turn it into a Telegram message.
+
+Cerebrum saves the update in shared memory and considers its importance using what it knows about your home. If it considers the event important, it prepares an alert. Routine updates or repeated messages can remain silent. If AI is disabled, the update is still saved, but Cerebrum does not evaluate it.
+
+To receive alerts on **Telegram**:
+
+1. Select the **windkh** or **RedBot Telegram** adapter in Cerebrum's settings.
+2. Connect output **3 – AI Assistant** to the node that sends Telegram messages: `telegram sender` for windkh or `chatbot-telegram-send` for RedBot.
+3. Send the bot an initial message and make sure it reaches Cerebrum. Alerts will then go to the last Telegram chat from which this node received a message. Cerebrum remembers the destination after a restart.
+
+If Cerebrum does not yet have a Telegram chat to send to, the alert still leaves output 3 as plain text. The same applies when you are not using a Telegram adapter.
+
+These updates inform Cerebrum and do not authorize device commands. You can continue chatting with the bot normally.
+
+#### Telegram adapter details
 
 The included **windkh/node-red-contrib-telegrambot** preset follows the package's receiver/sender contract. Connect a `telegram receiver` directly to Cerebrum and output 3 directly to a `telegram sender`. Confirmation uses a one-time Telegram reply keyboard: clicking **Confirm** or **Cancel** returns a normal localized message through the same receiver, so no `telegram event` or callback wiring is required. Legacy `callback_query` messages remain accepted. The input mapping extracts `msg.payload.content`, `msg.payload.chatId`, and the Telegram language. The output mapping creates the required `msg.payload.chatId`, `type`, and `content`, adding `options.reply_markup` from `msg.cerebrum.confirmationRequest` when writes await confirmation. The Telegram package remains a separate optional dependency.
 

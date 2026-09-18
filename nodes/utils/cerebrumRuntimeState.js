@@ -22,6 +22,9 @@ const boundedText = (value, maxBytes) => {
 const validNow = value => isTimestamp(value) && value > 0 ? value : Date.now()
 const entries = value => value instanceof Map ? Array.from(value.entries()) : Array.isArray(value) ? value : []
 const timestamp = value => isTimestamp(value) ? value : 0
+const isTelegramRecipient = value => isRecord(value) &&
+  typeof value.chatId === 'string' && value.chatId.length <= 32 && /^-?\d+$/.test(value.chatId) && /[1-9]/.test(value.chatId) &&
+  typeof value.language === 'string' && value.language === value.language.trim() && !CONTROL_CHARACTER_RE.test(value.language) && Buffer.byteLength(value.language, 'utf8') <= 16
 
 const createEmptyCerebrumRuntimeState = ({ now = Date.now() } = {}) => ({
   version: 1,
@@ -30,6 +33,7 @@ const createEmptyCerebrumRuntimeState = ({ now = Date.now() } = {}) => ({
   webAccessLastSuccessAt: 0,
   webAccessLastError: '',
   cameraWatchLastTriggered: [],
+  telegramRecipient: null,
   learnedContextLimits: [],
   llmPolicy: normalizeLlmPolicyState(),
   proactiveStates: []
@@ -40,6 +44,12 @@ const normalizeCerebrumRuntimeState = (value, { now = Date.now() } = {}) => {
   const source = isRecord(value) ? value : {}
   const target = createEmptyCerebrumRuntimeState({ now: currentTime })
   target.llmPolicy = normalizeLlmPolicyState(source.llmPolicy)
+  if (isTelegramRecipient(source.telegramRecipient)) {
+    target.telegramRecipient = {
+      chatId: source.telegramRecipient.chatId,
+      language: source.telegramRecipient.language
+    }
+  }
   const updatedAt = typeof source.updatedAt === 'string' ? Date.parse(source.updatedAt) : NaN
   if (Number.isFinite(updatedAt)) target.updatedAt = new Date(updatedAt).toISOString()
   target.webRequestTimestamps = (Array.isArray(source.webRequestTimestamps) ? source.webRequestTimestamps : [])
@@ -122,6 +132,9 @@ const parseCerebrumRuntimeState = (content, options = {}) => {
   if (!isTimestamp(source.webAccessLastSuccessAt)) fail('webAccessLastSuccessAt')
   if (typeof source.webAccessLastError !== 'string' || Buffer.byteLength(source.webAccessLastError, 'utf8') > 500) fail('webAccessLastError')
   if (!Array.isArray(source.cameraWatchLastTriggered) || !source.cameraWatchLastTriggered.every(entry => Array.isArray(entry) && entry.length === 2 && isIdentifier(entry[0], 160) && isTimestamp(entry[1]))) fail('cameraWatchLastTriggered')
+  if (Object.prototype.hasOwnProperty.call(source, 'telegramRecipient') && source.telegramRecipient !== null && (
+    !isTelegramRecipient(source.telegramRecipient) || Object.keys(source.telegramRecipient).some(key => !['chatId', 'language'].includes(key))
+  )) fail('telegramRecipient')
   if (!Array.isArray(source.learnedContextLimits) || !source.learnedContextLimits.every(entry => Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string' && HASH_RE.test(entry[0]) && positiveLimit(entry[1]))) fail('learnedContextLimits')
   if (!Array.isArray(source.proactiveStates)) fail('proactiveStates')
   source.proactiveStates.forEach(state => {

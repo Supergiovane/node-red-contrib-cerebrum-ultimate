@@ -20,10 +20,10 @@ function createCerebrumLlmPolicy ({ enabled, persist = () => {}, now = Date.now 
   let state = normalizeLlmPolicyState()
   const allowed = () => enabled() && scope.getStore()?.active === true
   const assertAllowed = () => {
-    if (!allowed()) throw Object.assign(new Error('LLM calls are allowed only during a user chat or an explicit JavaScript assistant.run.'), { code: 'CEREBRUM_LLM_POLICY' })
+    if (!allowed()) throw Object.assign(new Error('LLM calls are allowed only during a user chat, an explicit JavaScript assistant.run or an explicitly submitted household event.'), { code: 'CEREBRUM_LLM_POLICY' })
   }
   const run = async (reason, work) => {
-    if (!['chat', 'javascript'].includes(reason)) throw new Error('Invalid LLM authorization')
+    if (!['chat', 'javascript', 'household_event'].includes(reason)) throw new Error('Invalid LLM authorization')
     const token = { reason, active: true, toTs: now() }
     try { return await scope.run(token, work) } finally { token.active = false }
   }

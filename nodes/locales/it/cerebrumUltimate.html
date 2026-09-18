@@ -72,7 +72,32 @@ Richieste come «Sto uscendo», «Buonanotte» o «Modalità cinema» possono co
 Quando un piano è in attesa, l'uscita 3 contiene `msg.cerebrum.confirmationRequest`. L'oggetto include `required`, `status`, `sessionId`, `expiresAt`, `commandCount` e due elementi in `actions`. Usa `action.label` per il testo del pulsante Telegram, `action.callbackData` per il callback e reinvia `action.message` al nodo Cerebrum per confermare o annullare senza digitare testo.
 
 ### Adattatori messaggi ingresso/uscita
-La sezione **PIN di ingresso e uscita Cerebrum** carica le mappature selezionabili da `resources/CerebrumChatAdapterMappings.js`. Scegliendo un adattatore vengono installate internamente due mappature JavaScript sincrone predefinite: una eseguita prima che Cerebrum elabori l'ingresso e una prima dell'emissione sull'uscita 3. Le mappature restano nascoste nell'editor. Errori di sintassi o esecuzione vengono intercettati e segnalati senza arrestare Node-RED.
+Nella sezione **PIN di ingresso e uscita Cerebrum**, scegli l'adattatore per la chat che usi. Cerebrum preparerà automaticamente i messaggi in ingresso e le risposte nel formato adatto.
+
+#### Inviare segnalazioni dalla casa
+
+Puoi informare Cerebrum di un guasto o di un altro evento anche quando usi Telegram. Aggiungi un nodo **Function**, collegane l'uscita all'ingresso di Cerebrum e incolla questo esempio:
+
+```javascript
+msg.bypassAdapter = { payload: 'La telecamera termica del garage segnala un guasto.' };
+return msg;
+```
+
+Sostituisci il testo dell'esempio con ciò che è successo. Il campo `msg.bypassAdapter.payload` deve contenere del testo e non può essere vuoto. Questo formato fa arrivare la segnalazione direttamente a Cerebrum, senza doverla trasformare in un messaggio Telegram.
+
+Cerebrum conserva la segnalazione nella memoria condivisa e ne valuta l'importanza usando ciò che sa della casa. Se la ritiene importante, prepara un avviso. Per aggiornamenti normali o messaggi ripetuti può restare in silenzio. Se l'AI è disattivata, la segnalazione viene comunque salvata, ma non viene valutata.
+
+Per ricevere gli avvisi anche su **Telegram**:
+
+1. Seleziona l'adattatore **windkh** oppure **RedBot Telegram** nelle impostazioni di Cerebrum.
+2. Collega l'uscita **3 – AI Assistant** al nodo Telegram che invia i messaggi: `telegram sender` per windkh oppure `chatbot-telegram-send` per RedBot.
+3. Scrivi un primo messaggio al bot e assicurati che arrivi a Cerebrum. Da quel momento gli avvisi vengono inviati all'ultima chat Telegram da cui questo nodo ha ricevuto un messaggio. Cerebrum ricorda la destinazione anche dopo un riavvio.
+
+Se non ha ancora una chat Telegram a cui scrivere, l'avviso esce comunque dall'uscita 3 come testo normale. Lo stesso vale quando non usi un adattatore Telegram.
+
+Le segnalazioni servono a informare Cerebrum e non autorizzano comandi ai dispositivi. Puoi continuare a conversare normalmente con il bot.
+
+#### Dettagli degli adattatori Telegram
 
 Il preset incluso **windkh/node-red-contrib-telegrambot** segue il contratto receiver/sender del pacchetto. Collega direttamente un `telegram receiver` a Cerebrum e l'uscita 3 direttamente a un `telegram sender`. La conferma usa una tastiera Telegram temporanea: premendo **Conferma** o **Annulla** viene inviato un normale messaggio localizzato attraverso lo stesso receiver, quindi non servono `telegram event` né collegamenti callback. I vecchi messaggi `callback_query` restano accettati. La mappatura d'ingresso estrae `msg.payload.content`, `msg.payload.chatId` e la lingua Telegram. Quella d'uscita crea i campi richiesti `msg.payload.chatId`, `type` e `content`, aggiungendo `options.reply_markup` da `msg.cerebrum.confirmationRequest` quando una scrittura attende conferma. Il pacchetto Telegram resta una dipendenza opzionale separata.
 

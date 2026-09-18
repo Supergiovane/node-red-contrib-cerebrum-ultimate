@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 — 2026-09-18
+
+- Cerebrum now accepts inbound standard msg, even if a telegram adapter is selected. Seee html help.
+
 ## 0.4.0 — 2026-09-14
 
 - Recover empty or incomplete chat replies and show clearer error messages.

@@ -51,7 +51,50 @@ describe('Cerebrum runtime persistence', () => {
     expect(restored.proactiveStates[0].nextCheckAt).to.equal(Number.MAX_SAFE_INTEGER)
     expect(restored.proactiveStates[0].nextCheckAt).to.be.greaterThan(NOW + 365 * 24 * HOUR_MS)
     expect(restored.proactiveStates[1]).to.include({ openedAt: 0, open: false, nextCheckAt: Number.MAX_SAFE_INTEGER })
-    expect(serialize(saved)).not.to.include('null')
+    expect(serialize(saved.proactiveStates)).not.to.include('null')
+  })
+
+  it('preserves the last Telegram recipient after restart without retaining chat envelopes', () => {
+    for (const chatId of ['123456789', '-1001234567890', '9'.repeat(32)]) {
+      const source = { chatId, language: 'it', payload: 'PRIVATE-MESSAGE', api: { token: 'TOP-SECRET' } }
+      const saved = normalizeCerebrumRuntimeState({ telegramRecipient: source }, { now: NOW })
+      expect(saved.telegramRecipient).to.deep.equal({ chatId, language: 'it' })
+      expect(saved.telegramRecipient).not.to.equal(source)
+      const restored = parseCerebrumRuntimeState(serialize(saved), { now: NOW + 5000 })
+      expect(restored.telegramRecipient).to.deep.equal({ chatId, language: 'it' })
+      expect(serialize(saved)).not.to.include('PRIVATE-MESSAGE').and.not.to.include('TOP-SECRET')
+    }
+  })
+
+  it('accepts legacy checkpoints and an absent Telegram destination', () => {
+    const legacy = createEmptyCerebrumRuntimeState({ now: NOW })
+    delete legacy.telegramRecipient
+    expect(parseCerebrumRuntimeState(serialize(legacy), { now: NOW }).telegramRecipient).to.equal(null)
+    expect(parseCerebrumRuntimeState(serialize({ ...legacy, telegramRecipient: null }), { now: NOW }).telegramRecipient).to.equal(null)
+    expect(normalizeCerebrumRuntimeState({}, { now: NOW }).telegramRecipient).to.equal(null)
+    const recipient = { chatId: '123', language: '' }
+    expect(parseCerebrumRuntimeState(serialize({ ...legacy, telegramRecipient: recipient }), { now: NOW }).telegramRecipient).to.deep.equal(recipient)
+  })
+
+  it('discards invalid Telegram recipients in memory and rejects them in persisted checkpoints', () => {
+    const invalidRecipients = [
+      false, [], '123', {}, { chatId: '123' }, { language: 'it' },
+      ...['', '0', '-0', '000', '-000', '+123', '1.2', '12e3', 'house-events', ' 123', '123 ', '12\n3', '9'.repeat(33), `-${'9'.repeat(32)}`]
+        .map(chatId => ({ chatId, language: 'it' })),
+      { chatId: 123, language: 'it' },
+      ...[null, 123, ' it', 'it ', 'i\nt', 'x'.repeat(17), 'è'.repeat(9)]
+        .map(language => ({ chatId: '123', language }))
+    ]
+    for (const telegramRecipient of invalidRecipients) {
+      expect(normalizeCerebrumRuntimeState({ telegramRecipient }, { now: NOW }).telegramRecipient, JSON.stringify(telegramRecipient)).to.equal(null)
+      const content = serialize({ ...createEmptyCerebrumRuntimeState({ now: NOW }), telegramRecipient })
+      expect(() => parseCerebrumRuntimeState(content, { now: NOW }), JSON.stringify(telegramRecipient)).to.throw('Invalid Cerebrum runtime state: telegramRecipient')
+    }
+    const content = serialize({
+      ...createEmptyCerebrumRuntimeState({ now: NOW }),
+      telegramRecipient: { chatId: '123', language: 'it', payload: 'PRIVATE-MESSAGE' }
+    })
+    expect(() => parseCerebrumRuntimeState(content, { now: NOW })).to.throw('Invalid Cerebrum runtime state: telegramRecipient')
   })
 
   it('saves only operational fields and hashed endpoint identities, excluding messages, catalog data and credentials', () => {
