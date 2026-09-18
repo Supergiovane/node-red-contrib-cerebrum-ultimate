@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 - 2026-09-18
+
+- Compare incoming household reports with the archive as it stood before receipt, so a new report is not presented as its own prior occurrence. Keep it immediately available to subsequent chats.
+- Show receipt and assessment failures for household reports in the Operations view.
+
 ## 1.0.0 - 2026-09-18
 
 - Keep submitted household reports available to Web and Telegram chat directly from the shared archive, including pending assessments and reports no longer in recent conversation. Distinguish reported faults from verified recovery when answering household status questions.

@@ -167,6 +167,29 @@ describe('Cerebrum direct input alongside chat adapters', function () {
     })
   }
 
+  it('does not present the incoming report as an earlier occurrence during its assessment', async () => {
+    create('windkh-telegrambot')
+    const text = 'The garage thermal camera is reporting a fault.'
+    await receive(telegram(42, '/start'))
+    const first = await receive({ payload: Date.now(), bypassAdapter: { payload: text } })
+    const firstPrompt = requests.at(-1).messages.map(message => message.content).join('\n')
+    expect(firstPrompt.split(text)).to.have.length(2)
+    expect(first.payload).to.include({ chatId: '42', content: alert })
+    const firstEvent = archive().find(record => record.data.type === 'household_event')
+    expect(firstPrompt).not.to.include(firstEvent.id)
+    expect(archive().some(record => record.data.operation === 'event_received' && record.data.details.eventId === firstEvent.id)).to.equal(true)
+
+    respond = () => ({ reply: 'Repeated report recorded.', notify: false, language: 'en' })
+    await submitEvent(report(text))
+    const secondPrompt = requests.at(-1).messages.map(message => message.content).join('\n')
+    const events = archive().filter(record => record.data.type === 'household_event')
+    expect(secondPrompt).to.include(firstEvent.id).and.not.include(events[1].id)
+    node._chatContext.turns = []
+    await receive(telegram(42, 'Is everything OK at home?'))
+    const chatPrompt = requests.at(-1).messages.map(message => message.content).join('\n')
+    expect(chatPrompt).to.include(events[0].id).and.include(events[1].id).and.include(text)
+  })
+
   it('uses only bypass text despite an upstream command topic, prompt and payload', async () => {
     create('windkh-telegrambot')
     const text = 'Guasto termocamera ingresso.'
@@ -376,6 +399,7 @@ describe('Cerebrum direct input alongside chat adapters', function () {
     expect(archive().some(item => item.data.type === 'household_event' && item.data.text === text)).to.equal(true)
     expect(errors).to.have.length(1)
     expect(errors[0].message).to.include('assessment is disabled')
+    expect(archive().some(record => record.data.operation === 'event_assessment' && record.data.status === 'failed' && record.data.error.includes('assessment is disabled'))).to.equal(true)
     node.llmEnabled = true
     await node.sidebarAsk('A casa è tutto a posto?')
     expect(JSON.stringify(requests.at(-1).messages)).to.include(text)
