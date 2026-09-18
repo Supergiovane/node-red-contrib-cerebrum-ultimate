@@ -270,9 +270,11 @@ describe('Cerebrum conversation response recovery', function () {
     assert.equal((await ask()).metadata.responseIssue, 'blocked')
     assert.equal(requests.length, 1)
     requests.length = 0
-    respond = () => { node._interactiveChatRequests.clear(); return wireResponse('{}') }
+    let requestStarted
+    const started = new Promise(resolve => { requestStarted = resolve })
+    respond = () => { node._interactiveChatRequests.clear(); requestStarted(); return wireResponse('{}') }
     const pending = ask()
-    await new Promise(resolve => setImmediate(resolve))
+    await started
     assert.equal(requests.length, 1)
     await new Promise(resolve => node.emit('close', resolve))
     node = null

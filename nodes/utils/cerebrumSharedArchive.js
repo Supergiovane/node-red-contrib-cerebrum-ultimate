@@ -344,7 +344,7 @@ function createCerebrumSharedArchive (filePath) {
     }
   }
 
-  async function query ({ operation = 'search', text = '', kind = 'any', offset = 0, limit = 6, maxChars = 6000, snapshot: requestedView, snapshotBytes: requestedSnapshot } = {}) {
+  async function query ({ operation = 'search', text = '', kind = 'any', dataType = '', offset = 0, limit = 6, maxChars = 6000, snapshot: requestedView, snapshotBytes: requestedSnapshot } = {}) {
     if (!['search', 'get'].includes(operation)) return { ok: false, error: 'Use search or get.' }
     if (operation === 'get' && !recordIdPattern.test(text)) return { ok: false, error: 'get requires an exact archive record id returned by search.' }
     const start = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(Number(offset) || 0)))
@@ -385,6 +385,7 @@ function createCerebrumSharedArchive (filePath) {
           return { ok: true, id: record.id, at: record.at, kind: record.kind, channel: record.channel, content: content.slice(start, end), format: 'json', offset: start, nextOffset: end < content.length ? end : null, complete: start === 0 && end === content.length }
         }
         if (kind !== 'any' && record.kind !== kind) continue
+        if (dataType && record.data?.type !== dataType) continue
         const content = stringify(record.data)
         const document = normalizeSearch(content)
         const score = queryWords.reduce((sum, word) => sum + (document.includes(word) ? word.length : 0), 0)

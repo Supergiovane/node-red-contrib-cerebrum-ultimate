@@ -43,6 +43,28 @@ describe('Cerebrum shared household memory', () => {
     expect(fresh.totalMatches).to.equal(12)
   })
 
+  it('selects reports by exact type across nodes and channels without mixing assessments or unrelated observations', async () => {
+    const file = path.join(root, 'common.jsonl')
+    const archive = createCerebrumSharedArchive(file)
+    const peer = createCerebrumSharedArchive(file)
+    const fault = archive.append({ kind: 'observation', nodeId: 'one', channel: 'household-events:one', data: { type: 'household_event', text: 'Termica in errore.' } })
+    archive.append({ kind: 'observation', data: { type: 'household_event_assessment', text: 'Valutazione del guasto.' } })
+    archive.append({ kind: 'conversation', data: { type: 'household_event', text: 'Conversation is not a report.' } })
+    peer.append({ kind: 'observation', data: { type: 'device_state', text: 'household_event in free text is not a report.' } })
+    const recovery = peer.append({ kind: 'observation', nodeId: 'two', channel: 'household-events:two', data: { type: 'household_event', text: 'Termica ripristinata.' } })
+    const snapshot = archive.snapshot()
+    const first = await archive.query({ kind: 'observation', dataType: 'household_event', limit: 1, snapshot })
+    expect(first.totalMatches).to.equal(2)
+    expect(first.items.map(item => item.id)).to.deep.equal([recovery.id])
+    expect(first.items[0].data.text).to.equal('Termica ripristinata.')
+    peer.append({ kind: 'observation', data: { type: 'household_event', text: 'Later report.' } })
+    const second = await archive.query({ kind: 'observation', dataType: 'household_event', limit: 1, offset: first.nextOffset, snapshot })
+    expect(second.items.map(item => item.id)).to.deep.equal([fault.id])
+    expect(second.nextOffset).to.equal(null)
+    const full = await archive.query({ operation: 'get', text: fault.id })
+    expect(full.content).to.include('Termica in errore.')
+  })
+
   it('appends an ordered batch with valid byte offsets using one durable write sequence', () => {
     const filePath = path.join(root, 'common.jsonl')
     const archive = createCerebrumSharedArchive(filePath)

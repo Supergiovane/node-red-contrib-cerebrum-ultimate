@@ -25,6 +25,7 @@ describe('Cerebrum direct input alongside chat adapters', function () {
   const sessionId = 'household-events:direct-input'
   const alert = 'La telecamera termica del garage è guasta: verifica il dispositivo, la copertura di monitoraggio potrebbe essere ridotta.'
   const report = payload => ({ bypassAdapter: { payload } })
+  const thermalFault = 'ATTENZIONE: una Cam Termica è andata in errore! Termica Giardino Ovest 192.168.1.165 - Errore rilevato: Unable to read device information'
   const telegram = (chatId, content = 'Ci sono segnalazioni?') => ({ payload: { type: 'message', content, chatId, transport: 'telegram' } })
   const finishTransport = (callback, response) => callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] })))
 
@@ -249,6 +250,54 @@ describe('Cerebrum direct input alongside chat adapters', function () {
     expect(JSON.stringify(requests.at(-1).messages)).to.include(text).and.include(assessment)
   })
 
+  it('includes a submitted fault in Telegram chat while its assessment is still pending', async () => {
+    create('windkh-telegrambot')
+    let releaseAssessment
+    let assessmentStarted
+    const started = new Promise(resolve => { assessmentStarted = resolve })
+    respond = (request, callback) => {
+      if (requests.length === 1) {
+        releaseAssessment = () => finishTransport(callback, { reply: alert, notify: true, language: 'it' })
+        assessmentStarted()
+        return
+      }
+      return { reply: 'È stato segnalato un guasto alla termica; il ripristino non è confermato.', language: 'it' }
+    }
+    node.emit('input', report(thermalFault))
+    await started
+    try {
+      expect(node._chatContext.turns).to.have.length(0)
+      await receive(telegram(42, 'A casa è tutto a posto?'))
+      expect(JSON.stringify(requests.at(-1).messages)).to.include(thermalFault)
+    } finally {
+      releaseAssessment()
+      await node._householdEventQueue
+    }
+  })
+
+  for (const preset of ['windkh-telegrambot', 'redbot-telegram']) {
+    it(`recalls retained reports and recovery across restart after recent chat eviction (${preset})`, async () => {
+      create(preset)
+      await submitEvent(report(thermalFault))
+      // Recent conversation is only a working view, not the source of reports.
+      node._chatContext.turns = []
+      await new Promise(resolve => node.emit('close', resolve))
+      node = null
+      create(preset)
+      expect(JSON.stringify(node._chatContext.turns)).not.to.include(thermalFault)
+      await receive(telegram(42, 'A casa è tutto a posto?'))
+      const prompt = JSON.stringify(requests.at(-1).messages)
+      expect(prompt).to.include(thermalFault).and.include('RECENT HOUSEHOLD REPORTS')
+      expect(prompt).to.include('recovery').and.include('not instructions')
+
+      const recovery = 'Termica Giardino Ovest 192.168.1.165: connessione ripristinata, lettura informazioni riuscita.'
+      await submitEvent(report(recovery))
+      node._chatContext.turns = []
+      await node.sidebarAsk('Come sta la casa?')
+      expect(JSON.stringify(requests.at(-1).messages)).to.include(thermalFault).and.include(recovery)
+    })
+  }
+
   it('keeps an important alert on the plain output when the Telegram output adapter fails or drops it', async () => {
     create('windkh-telegrambot')
     node.sysLogger = { error: noop, warn: noop }
@@ -327,6 +376,9 @@ describe('Cerebrum direct input alongside chat adapters', function () {
     expect(archive().some(item => item.data.type === 'household_event' && item.data.text === text)).to.equal(true)
     expect(errors).to.have.length(1)
     expect(errors[0].message).to.include('assessment is disabled')
+    node.llmEnabled = true
+    await node.sidebarAsk('A casa è tutto a posto?')
+    expect(JSON.stringify(requests.at(-1).messages)).to.include(text)
   })
 
   it('rejects device commands, routine creation and saved instructions embedded in an event assessment', async () => {

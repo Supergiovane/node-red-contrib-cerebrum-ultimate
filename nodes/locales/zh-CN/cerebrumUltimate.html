@@ -1,194 +1,24 @@
 <script type="text/markdown" data-help-name="cerebrumUltimate">
-Cerebrum 根据用户请求创建可编辑的 JavaScript 家庭自动化例程。它查询安装信息，在必要时提出具体问题，并在本地执行定时和事件处理。KNX 流量统计和诊断仍然可用。
+像日常聊天一样与 Cerebrum 交流：询问家中情况、请它操作设备，或告诉它你希望在什么时间做什么。
 
-编辑器包含 AI 配置、聊天适配器、兼容集成和已保存的指令。网页界面提供对话、JavaScript 自动化、已保存的指令、设备数据和操作记录。
+## 开始聊天
 
-## 输出
-1. **摘要/统计**（`msg.payload` 为 JSON）
-2. **异常**（`msg.payload` 为 JSON）
-3. **AI 助手**（`msg.payload` 为文本，包含 `msg.summary`）
-4. **KNX 操作**（每个通过验证的读取或写入输出一条 Universal Mode 消息）
-5. **TTS Ultimate**（模型每选择一段语音播报，就输出一条播报消息）
+点击 **Open Cerebrum Web Page**，打开对话。如果已经配置好 Telegram，也可以直接给机器人发消息；发送 `/start` 即可收到欢迎消息。
 
-输出 3 和输出 4 发出的每条消息还会在 `msg.inputMessage` 中包含原始输入消息的副本。因此，原始 payload、topic、聊天元数据及其他输入属性都可供后续节点使用。克隆或输出错误会被捕获并报告，不会传播到 Node-RED 运行时。
+## 试着这样说
 
-### 安全首次使用
+- “哪些灯还亮着？”
+- “关闭客厅的灯。”
+- “明天下午 6 点提醒我给植物浇水。”
+- “每天晚上 11 点关闭花园的灯。”
 
-从聊天发送 `/start` 或 `/help`，即可在聊天输出（输出 3）收到确定性且已本地化的欢迎消息，其中包含个性化的安装统计和最多三条安全建议。此引导过程不调用 LLM，不读写 KNX，也不生成 TTS。使用 Telegram 预设时，建议会显示为回复键盘按钮，仅在用户明确选择或发送其中一条后才会执行。在用户明确选择后，初始建议可在需要时执行精确的 KNX 读取；KNX 写入和例程、摄像头操作、TTS、持久记忆更改以及 GA 角色学习仍会被禁止。
+用自己的话描述即可，需要时说明房间、设备或时间。不需要特殊命令，也不用编写代码。
 
-### Web 智能
-Web 访问默认关闭。启用**允许 AI 使用 Web**后，对话模型会针对每个当前请求判断是否需要最新的公开信息，并可在不使用关键词、特定主题逻辑或意图分类器的情况下选择结构化 Web 工具。每个用户回合或用户创建的计划任务执行最多进行三次 Web 操作。所有真实外部 Web 操作共享已配置的滚动小时预算。
+## 对话过程中
 
-Cerebrum 不会启动固定的后台 Web 轮询。如果某个关键细节会实质性改变回答或查询，例如主题、范围、地点、时间窗口或期望结果，模型会提出一个简短的澄清问题，并在用户回答前不执行任何 Web 操作。未来或周期性检查只能通过用户明确的自然语言请求由调度器创建。
+如果缺少信息，Cerebrum 会向你提问，请在同一个聊天中回答。如果它在操作前要求确认，请按提示确认或取消。
 
-每条基于 Web 的回答都包含由运行时验证的引用，其中包括已清理的来源 URL 和检索时间，并在可用时提供发布时间。外部内容是不受信任的数据，绝不是指令，也不能取代助手规则或权限。仅接受大小受限的公开 HTTPS 资源；私有、本地、链路本地及云元数据目标、不安全重定向、已认证浏览和 Cookie 都会被阻止。如果无法验证任何来源，Cerebrum 会说明此限制，而不会生成无来源的回答。
+可执行的操作取决于已连接的设备和设置中允许的权限。如果看到“正在思考…”，请等待回复。
 
-获得已验证的 Web 结果后，如果当前聊天或 AI 教育已授权，模型可组合其他已启用工具。Web 访问绝不会扩大权限：摄像头、TTS 和记忆的可用性，以及 KNX 读写、本地 ETS/DPT 验证和已配置的 KNX 写入确认机制都保持不变。Web 请求会向外部网站或搜索服务公开查询内容及本服务器的公网 IP；KNX/ETS 数据、摄像头内容、聊天标识符、已学习记忆和凭据绝不会被自动加入。
-
-### 用户请求的例程和提醒
-在聊天中描述结果、时间和条件。Cerebrum 查询准确的设备及其能力，并询问仍然缺少的关键细节。它会等待回答，然后才创建代码或发出操作。请求和回答保存在共享对话记忆中。
-
-生成的真实 `.js` 文件保存在 `cerebrumultimatestorage/cerebrum/automations/<node-id>/`。可在 **JavaScript automations** 中查看、编辑、暂停、恢复或删除。定时和事件处理在本地运行，并在重启后保留。
-
-模型用于编写例程；执行时，只有请求的 JavaScript 明确调用 `assistant.run` 才会使用模型，例如查询最新天气。Web、摄像机、ETS/DPT 权限及命令确认设置仍然有效。旧的语义计划保持归档和暂停状态；请请求创建 JavaScript 例程来替代。
-
-## 命令（输入）
-发送 `msg.topic`：
-- `summary`（或空）：立即输出摘要
-- `reset`：清空内部历史、计数器、已学习的家庭记忆、所有持久聊天上下文及此节点的全部计划；节点中配置的 AI 教育保持不变
-- `ask`：向已配置的 LLM 提问
-- `confirm` / `cancel`：无需再次调用 LLM，即可确认或取消待处理的 KNX 命令
-- `clear_chat`：清除当前会话的最近对话、持久指令和待处理命令，并取消该会话的活动计划；其他会话和 AI 教育保持不变
-
-`ask` 的问题建议放在 `msg.prompt`，也可放在 `msg.payload`（字符串）或常见 Telegram 字段 `msg.payload.content` / `msg.payload.text`。
-
-如果处理时间超过 1.2 秒，输出 3 会立即发送本地化的中间消息“我正在思考…”，并设置 `msg.cerebrum.type = "thinking"` 和 `msg.cerebrum.transient = true`。聊天适配器会将其发送给同一用户，最终答案准备好后仍会正常送达。此进度消息绝不会写入对话上下文或学习记忆。
-
-每个 LLM 聊天请求都使用与提供商无关的至少 30 分钟超时。编辑器中无需维护超时字段。这是最长等待时间，并非人为延迟；较快的模型仍会在响应准备好后立即完成。即使达到此限制，Cerebrum 也会说明模型未完成响应，并建议重试或缩减提示上下文。
-
-Cerebrum 提供一个以 KB 为单位的自由数字字段，用于设置最大托管上下文。输入零会自动使用模型已知或检测到的最大值；正值会限制每个请求且不超过物理窗口，并可为未知的兼容端点声明有效限制。完整的已选 ETS 目录保留在节点内，由模型通过有界的本地检索动作查询；只有检索到的对象才进入提示词。搜索覆盖精确地址、ETS 名称、别名、层级、区域、语义、DPT 和数值标签，并支持忽略重音、容忍拼写错误的排序，以及精确查询、区域浏览和命令/状态配对发现。未明确指定时间范围时，KNX 与适配器事件仅覆盖最近 20 分钟。随包提供的帮助、README、Wiki、示例和变更日志不会嵌入提示词；需要时，模型可通过 Web 工具查询 GitHub 上的公开文档。检索到的 ETS 数据、当前请求和存档行各只出现一次，分析块仅保留派生的总线聚合信息。
-
-每次向本地模型发起请求前，Cerebrum 都会在当前 8K/16K 窗口中预留回答空间。系统会自动限制最近的对话轮次、精确存档行、已学习的家庭记忆、Web 结果、计划任务、已检索的 ETS 对象和摄像机元数据。这是在请求前构建有界提示词，并非发生超限错误后的重试；完整的已选 ETS 目录仍可通过本地检索使用。
-
-### ETS 对象访问
-从**已检测到的兼容节点**中的 KNX Ultimate 卡片打开 **Cerebrum Web UI → KNX → ETS 访问**。可以筛选导入列表、全选或全不选，并对匹配的地址批量或逐行设置只读。只有选中的地址可供 Cerebrum 使用。每个选中的地址都处于活动状态且可读取；只读地址仍然可见，但本地验证会拒绝对其执行任何 `GroupValue_Write`。Node-RED flow 中已有的选择会继续生效，并在首次通过 Web 页面保存时自动迁移；后续更改无需 Deploy 即可立即应用。
-
-Canvas 上的节点状态专门用于显示最近收到的请求，以及 LLM 运行期间本地化的“我正在思考…”状态。KNX 报文、网关更新、流量速率、ready 消息和技术结果绝不会覆盖该状态；这些信息仍可通过节点输出、日志和助手数据查看。
-
-网页聊天与 Telegram 共用家庭记忆。完整的收发对话、KNX 和集成观测、工具结果及上下文变更会追加并同步到 `cerebrumultimatestorage/cerebrum/memory/shared/cerebrum-memory.jsonl`，按照配置的历史保留天数保存（默认 30 天）。模型可搜索档案并读取完整记录。渠道标识仅表示来源和回复接收者，不隔离知识。启用 KNX 控制后，将输出 3 连接到聊天发送节点，将输出 4 连接到配置为**通用模式**的 KNX Ultimate 节点。启用确认后，第一条回复会显示 GA、DPT 和 payload，但不会发送写入；同一会话必须在 5 分钟内回复“确认”或“取消”。新请求会替换旧的待处理计划。每条已确认命令都包含 `msg.destination`、`msg.dpt`、`msg.payload` 和 `msg.event = "GroupValue_Write"`。
-最近的会话记忆会紧邻当前请求放置，使本地模型即使面对很大的 KNX 提示，也能保留用户提供的事实，例如首选姓名或语言。模型可以通过 `memoryActions` 持久保存耐久的事实、偏好和指令；这仍是没有短语分类器或 intent 路由的语义工具选择。凭据、安全代码和 API 密钥绝不能被学习。
-
-对于 DPT 1.xxx 写入，AI 生成的安全等价值 `true`/`false`、`1`/`0` 和 `on`/`off` 会在本地校验和输出前统一转换为真正的布尔值。
-
-### 最新 KNX 读取
-当用户明确要求当前或最新状态时，AI 可以查询已导入 ETS 目录中的精确对象，包括状态对象和其他只读对象。输出 4 会发送 `msg.destination`、`msg.dpt`、`msg.event = "GroupValue_Read"` 和 `msg.readstatus = true`。节点会为每个 `GroupValue_Response` 或最新写入等待最多 6 秒，然后在输出 3 返回解码值，并在 `msg.cerebrum.readResults` 中提供详细信息。读取从不需要确认，也绝不会转换为写入。如果小型本地模型省略操作类型和 payload，精确的 ETS 对象会被安全规范化为读取；包含 payload 的项目仍作为经过验证的写入处理。
-
-### 多步骤对话例行程序
-“我要离家”“晚安”或“影院模式”等请求可以在不增加编辑器选项的情况下，根据当前状态协调例行程序。第一次 LLM 处理仅接受精确的 ETS 读取（最多 20 个）；Cerebrum 发送读取，并把最新的 GA/DPT/值结果交给隔离的第二次规划处理。第二次处理最多可准备 12 个已验证写入，但不能再次发起读取循环。启用确认时，整个计划只需一次本地化确认；确认前不会发送任何写入或所请求的 TTS 播报。确认后，每个写入都会重新验证、按顺序转发，并在最多 4 秒内观察总线上匹配的即时反馈。最终回复会区分已观察到反馈的操作与没有即时反馈的操作，但不会把后者报告为设备故障。详细信息位于 `msg.cerebrum.routine`、`readResults`、`verifiedCount` 和 `unverifiedCount`。
-
-### 用于聊天按钮的确认请求
-计划等待确认时，输出 3 包含 `msg.cerebrum.confirmationRequest`。该对象包括 `required`、`status`、`sessionId`、`expiresAt`、`commandCount`，以及 `actions` 中的两个项目。使用 `action.label` 作为 Telegram 按钮文本，使用 `action.callbackData` 作为回调，并将 `action.message` 发送回 Cerebrum，即可在无需输入文本的情况下确认或取消。
-
-### 告知 Cerebrum 家中发生的事情
-
-即使已选择 Telegram 适配器，你也可以向 Cerebrum 报告设备故障或家中发生的其他事情。将一个 **Function** 节点连接到 Cerebrum 的输入端，在 Function 中填入以下示例：
-
-```javascript
-msg.bypassAdapter = { payload: '车库的热成像摄像机报告故障。' };
-return msg;
-```
-
-把示例文字替换成你要报告的内容。Cerebrum 会保存每条报告，并结合它对你家的了解判断重要程度。只有重要事件才会触发提醒；普通更新或没有变化的重复报告可以只保存、不提醒。如果关闭了 AI，报告只会被保存。这类报告不会执行设备控制命令。
-
-要通过 Telegram 接收提醒，请选择 **windkh** 或 **RedBot Telegram** 预设，并将输出 3 连接到对应的 Telegram 发送节点。先给机器人发一条消息：Cerebrum 会把提醒发送到最近向机器人发送消息的 Telegram 聊天中，重启后仍会记住这个接收位置。如果尚不知道 Telegram 接收位置，重要提醒仍会以普通文字从输出 3 发出。未选择 Telegram 适配器时，提醒也会以普通文字从输出 3 发出。
-
-### 输入/输出消息适配器
-**Cerebrum 输入/输出端口**部分从 `resources/CerebrumChatAdapterMappings.js` 加载可选映射。选择适配器会在内部安装两段预定义的同步 JavaScript 映射：一段在 Cerebrum 处理输入前运行，另一段在输出 3 发出消息前运行。这些映射在编辑器中始终保持隐藏。语法和执行错误会被捕获并报告，不会停止 Node-RED。
-
-随附的 **windkh/node-red-contrib-telegrambot** 预设遵循该包的 receiver/sender 消息约定。把 `telegram receiver` 直接连接到 Cerebrum，并把输出 3 直接连接到 `telegram sender`。确认操作使用一次性 Telegram 回复键盘：点击**确认**或**取消**后，会通过同一个 receiver 返回普通的本地化消息，因此不需要 `telegram event` 或 callback 连线。旧的 `callback_query` 消息仍可接受。输入映射会提取 `msg.payload.content`、`msg.payload.chatId` 和 Telegram 语言；输出映射会创建所需的 `msg.payload.chatId`、`type` 和 `content`，并在写入等待确认时从 `msg.cerebrum.confirmationRequest` 添加 `options.reply_markup`。Telegram 包仍是独立的可选依赖项。
-
-使用此预设时，只有将 **Provider** 设置为 **OpenAI-compatible**，Telegram 语音消息（`msg.payload.type = "voice"`）才会被自动处理。Cerebrum 会在下载任何内容前验证提供商，直接复用其 **Endpoint URL** 和 **API key**，并从同一连接派生 `/audio/transcriptions` 与 `/audio/speech`。包含令牌的 `msg.payload.weblink` 仅用于受限下载，并会在消息到达输出或 LLM 之前删除。OGG/Opus 输入使用内置默认值 `gpt-4o-mini-transcribe` 转录；成功请求会收到由 `gpt-4o-mini-tts` 和 `alloy` 生成的原生 Telegram OGG/Opus 回复，同时保留文字说明和确认键盘。如果选择了其他提供商，用户会收到本地化提示，要求改选 OpenAI-compatible 或发送文字。如果语音合成不可用、失败或超过语音限制，则发送完整文字回复。下载的音频和生成的回复文本都会发送到同一个所选提供商。文字消息、照片以及较早保存的 Telegram 映射仍保持兼容。
-
-每条原生语音回复的文字说明都会以本地化的 **AI 生成的语音** 提示开头，Telegram 收件人可以看到该提示。
-
-随附的 **RedBot / node-red-contrib-chatbot (Telegram)** 预设遵循 RedBot 的通用消息格式。将 `chatbot-telegram-receive` 直接连接到 Cerebrum，并将输出 3 直接连接到 `chatbot-telegram-send`；无需单独的 callback 节点，因为 RedBot 会把内联按钮的 postback 转换成普通入站消息。文本和 postback 使用 RedBot 的 `message` payload。Telegram 原生语音以 `type = "audio"` 到达，其中包含已由 RedBot 下载的 OGG/Opus `Buffer`；Cerebrum 无需再次下载即可执行大小和时长限制，使用上文所述的同一个 OpenAI-compatible 提供商进行转录，并返回带文字说明和本地化 AI 生成语音提示的原生 RedBot `audio` payload。当 KNX 写入需要确认时，回复会有意保留为文本 `inline-buttons` payload，因为 RedBot 无法把这些按钮附加到同一条语音消息。输出映射会保留 RedBot 的 `originalMessage`、`chat`、`api` 和 `client` 跟踪数据；旧的已保存 RedBot 映射也会在运行时升级。RedBot 仍是独立的可选依赖项。
-
-### 已检测到的兼容节点
-已安装的自动化软件包可以在运行时向 Cerebrum 发布适配器。请在 **Cerebrum (BETA) → 已检测到的兼容节点** 中管理它们。KNX Ultimate 和 UniFi Protect 使用 Node-RED 原生配置节点选择器：可选择现有网关或控制器，也可使用添加按钮创建和编辑新配置。只有选中的 UniFi Protect 控制器会暴露给此 Cerebrum 节点。其他检测到的摄像机软件包可通过同一套厂商无关协议接入，无需中间摄像机节点或 Flow 连线。
-
-如需搜索 UniFi Protect 的已录制事件并获取事件快照，请直接在 **Protect 控制器** 下输入专用的本地 UniFi OS 用户名和密码。这些凭据归当前 Cerebrum 节点所有，保存在 Node-RED 凭据存储中，并且只会在执行所请求的历史操作时传给所选提供商。Cerebrum 不会归档 UniFi 事件流。
-
-用户可以请求当前快照，或询问视觉模型画面中可见的内容。Telegram 和 RedBot 预设会把图像作为带说明文字的原生照片发送。用户还可以为移动、智能越线或进入入侵/徘徊区域创建持久通知，并可按检测到的人员以及指定名称的线或区域进行限制。这些规则保存在同一个 `cerebrum-chat-context.knxctx` 文件中，并在 Node-RED 重启后恢复。UniFi 事件订阅和快照请求直接通过检测到的提供方完成；不会使用 Cerebrum 输出 4，也不需要中间 Flow 连线。
-
-KNX 和需要保存的集成事件使用 `cerebrumultimatestorage/cerebrum/` 下的每日 `YYYY-MM-DD.knxctx` 档案。历史保留时间默认为 30 天，也适用于共享对话/观测档案及操作日志。清理在部署、恢复后及每天执行，即使 AI 已关闭。共享档案在启动后等待 60 秒，并采用共享该存储的节点中最短的保留期。延长保留期无法恢复已删除的数据。UniFi Protect 实时事件仍为临时数据；其已记录历史在用户请求时直接向来源查询。
-
-### 使用 TTS Ultimate 播报
-将输出 5 连接到可选软件包 `node-red-contrib-tts-ultimate` 中的一个或多个 `ttsultimate` 节点。目标和分发由普通 Node-RED 连线决定；如果 TTS 节点位于另一个 Flow 标签页，请使用 Link Out/Link In。原有的 TTS 节点选择器和内部注入已被移除。输出 1–4 的位置保持不变，但升级后的 Flow 必须实际连接输出 5，语音播报才能到达 TTS Ultimate。
-
-模型会根据当前请求、持久聊天指令和用户管理的 AI 教育自行判断是否准备播报；系统没有播报 intent，也没有触发短语列表。KNX 数值、适配器事件、图像和存档始终是数据而不是指令，但可信的用户指导可以教会模型如何处理这些数据。输出 5 在 `msg.payload` 中发送需要朗读的准确文本，设置 `msg.topic = "cerebrum_announcement"`，并添加 `msg.cerebrum.type = "tts_announcement"`、`msg.cerebrum.sourceNodeId`、`msg.cerebrum.sessionId` 和 `msg.cerebrum.reason`。之后由 TTS Ultimate 处理播放器、语音、音量、提示音和队列。
-
-### 聊天上下文概览
-节点编辑器会显示一张紧凑卡片，汇总聊天可用的来源：默认最近 20 分钟或明确时间范围内的 KNX 与适配器事件、可在本地完整检索且每次仅把已检索对象加入提示词的 ETS 目录、会话和家庭记忆、AI 教育、活动计划及检测到的摄像机。卡片还会显示模型报告的最大运行上下文和上次聊天提示词的实际 UTF-8 大小；提供商返回输入令牌数时使用精确值，否则明确标为估算值。卡片还会列出权威 JSON 计划文件和易读 Markdown 计划文件的绝对路径，以及 KNX 报文与适配器事件归档和每日文件模式 `YYYY-MM-DD.knxctx`。AI 教育从 `cerebrumultimatestorage/cerebrum/config/cerebrum-ai-education-<node-id>.md` 读取，并包含在备份中。
-
-模型会把本地 ETS 目录检索、KNX 读写、摄像机适配器、TTS 播报、持久记忆、Web 访问以及计划/提醒作为结构化工具。Cerebrum 仅使用 Node-RED 来检测已安装的兼容 `-ultimate` 软件包/节点集，并将该清单与已注册集成提供商经过清理的元数据合并。它不会枚举已部署节点，也不会检查连线、Flow 或 Function 源码。明确启用该选项后，隔离的同步 JavaScript 只能访问 `runtime`、`RED.nodes.listTypes()`、`RED.nodes.listNodeSets()`、`RED.integrations`、`question` 和 `sessionId`；不会暴露任何其他 Node-RED API、实时对象、凭据或主机能力。目录检索是确定性的本地操作；运行时验证工具参数、摄像机适配器可用性和安全边界，KNX 写入仍保留完整的本地 ETS/DPT 校验和已配置的确认步骤。
-
-临时本地调试文件 `cerebrum-last-chat-prompt-<节点ID>.txt` 包含最近一次 system/user 提示的脱敏副本，会在每次聊天调用前覆盖，并排除临时摄像机历史证据、API 密钥和 HTTP 标头。
-
-### 编辑和备份 Cerebrum 学习
-Node-RED 的 Cerebrum 配置中，**对话与家庭**选项卡包含**打开 Cerebrum 学习**按钮；它会为当前节点直接打开 Vue Web UI 中的此编辑器。
-
-共享工作视图使用原生 V4 GLOBAL_INSTRUCTION 和 GLOBAL_TURN 记录。现有 V3 指令和对话会自动迁移，在限制最近视图之前先归档所有仍可用的记录。512 KB 限制仅适用于可编辑工作视图。完整 Cerebrum ZIP 备份也包含完整档案。ZIP 备份仅包含 Cerebrum 数据和经过清理的 Cerebrum 设置；不包含 Node-RED Flow、连线、配置节点或凭据。重置工作视图不会删除历史档案。
-
-### ETS 对象访问
-ETS 对象访问是唯一的操作权限依据。**ETS 对象访问**中选中的每个地址都处于活动状态且可读取；除非标记为**只读**，否则也可写入。聊天模型不会收到任何推断出的角色分类，写入授权也不再依赖角色。
-
-## 用户请求的 JavaScript 例行程序
-
-在聊天中描述所需例行程序。Cerebrum 查询设备信息，并在必要时提出具体问题，再生成 JavaScript。
-
-在此保存家庭信息和偏好，然后在聊天中请求创建例行程序。保存指令不会自动生成自动化程序。
-
-模型仅在用户聊天或 JavaScript 显式 assistant.run 任务中调用。习惯学习和定期住宅分析已停用，旧的间隔设置也不会重新启用这些功能。
-
-查看当前设备数据、已记录的观察和旧版归档记忆。
-
-## 快速工作流程：KNX 控制
-1. 将 ETS CSV 导入网关，并配置 LLM 提供商、模型和凭据。
-2. 启用 **LLM 助手**和 **读取 KNX 状态并控制执行器**；保持确认选项启用。
-3. 将聊天输入连接到 Cerebrum，并保留稳定的会话/聊天 ID。
-4. 将输出 3 连接到聊天回复，将输出 4 连接到处于**通用模式**的 KNX Ultimate。
-5. 用户发送请求；当前状态会立即读取，而写入会先显示 GA、DPT 和值，不会立即写入总线。
-6. 同一聊天必须在 5 分钟内准确回复“确认”或“取消”。
-7. 只有“确认”会重新验证并在输出 4 发送命令；请通过 KNX 状态 GA 验证执行结果。
-
-## 配置字段
-以下是编辑器里用户可见的全部字段名称。
-
-### 通用
-- **Gateway**：作为电报来源的 KNX Ultimate 网关/配置节点。
-- **Name**：节点名称与仪表板标题。
-- **Topic**：节点输出使用的基础 topic。
-- **Open Cerebrum Web** 按钮：打开网页仪表板（`/cerebrumUltimate/sidebar/page`）。
-
-### AI 助手
-- **Enable LLM assistant**：启用 Ask/chat 功能。
-- **Provider**：LLM 后端（OpenAI-compatible、Anthropic、Ollama 或 Bionic LM Studio）。
-- **Endpoint URL**：chat/completions 接口 URL。
-- **API key**：API Key（本地 Ollama 可不填；Bionic LM Studio 在未启用服务器身份验证时也可不填）。
-- **Model**：模型 ID/名称。
-- **推理强度**：适用于支持推理强度控制的模型，且不依赖具体提供商。选择**自动**时不发送偏好，并保留模型/提供商的默认值。可明确选择 `none`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`；实际支持情况取决于请求协议和模型。如果该值被拒绝，Cerebrum 会在不发送此偏好的情况下重试。
-- **最大托管上下文 (KB)**：适用于每次模型请求的自由数字限制。`0` 自动使用已知或检测到的最大值；正值设置更低上限，并可为未知兼容模型声明端点的有效限制。
-- **允许 AI 使用 Web**：默认关闭。允许模型按语义选择通用 Web 工具，并返回已验证、已引用的来源。
-- **每小时最多 Web 调用次数**：对话和用户创建的计划任务共享滚动预算。每个回合或计划任务执行最多使用三次操作。
-- **允许 AI 使用隔离的 JavaScript 查询兼容集成清单**：默认关闭。允许模型筛选仅包含已安装 `-ultimate` 软件包/节点集和经过清理的提供商元数据的不可变快照。生成的代码只能访问 `runtime`、`RED.nodes.listTypes()`、`RED.nodes.listNodeSets()`、`RED.integrations`、`question` 和 `sessionId`；无法访问已部署节点、连线、Flow、Function 源码、实时 Node-RED 对象、凭据、文件、网络、部署或消息发送。结果会发送给所选模型提供商。
-- **Telegram 语音**：仅在选择 **OpenAI-compatible** 提供商时可用。它会自动复用该提供商的端点和 API 密钥，并使用内置默认值 `gpt-4o-mini-transcribe`、`gpt-4o-mini-tts` 和 `alloy`；不再提供单独的语音设置。
-- **聊天模型兼容性**：所选模型必须支持已配置的 Chat Completions 端点。刷新模型列表时，会排除仅支持旧版 completions 的模型，例如 `gpt-3.5-turbo-instruct`。如果提供商拒绝自定义 temperature 值或令牌限制参数，Cerebrum 会仅移除或替换不兼容字段后重试。
-- **允许 AI 读取 KNX 状态并控制执行器**：启用输出 4，默认关闭。所有选中的 ETS 对象都可读取；所有未标记为**只读**的选中对象都可写入。未知、DPT 不匹配、无效或数量过多的操作，以及向只读对象的写入，都会在本地被拒绝。
-- **发送 KNX 命令前请求确认**：默认启用。先显示已验证的修改，在同一聊天会话确认前不会发送任何 KNX 命令。有命令等待确认时，回复始终会使用当前请求的语言附加准确的确认或取消说明。命令会在输出前再次验证。
-- **输入/输出消息适配器**：默认为**无适配器**。选择后会加载预定义的输入和输出映射；两者在编辑器中始终保持隐藏。
-- **AI 教育**：用户管理的指令，从 `cerebrumultimatestorage/cerebrum/config/cerebrum-ai-education-<node-id>.md` 读取，使用**完成**保存，并包含在备份中。模型会读取，但绝不会写入。长期主动家庭策略在这里定义；聊天中要求记住的事实和偏好进入学习记忆，一次性或周期性的计划、提醒、监测和未来命令进入语义调度器，无需触发短语或 intent 路由。
-- 软件包附带的帮助、README、更新日志、Wiki 和示例片段不会加入 Telegram、RedBot 或自定义 CHAT 的提示词；仅网页助手在回答软件包技术问题时仍可使用这些内容。
-- **Refresh** 按钮：请求 provider 并加载可用模型 ID。加载期间图标会旋转；成功完成时不会显示额外消息。
-
-### Ollama 快速配置（本地）
-- 选择 **Provider = Ollama**。
-- 默认 endpoint：`http://localhost:11434/api/chat`。
-- 若未发现本地模型：
-  - **1) Download model**：打开 **Model library** 页面。
-  - **2) Install it**：在本机下载并安装模型（例如 `llama3.1`）。
-- 在刷新/安装模型时，Cerebrum 也会在可能情况下尝试自动启动 Ollama 服务。
-- 若安装因连接错误失败，请确认 Ollama 已运行（桌面应用或 `ollama serve`）。
-- `/api/show` 报告的最大上下文会作为 `num_ctx` 使用；配置 **最大托管上下文 (KB)** 时会受其限制，并且永远不会超过模型声明的物理上限。
-- 若 Node-RED 运行在 Docker 中，endpoint 请使用 `host.docker.internal` 替代 `localhost`。
-
-### Bionic LM Studio 快速配置（本地）
-- 选择 **Provider = Bionic LM Studio**。
-- 在 LM Studio 的 **Developer** 页面启动 API 服务，或运行 `lms server start`。
-- 默认 endpoint：`http://localhost:1234/v1/chat/completions`。
-- 点击 **Refresh** 加载 `/v1/models` 提供的全部模型；未配置模型时会自动选择第一个。
-- 如果模型已加载，Cerebrum 会保留其当前上下文长度。Cerebrum 不会通过管理 API 加载未运行的 Bionic 模型：首次聊天请求会让 Bionic 根据该模型已保存的默认值进行 JIT 加载。已配置的限制可以缩小提示预算，但绝不会增大模型的当前窗口。
-- 除非在 LM Studio 服务设置中启用了身份验证，否则 API Key 可留空。在 Docker 中请将 `localhost` 替换为 `host.docker.internal`。
-
-## 安全说明
-启用 LLM 后，KNX 流量上下文可能发送到所配置的 endpoint。若需严格本地化，请使用本地 provider。输出 4 上的命令仅表示已通过本地验证并转发到 flow，并不能证明执行器已执行；需要确认时请使用 KNX 状态 GA。
+网页聊天和 Telegram 共用家庭信息。如果使用在线 AI 服务，回答所需的数据会发送到该服务。
 </script>

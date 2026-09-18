@@ -1,194 +1,24 @@
 <script type="text/markdown" data-help-name="cerebrumUltimate">
-Cerebrum crée des routines domotiques JavaScript modifiables à partir des demandes des utilisateurs. Il recherche les détails de l’installation, pose des questions précises si nécessaire et exécute les horaires et les événements localement. Les statistiques et le diagnostic KNX restent disponibles.
+Parlez à Cerebrum comme dans une conversation ordinaire : posez des questions sur la maison, demandez une action sur un appareil ou décrivez ce que vous souhaitez faire à une heure précise.
 
-L’éditeur contient la configuration IA, les adaptateurs de chat, les intégrations compatibles et les instructions enregistrées. L’interface Web propose conversation, automatisations JavaScript, instructions enregistrées, données des appareils et opérations.
+## Commencer une conversation
 
-## Sorties
-1. **Résumé/Stats** (`msg.payload` JSON)
-2. **Anomalies** (`msg.payload` JSON)
-3. **Assistant IA** (`msg.payload` texte, avec `msg.summary`)
-4. **Opérations KNX** (un message Universal Mode par lecture ou écriture validée)
-5. **TTS Ultimate** (un message d'annonce par texte parlé choisi par le modèle)
+Cliquez sur **Open Cerebrum Web Page** et ouvrez la conversation. Si Telegram est déjà configuré, vous pouvez aussi écrire au bot ; envoyez `/start` pour recevoir un message de bienvenue.
 
-Chaque message émis par les sorties 3 et 4 contient également une copie du message d'entrée original dans `msg.inputMessage`. Le payload, le topic, les métadonnées du chat et toutes les autres propriétés d'entrée restent ainsi disponibles pour les nœuds suivants. Les erreurs de clonage ou d'envoi sont interceptées et signalées sans se propager au runtime Node-RED.
+## Essayez ces demandes
 
-### Premier démarrage sûr
+- « Quelles lumières sont allumées ? »
+- « Éteins les lumières du salon. »
+- « Rappelle-moi d’arroser les plantes demain à 18 h. »
+- « Éteins les lumières du jardin tous les soirs à 23 h. »
 
-Envoyez `/start` ou `/help` depuis un chat pour recevoir sur la sortie chat (sortie 3) un accueil déterministe et localisé, avec des statistiques personnalisées de l'installation et jusqu'à trois suggestions sûres. Cet onboarding n'appelle pas le LLM, ne lit ni n'écrit KNX et ne génère aucun TTS. Avec le préréglage Telegram, les suggestions apparaissent sous forme de boutons du clavier de réponse et ne sont exécutées qu'après la sélection ou l'envoi explicite de l'une d'elles par l'utilisateur. Après cette sélection explicite, une suggestion de démarrage peut effectuer des lectures KNX exactes si nécessaire ; les écritures et routines KNX, les actions de caméra, le TTS, les modifications de la mémoire persistante et l'apprentissage des rôles GA restent bloqués.
+Utilisez vos propres mots, en précisant la pièce, l’appareil ou l’heure si nécessaire. Aucun code ni commande spéciale n’est nécessaire.
 
-### Intelligence Web
-L'accès Web est désactivé par défaut. Lorsque **Autoriser l'IA à utiliser le Web** est activé, le modèle conversationnel décide pour chaque demande courante si des informations publiques à jour sont nécessaires et peut choisir l'outil Web structuré sans mot-clé, logique propre à un sujet ni classificateur d'intention. Chaque demande utilisateur ou exécution d'une tâche planifiée créée par l'utilisateur peut effectuer au maximum trois opérations Web au total. Toutes les opérations Web externes réelles partagent le budget horaire glissant configuré.
+## Pendant la conversation
 
-Cerebrum ne démarre aucun cycle fixe de polling Web en arrière-plan. Si un détail essentiel modifierait sensiblement la réponse ou la requête—par exemple le sujet, la portée, le lieu, la période ou le résultat attendu—le modèle pose une seule question concise et n'effectue aucune opération Web avant la réponse de l'utilisateur. Les vérifications futures ou récurrentes sont créées uniquement à partir d'une demande explicite en langage naturel via le planificateur.
+S’il manque un détail, Cerebrum vous pose une question : répondez dans la même conversation. S’il demande une confirmation avant d’agir, suivez les indications pour confirmer ou annuler.
 
-Toute réponse fondée sur le Web contient des citations validées par le runtime, avec une URL source assainie et l'heure de consultation, ainsi que l'heure de publication lorsqu'elle est disponible. Le contenu externe est une donnée non fiable, jamais une instruction, et ne peut remplacer les règles ou autorisations de l'assistant. Seules des ressources HTTPS publiques et limitées sont acceptées ; les destinations privées, locales, link-local et de métadonnées cloud, les redirections non sûres, la navigation authentifiée et les cookies sont bloqués. Si aucune source ne peut être vérifiée, Cerebrum signale cette limite au lieu de générer une réponse sans source.
+Les actions possibles dépendent de vos appareils connectés et des autorisations définies dans les réglages. Si « Je réfléchis… » s’affiche, attendez la réponse.
 
-Lorsque des résultats Web vérifiés sont disponibles, le modèle peut composer les autres outils activés si le chat courant ou l'Éducation de l'IA l'y autorise. L'accès Web n'étend jamais les autorisations : la disponibilité des caméras, du TTS et de la mémoire, ainsi que les lectures et écritures KNX, la validation locale ETS/DPT et la confirmation configurée des écritures KNX restent inchangées. Les requêtes Web exposent la requête et l'adresse IP publique de ce serveur aux sites externes ou au service de recherche ; les données KNX/ETS, images de caméra, identifiants de chat, mémoire apprise et identifiants d'accès ne sont jamais ajoutés automatiquement.
-
-### Routines et rappels demandés
-Décrivez dans le chat le résultat, les horaires et les conditions. Cerebrum recherche les appareils exacts et leurs capacités, puis demande les précisions essentielles manquantes. Il attend la réponse avant de créer du code ou de lancer une action. La demande et les réponses restent dans la mémoire partagée des conversations.
-
-Le résultat est un véritable fichier `.js` sous `cerebrumultimatestorage/cerebrum/automations/<node-id>/`. Dans **JavaScript automations**, vous pouvez le consulter, le modifier, le suspendre, le reprendre ou le supprimer. Les horaires et événements fonctionnent localement et persistent après les redémarrages.
-
-Le modèle rédige les routines et n’intervient pendant leur exécution que si le JavaScript demandé appelle explicitement `assistant.run`, par exemple pour obtenir la météo actuelle. Les permissions Web, caméra, ETS/DPT et la confirmation des commandes restent applicables. Les anciennes planifications sémantiques restent archivées et suspendues ; demandez leur remplacement par des routines JavaScript.
-
-## Commandes (entrée)
-Envoyez `msg.topic` :
-- `summary` (ou vide) : envoie le résumé immédiatement
-- `reset` : efface l'historique, les compteurs, la mémoire domestique apprise, tous les contextes de chat persistants et toutes les planifications de ce nœud ; l'Éducation IA configurée dans le nœud reste inchangée
-- `ask` : envoie une question au LLM configuré
-- `confirm` / `cancel` : confirme ou annule les commandes KNX en attente sans rappeler le LLM
-- `clear_chat` : efface les échanges récents, les instructions persistantes et les commandes en attente de la session courante, puis annule ses planifications actives ; les autres sessions et l'Éducation IA restent inchangées
-
-Pour `ask`, mettez la question dans `msg.prompt` (recommandé), `msg.payload` (chaîne), ou les champs Telegram courants `msg.payload.content` / `msg.payload.text`.
-
-Si le traitement dure plus de 1,2 seconde, la sortie 3 émet immédiatement le message intermédiaire localisé « Je réfléchis… », avec `msg.cerebrum.type = "thinking"` et `msg.cerebrum.transient = true`. L’adaptateur de chat l’envoie au même utilisateur, puis la réponse finale arrive normalement dès qu’elle est prête. Ce message de progression n’est jamais enregistré dans le contexte de conversation ni dans la mémoire apprise.
-
-Chaque requête de chat LLM utilise un délai d’attente minimal de 30 minutes, indépendamment du fournisseur. Aucun champ de délai n’est à gérer dans l’éditeur. Il s’agit d’une attente maximale, et non d’un délai artificiel : les modèles plus rapides terminent toujours dès que leur réponse est prête. Si même cette limite est atteinte, Cerebrum indique que le modèle n’a pas terminé et conseille de réessayer ou de réduire le contexte du prompt.
-
-Cerebrum propose un champ numérique libre pour le contexte géré maximal en KB. Zéro utilise automatiquement le maximum connu ou détecté du modèle ; une valeur positive limite chaque requête sans dépasser la fenêtre physique et peut déclarer la limite effective d’un endpoint compatible inconnu. Le catalogue ETS sélectionné complet reste dans le nœud et le modèle l’interroge via des actions de retrieval local limitées ; seuls les objets récupérés entrent dans le prompt. La recherche couvre les adresses exactes, noms ETS, alias, hiérarchie, zones, sémantique, DPT et libellés de valeurs, avec un classement insensible aux accents et tolérant aux fautes, ainsi que la consultation exacte, la navigation par zone et la découverte des couples commande/état. Sans intervalle explicite, les événements KNX et adaptateurs couvrent les 20 dernières minutes. L’aide, le README, le wiki, les exemples et le changelog fournis ne sont jamais intégrés ; si nécessaire, le modèle peut consulter la documentation GitHub publique via l’outil Web. Les données ETS récupérées, la requête courante et les lignes d’archive n’apparaissent qu’une fois ; le bloc d’analyse ne conserve que les agrégats dérivés du bus.
-
-Avant chaque requête à un modèle local, Cerebrum réserve de la place pour la réponse dans la fenêtre active de 8K/16K. Il limite automatiquement les tours de conversation les plus récents, les lignes exactes des archives, la mémoire apprise de la maison, les résultats Web, les planifications, les objets ETS récupérés et les métadonnées des caméras. Il s’agit d’une construction préventive du prompt, et non d’une nouvelle tentative après une erreur de taille ; le catalogue ETS sélectionné complet reste disponible localement par retrieval.
-
-### Accès aux objets ETS
-Ouvrez **Interface Web Cerebrum → KNX → Accès ETS** depuis la carte KNX Ultimate sous **Nœuds compatibles détectés**. Filtrez la liste importée, sélectionnez tout ou rien et appliquez la lecture seule aux adresses correspondantes en bloc ou ligne par ligne. Seules les adresses sélectionnées sont accessibles à Cerebrum. Toute adresse sélectionnée est active et lisible ; les adresses en lecture seule restent visibles, mais la validation locale refuse tout `GroupValue_Write` vers elles. Les sélections existantes du flow Node-RED restent actives et sont migrées automatiquement lors du premier enregistrement Web ; les modifications suivantes s’appliquent immédiatement sans déploiement.
-
-L’état du nœud sur le canvas est volontairement réservé à la dernière demande reçue et au message localisé « Je réfléchis… » pendant l’exécution du LLM. Les télégrammes KNX, mises à jour de la passerelle, débits de trafic, messages ready et résultats techniques ne l’écrasent jamais ; ils restent disponibles via les sorties, les journaux et les données de l’Assistant.
-
-Le Web et Telegram utilisent une mémoire commune de la maison. Les conversations entrantes et sortantes complètes, les observations KNX et des intégrations, les résultats des outils et les changements de contexte sont ajoutés et synchronisés dans `cerebrumultimatestorage/cerebrum/memory/shared/cerebrum-memory.jsonl`, selon la durée de conservation configurée (30 jours par défaut). Le modèle peut rechercher et récupérer les enregistrements complets. Les identifiants des canaux indiquent la provenance et le destinataire, sans isoler les connaissances. Lorsque le contrôle KNX est activé, reliez la sortie 3 au nœud d'envoi du chat et la sortie 4 à un nœud KNX Ultimate en **mode universel**. Avec la confirmation active, la première réponse affiche GA, DPT et payload sans émettre d’écriture ; la même session doit répondre `CONFIRMER` ou `ANNULER` dans les 5 minutes. Une nouvelle demande remplace tout plan précédent. Chaque commande confirmée contient `msg.destination`, `msg.dpt`, `msg.payload` et `msg.event = "GroupValue_Write"`.
-La mémoire récente de la session est placée juste à côté de la demande actuelle afin que les modèles locaux conservent les faits fournis par l'utilisateur, comme son nom préféré ou sa langue, même dans un long prompt KNX. Le modèle peut rendre persistants les faits, préférences et instructions durables via `memoryActions` ; cela reste un choix sémantique d'outil, sans classificateur de phrases ni routage par intents. Les identifiants, codes de sécurité et clés API ne doivent jamais être appris.
-
-Pour les écritures DPT 1.xxx, les équivalents sûrs produits par l’IA `true`/`false`, `1`/`0` et `on`/`off` sont normalisés en véritables booléens avant la validation locale et la sortie.
-
-### Lectures KNX actualisées
-Lorsque l’utilisateur demande explicitement un état actuel ou actualisé, l’IA peut interroger les objets exacts du catalogue ETS importé, y compris les objets d’état et autres objets en lecture seule. La sortie 4 émet `msg.destination`, `msg.dpt`, `msg.event = "GroupValue_Read"` et `msg.readstatus = true`. Le nœud attend jusqu’à 6 secondes chaque `GroupValue_Response` ou écriture récente, puis renvoie les valeurs décodées sur la sortie 3 et les détails dans `msg.cerebrum.readResults`. Les lectures ne nécessitent jamais de confirmation et ne sont jamais transformées en écritures. Si un petit modèle local omet le type d’opération et le payload, les objets ETS exacts sont normalisés en toute sécurité comme lectures ; un élément contenant un payload reste une écriture validée.
-
-### Routines conversationnelles multi-étapes
-Des demandes comme « Je pars », « Bonne nuit » ou « Mode cinéma » peuvent coordonner une routine tenant compte de l’état courant sans nouvelle option dans l’éditeur. Au premier passage LLM, seules les lectures ETS exactes sont acceptées (20 au maximum) ; Cerebrum les envoie puis fournit les résultats actualisés GA/DPT/valeur à un second passage de planification isolé. Celui-ci peut préparer jusqu’à 12 écritures validées, sans lancer un nouveau cycle de lecture. Lorsque la confirmation est active, le plan complet ne demande qu’une confirmation localisée et aucune écriture ni annonce TTS demandée n’est émise auparavant. Après confirmation, chaque écriture est revalidée, transmise dans l’ordre et observée jusqu’à 4 secondes pour détecter un retour immédiat correspondant sur le bus. La réponse finale distingue les retours observés des opérations sans retour immédiat, sans déclarer pour autant une panne de l’appareil. Les détails figurent dans `msg.cerebrum.routine`, `readResults`, `verifiedCount` et `unverifiedCount`.
-
-### Demande de confirmation pour les boutons du chat
-Lorsqu'un plan est en attente, la sortie 3 contient `msg.cerebrum.confirmationRequest`. L'objet comprend `required`, `status`, `sessionId`, `expiresAt`, `commandCount` et deux éléments dans `actions`. Utilisez `action.label` comme texte du bouton Telegram, `action.callbackData` comme callback et renvoyez `action.message` à Cerebrum pour confirmer ou annuler sans saisir de texte.
-
-### Signaler un événement dans la maison
-
-Vous pouvez informer Cerebrum d’une panne ou d’un autre événement, même si un adaptateur Telegram est sélectionné. Reliez un nœud **Function** à l’entrée de Cerebrum et ajoutez-y, par exemple :
-
-```javascript
-msg.bypassAdapter = { payload: 'La caméra thermique du garage signale une panne.' };
-return msg;
-```
-
-Remplacez le texte par votre signalement. Cerebrum enregistre chaque signalement et évalue son importance à partir de ce qu’il sait de votre maison. Il vous avertit seulement si l’événement est important ; les nouvelles ordinaires ou inchangées peuvent être enregistrées sans notification. Si l’IA est désactivée, le signalement est seulement enregistré. Un tel signalement ne déclenche aucune commande sur les appareils.
-
-Pour recevoir les notifications sur Telegram, sélectionnez le préréglage **windkh** ou **RedBot Telegram** et reliez la sortie 3 au nœud d’envoi Telegram correspondant. Envoyez d’abord un message au bot : Cerebrum utilise la dernière conversation Telegram qui lui a écrit et conserve cette destination après un redémarrage. Tant qu’aucune destination Telegram n’est connue, une alerte importante sort sous forme de texte ordinaire sur la sortie 3. Sans adaptateur Telegram, les notifications sortent également sous forme de texte à cet endroit.
-
-### Adaptateurs des messages d’entrée/sortie
-La section **Ports d’entrée et de sortie du chat** charge ses mappages sélectionnables depuis `resources/CerebrumChatAdapterMappings.js`. Le choix d’un adaptateur installe en interne deux mappages JavaScript synchrones prédéfinis : un avant le traitement de l’entrée par Cerebrum et un avant l’émission sur la sortie 3. Les mappages restent masqués dans l’éditeur. Les erreurs de syntaxe et d’exécution sont interceptées et signalées sans arrêter Node-RED.
-
-Le préréglage inclus **windkh/node-red-contrib-telegrambot** suit le contrat receiver/sender du paquet. Connectez directement un `telegram receiver` à Cerebrum et la sortie 3 à un `telegram sender`. La confirmation utilise un clavier de réponse Telegram temporaire : un appui sur **Confirmer** ou **Annuler** renvoie un message localisé normal par le même receiver ; aucun `telegram event` ni câblage de callback n’est nécessaire. Les anciens messages `callback_query` restent acceptés. Le mappage d’entrée extrait `msg.payload.content`, `msg.payload.chatId` et la langue Telegram. Le mappage de sortie crée `msg.payload.chatId`, `type` et `content`, puis ajoute `options.reply_markup` depuis `msg.cerebrum.confirmationRequest` lorsqu’une écriture attend confirmation. Le paquet Telegram reste une dépendance optionnelle distincte.
-
-Avec ce préréglage, un message vocal Telegram (`msg.payload.type = "voice"`) n’est traité automatiquement que lorsque **Provider** est réglé sur **OpenAI-compatible**. Avant tout téléchargement, Cerebrum vérifie le fournisseur, réutilise son **Endpoint URL** et sa **API key**, puis dérive `/audio/transcriptions` et `/audio/speech` de cette même connexion. Le lien `msg.payload.weblink`, qui contient le jeton, sert uniquement au téléchargement limité et est supprimé avant que le message n’atteigne les sorties ou le LLM. L’entrée OGG/Opus est transcrite avec la valeur intégrée `gpt-4o-mini-transcribe` ; une demande réussie reçoit une réponse Telegram OGG/Opus native générée avec `gpt-4o-mini-tts` et `alloy`, tout en conservant la légende et l’éventuel clavier de confirmation. Si un autre fournisseur est sélectionné, l’utilisateur reçoit une instruction localisée lui demandant de choisir OpenAI-compatible ou d’envoyer du texte. Si la synthèse est indisponible, échoue ou dépasse la limite vocale, la réponse complète est envoyée sous forme de texte. L’audio téléchargé et le texte de réponse sont transmis au même fournisseur sélectionné. Les messages texte, les photos et les anciens mappages Telegram enregistrés restent compatibles.
-
-La légende de chaque réponse vocale native commence par la mention localisée **Voix générée par l’IA**, visible par le destinataire Telegram.
-
-Le préréglage inclus **RedBot / node-red-contrib-chatbot (Telegram)** suit le format de message commun de RedBot. Connectez directement `chatbot-telegram-receive` à Cerebrum et la sortie 3 à `chatbot-telegram-send` ; aucun nœud de callback séparé n’est nécessaire, car RedBot convertit les postbacks des boutons inline en messages entrants ordinaires. Le texte et les postbacks utilisent le payload RedBot `message`. Un message vocal Telegram natif arrive avec `type = "audio"` et le `Buffer` OGG/Opus déjà téléchargé par RedBot : Cerebrum applique les limites de taille et de durée sans second téléchargement, le transcrit avec le même fournisseur OpenAI-compatible décrit ci-dessus et répond avec un payload RedBot `audio` natif, sa légende textuelle et la mention localisée de voix générée par l’IA. Lorsqu’une écriture KNX exige une confirmation, la réponse reste volontairement un payload texte `inline-buttons`, car RedBot ne peut pas joindre ces boutons au même message vocal. Le mappage de sortie conserve les données de suivi RedBot `originalMessage`, `chat`, `api` et `client` ; les anciens mappages RedBot enregistrés sont également mis à niveau à l’exécution. RedBot reste une dépendance optionnelle distincte.
-
-### Nœuds compatibles détectés
-Les paquets d’automatisation installés peuvent publier des adaptateurs pour Cerebrum à l’exécution. Gérez-les dans **Cerebrum (BETA) → Nœuds compatibles détectés**. KNX Ultimate et UniFi Protect utilisent les sélecteurs natifs de nœuds de configuration Node-RED : choisissez une passerelle ou un contrôleur existant, ou utilisez le bouton d’ajout pour en créer et modifier un. Seul le contrôleur UniFi Protect sélectionné est exposé à ce nœud Cerebrum. Les autres paquets caméra détectés peuvent utiliser le même contrat indépendant du fabricant, sans nœud caméra intermédiaire ni câblage de flow.
-
-Pour rechercher les événements enregistrés par UniFi Protect et récupérer leurs instantanés, saisissez un utilisateur UniFi OS local dédié et son mot de passe directement sous **Contrôleur Protect**. Ces identifiants appartiennent à ce nœud Cerebrum, restent dans le magasin d’identifiants de Node-RED et ne sont transmis au fournisseur sélectionné que pour l’opération historique demandée. Cerebrum n’archive pas le flux d’événements UniFi.
-
-L’utilisateur peut demander une capture actuelle ou demander au modèle de vision ce qui est visible. Les préréglages Telegram et RedBot envoient l’image comme photo native avec une légende. L’utilisateur peut aussi créer des notifications persistantes pour un mouvement, le franchissement d’une ligne intelligente ou l’entrée dans une zone d’intrusion/de stationnement, avec une limitation facultative aux personnes détectées et à une ligne ou zone nommée précise. Ces règles sont stockées dans le même fichier `cerebrum-chat-context.knxctx` et restaurées après les redémarrages de Node-RED. Les abonnements aux événements UniFi et les demandes de capture passent directement par le fournisseur détecté ; la sortie 4 de Cerebrum et un câblage intermédiaire ne sont pas nécessaires.
-
-Les événements KNX et les événements conservés des intégrations utilisent des archives quotidiennes `YYYY-MM-DD.knxctx` sous `cerebrumultimatestorage/cerebrum/`. La durée de conservation configurable est de 30 jours par défaut et concerne aussi l’archive partagée des conversations/observations et le journal des opérations. Le nettoyage suit le deploy, une restauration et un rythme quotidien, même sans IA. L’archive partagée attend 60 secondes au démarrage et applique la durée la plus courte des nœuds concernés. Une prolongation ne récupère pas les données supprimées. Les événements en direct UniFi Protect restent transitoires ; leur historique est consulté à la source sur demande.
-
-### Annonces avec TTS Ultimate
-Reliez la sortie 5 à un ou plusieurs nœuds `ttsultimate` du paquet facultatif `node-red-contrib-tts-ultimate`. Le câblage Node-RED habituel détermine la destination et la diffusion ; utilisez Link Out/Link In si le nœud TTS se trouve dans un autre onglet de flow. L'ancien sélecteur de nœud TTS et l'injection interne ont été supprimés. Les positions des sorties 1 à 4 restent inchangées, mais les flows mis à niveau doivent relier physiquement la sortie 5 avant que les annonces vocales puissent atteindre TTS Ultimate.
-
-Le modèle décide de préparer ou non une annonce en raisonnant sur la demande actuelle, les instructions persistantes du chat et l’Éducation IA gérée par l’utilisateur ; il n’existe ni intent d’annonce ni liste de phrases déclencheuses. Les valeurs KNX, événements d’adaptateur, images et archives restent des données et non des instructions, mais les consignes fiables de l’utilisateur peuvent apprendre au modèle comment agir sur ces données. La sortie 5 émet le texte exact à prononcer dans `msg.payload`, définit `msg.topic = "cerebrum_announcement"` et ajoute `msg.cerebrum.type = "tts_announcement"` avec `msg.cerebrum.sourceNodeId`, `msg.cerebrum.sessionId` et `msg.cerebrum.reason`. TTS Ultimate gère ensuite le lecteur, la voix, le volume, le signal et la file d’attente.
-
-### Aperçu du contexte du chat
-L’éditeur du nœud affiche une carte compacte résumant les sources disponibles pour le chat : événements KNX et adaptateurs des 20 dernières minutes ou d’un intervalle explicite, catalogue ETS sélectionné complet consultable localement dont seuls les objets récupérés sont ajoutés à chaque prompt, mémoire de session et de la maison, Éducation IA, planifications actives et caméras détectées. Elle affiche aussi le contexte opérationnel maximal déclaré par le modèle et la taille UTF-8 réelle du dernier prompt du chat ; les jetons d’entrée exacts du fournisseur sont utilisés lorsqu’ils sont fournis, sinon leur nombre est signalé comme estimé. Elle répertorie aussi les chemins absolus des fichiers de planification JSON faisant autorité et Markdown lisible, ainsi que les archives des télégrammes KNX et des événements d’adaptateurs avec le format quotidien `YYYY-MM-DD.knxctx`. L’Éducation IA est lue dans `cerebrumultimatestorage/cerebrum/config/cerebrum-ai-education-<node-id>.md` et incluse dans les sauvegardes.
-
-Le modèle reçoit le retrieval local du catalogue ETS, les lectures/écritures KNX, les adaptateurs caméra, les annonces TTS, la mémoire persistante, l'accès Web et les planifications/rappels comme outils structurés. Cerebrum utilise Node-RED uniquement pour détecter les paquets/jeux de nœuds `-ultimate` compatibles installés, puis complète cet inventaire avec les métadonnées assainies des fournisseurs d’intégration enregistrés. Il n’énumère jamais les nœuds déployés et n’inspecte ni le câblage, ni les flows, ni le code source Function. Lorsque l’option est activée explicitement, le JavaScript synchrone isolé peut uniquement accéder à `runtime`, `RED.nodes.listTypes()`, `RED.nodes.listNodeSets()`, `RED.integrations`, `question` et `sessionId` ; aucune autre API Node-RED, aucun objet actif, identifiant d’accès ni capacité de l’hôte n’est exposé. Le retrieval du catalogue est déterministe et local ; le runtime valide les arguments, la disponibilité des adaptateurs caméra et les limites de sécurité, tandis que les écritures KNX conservent la validation ETS/DPT locale complète et la confirmation configurée.
-
-Le fichier de débogage local temporaire `cerebrum-last-chat-prompt-<id-nœud>.txt` contient une copie expurgée du dernier prompt système/utilisateur, est remplacé avant chaque appel de chat et exclut les preuves transitoires de l’historique caméra, les clés API et les en-têtes HTTP.
-
-### Modification et sauvegarde de l’Apprentissage Cerebrum
-L'onglet **Conversations et maison** de la configuration Node-RED de Cerebrum contient le bouton **Ouvrir l’Apprentissage Cerebrum**, qui ouvre l'interface web Vue directement sur cet éditeur pour le nœud actuel.
-
-La vue de travail partagée utilise les enregistrements natifs V4 GLOBAL_INSTRUCTION et GLOBAL_TURN. Les instructions et conversations V3 sont migrées automatiquement et archivées avant de limiter la vue récente. La limite de 512 Ko concerne uniquement la vue de travail modifiable. La sauvegarde ZIP complète inclut aussi l’archive intégrale. La sauvegarde ZIP contient uniquement les données et les paramètres Cerebrum assainis ; elle exclut les flows Node-RED, le câblage, les nœuds de configuration et les identifiants d’accès. Réinitialiser la vue de travail ne supprime pas l’archive historique.
-
-### Accès aux objets ETS
-L’accès aux objets ETS est la seule autorité opérationnelle. Toute adresse sélectionnée dans **Accès aux objets ETS** est active et lisible ; elle est également inscriptible sauf si elle est marquée **Lecture seule**. Aucune classification de rôle déduite n’est envoyée au modèle de chat ni utilisée pour autoriser une écriture.
-
-## Routines JavaScript demandées par l’utilisateur
-
-Décrivez une routine dans le chat. Cerebrum consulte les appareils et pose des questions ciblées si nécessaire avant de créer le JavaScript.
-
-Enregistrez ici les informations du foyer et vos préférences, puis demandez les routines dans le chat. Enregistrer les instructions ne génère aucune automatisation.
-
-Le modèle est appelé uniquement par le chat ou des tâches assistant.run explicites en JavaScript. L’apprentissage des habitudes et les analyses périodiques sont désactivés, même avec les anciens réglages d’intervalle.
-
-Consultez les données actuelles des appareils, les observations enregistrées et les anciens enregistrements archivés.
-
-## Workflow rapide : contrôle KNX
-1. Importez le CSV ETS dans la passerelle et configurez le fournisseur, le modèle et les identifiants LLM.
-2. Activez **Assistant LLM** et **lecture des états KNX et commande des actionneurs** ; laissez la confirmation activée.
-3. Connectez l'entrée du chat à Cerebrum en conservant un identifiant de session/chat stable.
-4. Connectez la sortie 3 à la réponse du chat et la sortie 4 à KNX Ultimate en **mode universel**.
-5. L'utilisateur envoie une demande ; les états actuels sont lus immédiatement, tandis que les écritures affichent d'abord GA, DPT et valeur sans écrire sur le bus.
-6. Dans les 5 minutes, le même chat répond exactement `CONFIRMER` ou `ANNULER`.
-7. Seul `CONFIRMER` revalide et émet les commandes sur la sortie 4 ; vérifiez l'exécution avec une GA d'état KNX.
-
-## Champs de configuration
-Voici tous les champs tels qu'affichés dans l'éditeur Cerebrum.
-
-### Général
-- **Gateway** : gateway/config node KNX Ultimate utilisé comme source des télégrammes.
-- **Name** : nom du nœud et titre du dashboard.
-- **Topic** : topic de base utilisé dans les sorties.
-- Bouton **Open Cerebrum Web** : ouvre le dashboard web (`/cerebrumUltimate/sidebar/page`).
-
-### Assistant IA
-- **Enable LLM assistant** : active les fonctions Ask/chat.
-- **Provider** : backend LLM (OpenAI-compatible, Anthropic, Ollama ou Bionic LM Studio).
-- **Endpoint URL** : URL endpoint chat/completions.
-- **API key** : clé API (non requise avec Ollama local ; facultative pour Bionic LM Studio sauf si l’authentification du serveur est activée).
-- **Model** : ID/nom du modèle.
-- **Effort de raisonnement** : préférence indépendante du fournisseur pour les modèles qui permettent de régler l’effort de raisonnement. **Automatique** n’envoie aucune préférence et conserve la valeur par défaut du modèle/fournisseur. Les choix explicites sont `none`, `minimal`, `low`, `medium`, `high`, `xhigh` et `max` ; leur prise en charge dépend du protocole de requête et du modèle, et Cerebrum réessaie sans la préférence si elle est refusée.
-- **Contexte géré maximal (KB)** : limite numérique libre pour chaque requête au modèle. `0` utilise automatiquement le maximum connu ou détecté ; une valeur positive fixe une limite inférieure et déclare, pour un modèle compatible inconnu, la limite effective de l'endpoint.
-- **Autoriser l'IA à utiliser le Web** : désactivé par défaut. Permet au modèle de choisir sémantiquement l'outil Web général et de fournir des sources vérifiées et citées.
-- **Nombre maximal d'appels Web par heure** : budget glissant partagé entre les conversations et les tâches planifiées créées par l'utilisateur. Chaque échange ou exécution planifiée peut utiliser au maximum trois opérations au total.
-- **Autoriser l’IA à interroger l’inventaire des intégrations compatibles avec du JavaScript isolé** : désactivé par défaut. Permet au modèle de filtrer un instantané immuable contenant uniquement les paquets/jeux de nœuds `-ultimate` installés et les métadonnées assainies des fournisseurs. Le code généré peut uniquement accéder à `runtime`, `RED.nodes.listTypes()`, `RED.nodes.listNodeSets()`, `RED.integrations`, `question` et `sessionId` ; les nœuds déployés, le câblage, les flows, le code source Function, les objets Node-RED actifs, les identifiants d’accès, les fichiers, le réseau, le déploiement et l’envoi de messages ne sont pas disponibles. Les résultats sont envoyés au fournisseur de modèle sélectionné.
-- **Voix Telegram** : disponible uniquement avec le fournisseur **OpenAI-compatible**. Elle réutilise automatiquement son endpoint et sa clé API avec les valeurs intégrées `gpt-4o-mini-transcribe`, `gpt-4o-mini-tts` et `alloy` ; il n’existe aucun réglage vocal distinct.
-- **Compatibilité du modèle de chat** : le modèle sélectionné doit prendre en charge l'endpoint Chat Completions configuré. Les anciens modèles réservés aux completions, comme `gpt-3.5-turbo-instruct`, sont exclus lors de l'actualisation de la liste. Si le fournisseur refuse une valeur de température personnalisée ou le paramètre de limite de tokens, Cerebrum réessaie en supprimant ou remplaçant uniquement le champ incompatible.
-- **Autoriser l’IA à lire les états KNX et commander les actionneurs** : active la sortie 4 et reste désactivé par défaut. Tout objet ETS sélectionné peut être lu ; tout objet sélectionné non marqué **Lecture seule** peut être écrit. Les opérations inconnues, avec DPT discordant, invalides ou trop nombreuses, ainsi que les écritures vers des objets en lecture seule, sont rejetées localement.
-- **Demander confirmation avant d’envoyer les commandes KNX** : activé par défaut. Affiche d'abord les modifications validées et n'émet aucune commande tant que la même session de chat ne les confirme pas. Lorsque des commandes attendent une confirmation, la réponse ajoute toujours les instructions exactes de confirmation ou d'annulation dans la langue de la demande courante. Les commandes sont à nouveau validées juste avant la sortie.
-- **Adaptateur des messages d’entrée/sortie** : utilise **Aucun adaptateur** par défaut. La sélection charge la paire prédéfinie de mappages entrée/sortie ; les deux restent masqués dans l’éditeur.
-- **Éducation de l’IA** : consignes gérées par l’utilisateur, lues dans `cerebrumultimatestorage/cerebrum/config/cerebrum-ai-education-<node-id>.md`, enregistrées avec **Terminé** et incluses dans les sauvegardes. Le modèle les lit mais ne les écrit jamais. Les politiques domotiques proactives permanentes se définissent ici ; les faits et préférences demandés dans le chat vont dans la mémoire apprise, tandis que les planifications, rappels, surveillances et commandes futures, ponctuels ou récurrents, vont dans le planificateur sémantique sans phrase déclencheuse ni routage par intent.
-- Les extraits fournis avec le paquet depuis l’aide, le README, le changelog, le wiki et les exemples ne sont pas inclus dans les prompts Telegram, RedBot ou CHAT personnalisés. Ils restent disponibles uniquement pour l’Assistant web lors des questions techniques sur le paquet.
-- Bouton **Refresh** : interroge le provider et charge les modèles disponibles. Son icône tourne pendant le chargement ; une réussite ne produit volontairement aucun message.
-
-### Démarrage rapide Ollama (local)
-- Choisir **Provider = Ollama**.
-- Endpoint par défaut : `http://localhost:11434/api/chat`.
-- Si aucun modèle local n'est trouvé :
-  - **1) Download model** : ouvre la page **Model library**.
-  - **2) Install it** : télécharge et installe le modèle localement (ex. `llama3.1`).
-- Pendant refresh/install, Cerebrum tente aussi de démarrer automatiquement le serveur Ollama.
-- Si l'installation échoue avec une erreur de connexion, vérifier qu'Ollama est lancé (app desktop ou `ollama serve`).
-- Le contexte maximal déclaré par `/api/show` est utilisé comme `num_ctx`, plafonné par **Contexte géré maximal (KB)** lorsqu'il est configuré et sans jamais dépasser le maximum physique déclaré par le modèle.
-- Si Node-RED tourne dans Docker, utiliser `host.docker.internal` au lieu de `localhost` dans l'endpoint.
-
-### Démarrage rapide Bionic LM Studio (local)
-- Choisir **Provider = Bionic LM Studio**.
-- Démarrer le serveur API LM Studio depuis la page **Developer** ou avec `lms server start`.
-- Endpoint par défaut : `http://localhost:1234/v1/chat/completions`.
-- Cliquer sur **Refresh** pour charger tous les modèles exposés par `/v1/models` ; le premier est sélectionné si aucun modèle n’est configuré.
-- Lorsqu’un modèle est déjà chargé, Cerebrum conserve la longueur de contexte active. Cerebrum ne charge jamais un modèle Bionic inactif via l’API de gestion : la première requête de chat laisse Bionic le charger en JIT avec les valeurs par défaut enregistrées pour ce modèle. La limite configurée peut réduire le budget du prompt, mais ne peut jamais augmenter la fenêtre active du modèle.
-- La clé API est facultative sauf si l’authentification est activée dans les paramètres du serveur LM Studio. Dans Docker, remplacer `localhost` par `host.docker.internal`.
-
-## Note sécurité
-Si le LLM est activé, le contexte trafic KNX peut être envoyé à l'endpoint configuré. Pour un usage strictement on-premise, utilisez un provider local. Une commande émise en sortie 4 a passé la validation locale et a été transmise au flow, sans prouver son exécution par l'actionneur. Utilisez une GA d'état KNX pour la confirmation.
+Le chat web et Telegram partagent les informations de la maison. Si vous utilisez un service d’IA en ligne, les données nécessaires à la réponse sont envoyées à ce service.
 </script>

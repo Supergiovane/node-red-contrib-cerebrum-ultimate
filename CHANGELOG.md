@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0 - 2026-09-18
+
+- Keep submitted household reports available to Web and Telegram chat directly from the shared archive, including pending assessments and reports no longer in recent conversation. Distinguish reported faults from verified recovery when answering household status questions.
+- Simplify node help in all six languages around everyday chat use.
+
 ## 0.4.1 — 2026-09-18
 
 - Cerebrum now accepts inbound standard msg, even if a telegram adapter is selected. Seee html help.
