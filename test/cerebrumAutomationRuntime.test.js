@@ -77,6 +77,22 @@ describe('Persistent local JavaScript automations', function () {
     assert.equal(messages.length, 1)
   })
 
+  it('rejects a callback that fails in QuickJS before accepting AI-authored source', async () => {
+    const broken = await create('module.exports = c => c.schedule.every("clock", 60000, () => c.notify(Intl.DateTimeFormat("it-IT").format(c.now())))')
+    assert.equal(broken.ok, false)
+    assert.match(broken.error, /Handler "clock".*'Intl' is not defined/)
+    assert.equal(runtime.list().files.length, 0)
+    assert.equal(archive.length, 0)
+    assert.equal(messages.length, 0)
+
+    const fixed = await create('module.exports = c => c.schedule.every("clock", 60000, () => c.notify("Ora del controllo"))')
+    assert.equal(fixed.ok, true)
+    assert.equal(fixed.status, 'active')
+    assert.equal(messages.length, 0)
+    await step(60000)
+    assert.equal(messages[0].text, 'Ora del controllo')
+  })
+
   it('keeps 08:40 scheduling local and invokes semantic weather/TTS work only when due', async () => {
     const tasks = []; const speech = []
     await runtime.close()

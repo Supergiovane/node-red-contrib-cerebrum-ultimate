@@ -329,11 +329,11 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
   }
   const available = () => { if (closed) throw fail('Local automations are closed', 409) }
   const current = (name, generation) => !closed && entries[name]?.status === 'active' && entries[name].generation === generation
-  const inspect = async (source, handler = '', event = {}, entry = {}, timestamp = now()) => {
+  const inspect = async (source, handler = '', event = {}, entry = {}, timestamp = now(), preflight = false) => {
     if (typeof source !== 'string' || Buffer.byteLength(source) > 128 * 1024) throw fail('JavaScript source exceeds 128 KiB')
     const snapshot = states()
     if (Buffer.byteLength(JSON.stringify(snapshot)) > 1024 * 1024) throw fail('Local state snapshot exceeds 1 MiB')
-    return validateProgram(await interpreter.run(source, { now: timestamp, handler, event, states: snapshot, memory: clone(entry.memory || {}) }))
+    return validateProgram(await interpreter.run(source, { now: timestamp, handler, event, states: snapshot, memory: clone(entry.memory || {}), preflight }))
   }
   const setError = (name, error) => {
     if (!entries[name] || closed) return
@@ -453,7 +453,7 @@ function createCerebrumAutomationRuntime ({ files, filePath, archive = () => {},
     if (oldFile) pause(options)
     const edit = (edits.get(options.name) || 0) + 1
     edits.set(options.name, edit)
-    const program = await inspect(options.content)
+    const program = await inspect(options.content, '', {}, existing || {}, now(), context.author === 'cerebrum')
     available()
     if (context.cancelled?.() || edits.get(options.name) !== edit) throw fail('Automation creation was cancelled', 409)
     const authority = context.authority || existing?.authority || 'user'

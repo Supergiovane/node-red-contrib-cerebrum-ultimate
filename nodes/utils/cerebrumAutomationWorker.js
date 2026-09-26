@@ -51,7 +51,24 @@ function guest (input, register) {
   const synchronous = value => { if (value && typeof value.then === 'function') throw Error('Automation handlers must be synchronous') }
   if (typeof register !== 'function') throw Error('Export a register function with module.exports')
   synchronous(register(api))
-  if (input.handler) {
+  if (input.preflight) {
+    for (const rule of registrations) {
+      const event = {
+        source: rule.filter?.source || rule.entityIds?.[0]?.split(':')[0] || 'schedule',
+        objectId: rule.filter?.objectId || rule.entityIds?.[0]?.split(':').slice(1).join(':') || '',
+        event: rule.filter?.event || 'test',
+        value: true,
+        at: new Date(input.now).toISOString(),
+        changed: true,
+        objectTypes: [],
+        scopeId: '',
+        eventId: ''
+      }
+      running = true
+      try { synchronous(handlers[rule.id](event)) } catch (error) { throw Error(`Handler "${rule.id}": ${error.message || error}`) }
+      effects.length = 0 // Preflight effects never leave this interpreter invocation.
+    }
+  } else if (input.handler) {
     if (!handlers[input.handler]) throw Error('Handler no longer exists')
     running = true
     synchronous(handlers[input.handler](input.event || {}))

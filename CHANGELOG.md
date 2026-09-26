@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2 - 2026-09-26
+
+- Place the AI provider endpoint directly below the provider selector in the node editor.
+- Check each AI-authored JavaScript routine callback in QuickJS before saving it, so errors such as an unavailable `Intl` global can be corrected before activation.
+
 ## 1.0.1 - 2026-09-18
 
 - Compare incoming household reports with the archive as it stood before receipt, so a new report is not presented as its own prior occurrence. Keep it immediately available to subsequent chats.
