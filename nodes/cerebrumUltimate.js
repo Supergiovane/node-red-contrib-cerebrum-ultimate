@@ -250,6 +250,7 @@ const CEREBRUM_WEB_MAX_RESEARCH_ROUNDS = 2
 const CEREBRUM_WEB_MAX_ACTIONS_PER_ROUND = 3
 const CEREBRUM_WEB_MAX_SOURCES = 8
 const CEREBRUM_LOCAL_CONTEXT_TOKEN_OPTIONS = Object.freeze([4096, 8192, 16384, 32768, 65536, 131072, 262144])
+const CEREBRUM_LMSTUDIO_AUTO_CONTEXT_TOKENS = 8192
 
 const normalizeCerebrumWebMaxCallsPerHour = (value) => {
   const requested = Math.round(Number(value) || 0)
@@ -312,11 +313,11 @@ const normalizeCerebrumMaxContextKb = (value) => {
 
 const resolveCerebrumOperationalContextLimit = ({ provider, model, contextLength, localContextTokens, maxContextKb } = {}) => {
   const normalizedProvider = String(provider || '').trim().toLowerCase()
-  const configuredContextKb = normalizeCerebrumMaxContextKb(maxContextKb)
-  const configuredContextTokens = configuredContextKb > 0
-    ? Math.min(Number.MAX_SAFE_INTEGER, configuredContextKb * 1024)
-    : 0
   if (normalizedProvider !== 'lmstudio' && normalizedProvider !== 'ollama') {
+    const configuredContextKb = normalizeCerebrumMaxContextKb(maxContextKb)
+    const configuredContextTokens = configuredContextKb > 0
+      ? Math.min(Number.MAX_SAFE_INTEGER, configuredContextKb * 1024)
+      : 0
     // A user limit can declare the real window of an otherwise unknown
     // OpenAI-compatible model. Known/reported physical windows always win.
     const reportedContextLength = Math.max(0, Number(contextLength) || 0)
@@ -335,23 +336,21 @@ const resolveCerebrumOperationalContextLimit = ({ provider, model, contextLength
     }
   }
   const activeContextLength = Math.max(0, Number(contextLength) || 0)
-  const selectedContextLength = normalizeCerebrumLocalContextTokens(localContextTokens)
+  const selectedContextLength = normalizeCerebrumLocalContextTokens(localContextTokens) ||
+    (normalizedProvider === 'lmstudio' ? CEREBRUM_LMSTUDIO_AUTO_CONTEXT_TOKENS : 0)
   const resolvedContextLength = selectedContextLength > 0
     ? activeContextLength > 0
       ? Math.min(activeContextLength, selectedContextLength)
       : selectedContextLength
     : activeContextLength || 8192
-  const effectiveContextLength = configuredContextTokens > 0
-    ? Math.min(resolvedContextLength, configuredContextTokens)
-    : resolvedContextLength
   return {
     provider: normalizedProvider,
-    tokens: effectiveContextLength,
+    tokens: resolvedContextLength,
     maxContextTokens: activeContextLength,
     selectedContextTokens: selectedContextLength,
-    configuredContextKb,
-    mode: effectiveContextLength
-      ? configuredContextTokens > 0 ? 'configured-managed-window' : selectedContextLength > 0 ? 'selected-window' : activeContextLength > 0 ? 'model-window' : 'safe-fallback-window'
+    configuredContextKb: 0,
+    mode: resolvedContextLength
+      ? selectedContextLength > 0 ? 'selected-window' : activeContextLength > 0 ? 'model-window' : 'safe-fallback-window'
       : 'provider-managed'
   }
 }
@@ -5196,7 +5195,7 @@ const normalizeLmStudioModelCatalog = (value) => {
       ? value.data
       : []
   return source
-    .filter(model => model && typeof model === 'object' && String(model.type || '').toLowerCase() !== 'embedding')
+    .filter(model => model && typeof model === 'object' && !['embedding', 'embeddings'].includes(String(model.type || '').toLowerCase()))
     .map(model => {
       const id = String(model.key || model.id || '').trim()
       const loadedInstances = (Array.isArray(model.loaded_instances) ? model.loaded_instances : [])
@@ -5205,6 +5204,9 @@ const normalizeLmStudioModelCatalog = (value) => {
           contextLength: Math.max(0, Number(instance && instance.config && instance.config.context_length) || 0)
         }))
         .filter(instance => instance.id)
+      if (!loadedInstances.length && model.state === 'loaded' && Number(model.loaded_context_length) > 0) {
+        loadedInstances.push({ id, contextLength: Number(model.loaded_context_length) })
+      }
       return {
         id,
         displayName: String(model.display_name || model.name || id).trim() || id,
@@ -5219,6 +5221,16 @@ const normalizeLmStudioModelCatalog = (value) => {
       }
     })
     .filter(model => model.id)
+}
+
+const getLmStudioModelCatalog = async ({ baseUrl, headers, get = getJson } = {}) => {
+  const modelsUrl = deriveLmStudioNativeApiUrl(baseUrl, '/api/v1/models')
+  try {
+    return await get({ url: modelsUrl, headers, timeoutMs: 15000 })
+  } catch (error) {
+    if (![404, 500].includes(Number(error && error.status))) throw error
+    return get({ url: deriveLmStudioNativeApiUrl(baseUrl, '/api/v0/models'), headers, timeoutMs: 15000 })
+  }
 }
 
 const findLmStudioModel = ({ catalog, model }) => {
@@ -5245,8 +5257,7 @@ const resolveLmStudioModelContext = async ({
   const headers = {}
   const sanitizedApiKey = sanitizeApiKey(apiKey || '')
   if (sanitizedApiKey) headers.authorization = `Bearer ${sanitizedApiKey}`
-  const modelsUrl = deriveLmStudioNativeApiUrl(baseUrl, '/api/v1/models')
-  const catalogJson = await get({ url: modelsUrl, headers, timeoutMs: 15000 })
+  const catalogJson = await getLmStudioModelCatalog({ baseUrl, headers, get })
   const descriptor = findLmStudioModel({
     catalog: normalizeLmStudioModelCatalog(catalogJson),
     model: selectedModel
@@ -5257,9 +5268,7 @@ const resolveLmStudioModelContext = async ({
     throw new Error(`Bionic LM Studio did not report max_context_length for model "${descriptor.id}"`)
   }
   const selectedWindow = normalizeCerebrumLocalContextTokens(requestedContextLength)
-  const desiredContextLength = selectedWindow > 0
-    ? Math.min(selectedWindow, maxContextLength)
-    : maxContextLength
+  const desiredContextLength = Math.min(selectedWindow || CEREBRUM_LMSTUDIO_AUTO_CONTEXT_TOKENS, maxContextLength)
   const readyInstance = descriptor.loadedInstances
     .filter(instance => instance.contextLength >= desiredContextLength)
     .sort((left, right) => left.contextLength - right.contextLength)[0]
@@ -5276,18 +5285,45 @@ const resolveLmStudioModelContext = async ({
   }
 
   const loadUrl = deriveLmStudioNativeApiUrl(baseUrl, '/api/v1/models/load')
-  const loaded = await post({
-    url: loadUrl,
-    headers,
-    body: {
-      model: descriptor.id,
-      context_length: desiredContextLength,
-      echo_load_config: true
-    },
-    timeoutMs: CEREBRUM_LLM_TIMEOUT_MIN_MS
-  })
+  let loaded
+  let loadedWindow = desiredContextLength
+  try {
+    loaded = await post({
+      url: loadUrl,
+      headers,
+      body: {
+        model: descriptor.id,
+        context_length: loadedWindow,
+        echo_load_config: true
+      },
+      timeoutMs: CEREBRUM_LLM_TIMEOUT_MIN_MS
+    })
+  } catch (error) {
+    if (!isLmStudioInsufficientResourcesError(error)) throw error
+    if (selectedWindow > 0 || desiredContextLength <= 4096) {
+      throw createLmStudioInsufficientResourcesError(error, descriptor.id, desiredContextLength)
+    }
+    loadedWindow = 4096
+    try {
+      loaded = await post({
+        url: loadUrl,
+        headers,
+        body: {
+          model: descriptor.id,
+          context_length: loadedWindow,
+          echo_load_config: true
+        },
+        timeoutMs: CEREBRUM_LLM_TIMEOUT_MIN_MS
+      })
+    } catch (retryError) {
+      if (isLmStudioInsufficientResourcesError(retryError)) {
+        throw createLmStudioInsufficientResourcesError(retryError, descriptor.id, loadedWindow)
+      }
+      throw retryError
+    }
+  }
   const instanceId = String(loaded && loaded.instance_id || '').trim()
-  const loadedContextLength = Math.max(0, Number(loaded && loaded.load_config && loaded.load_config.context_length) || desiredContextLength)
+  const loadedContextLength = Math.max(0, Number(loaded && loaded.load_config && loaded.load_config.context_length) || loadedWindow)
   if (!instanceId || loadedContextLength <= 0) {
     throw new Error(`Bionic LM Studio did not confirm the requested ${desiredContextLength}-token context for model "${descriptor.id}"`)
   }
@@ -5471,6 +5507,21 @@ const isLmStudioStaleInstanceError = (error) => {
   const message = String(error && error.message ? error.message : error || '').toLowerCase()
   return /(?:model|instance).*(?:not found|not loaded|unloaded|unknown|does not exist|invalid)/.test(message) ||
     /(?:not found|not loaded|unloaded|unknown|does not exist|invalid).*(?:model|instance)/.test(message)
+}
+
+const isLmStudioInsufficientResourcesError = (error) => {
+  const message = String(error && error.message ? error.message : error || '').toLowerCase()
+  return message.includes('insufficient system resources') ||
+    message.includes('model loading was stopped') ||
+    message.includes('overload your system')
+}
+
+const createLmStudioInsufficientResourcesError = (cause, model, contextLength) => {
+  const error = new Error(`LM Studio cannot load "${model}" with a ${contextLength}-token context: insufficient system resources. Select a smaller local context, free memory on the LM Studio host, or use a smaller model.`)
+  error.status = 503
+  error.code = 'CEREBRUM_LMSTUDIO_INSUFFICIENT_RESOURCES'
+  error.cause = cause
+  return error
 }
 
 const decorateOllamaConnectionError = ({ error, url, action }) => {
@@ -6995,13 +7046,12 @@ module.exports = function (RED) {
         if (provider === 'lmstudio') {
           const headers = {}
           if (apiKey) headers.authorization = `Bearer ${apiKey}`
-          const modelsUrl = deriveLmStudioNativeApiUrl(baseUrl, '/api/v1/models')
-          const json = await getJson({ url: modelsUrl, headers, timeoutMs: 15000 })
+          const json = await getLmStudioModelCatalog({ baseUrl, headers })
           const modelDetails = normalizeLmStudioModelCatalog(json)
           modelDetails.sort((left, right) => left.displayName.localeCompare(right.displayName))
           res.json({
             provider,
-            baseUrl: modelsUrl,
+            baseUrl: deriveLmStudioNativeApiUrl(baseUrl, '/api/v1/models'),
             models: modelDetails.map(model => model.id),
             modelDetails,
             filtered: true
@@ -12392,6 +12442,8 @@ module.exports = function (RED) {
           const connectionError = new Error(`Cannot reach Bionic LM Studio at ${url}. Start the LM Studio API server from the Developer page or run "lms server start".`)
           connectionError.cause = error
           throw connectionError
+        } else if (node.llmProvider === 'lmstudio' && isLmStudioInsufficientResourcesError(error)) {
+          throw createLmStudioInsufficientResourcesError(error, node.llmModel, node.llmContextLength || contextLimit.tokens)
         } else {
           throw error
         }

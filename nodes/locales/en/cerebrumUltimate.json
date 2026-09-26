@@ -70,6 +70,7 @@
         "max": "Maximum"
       },
       "localContext": {
+        "automatic": "Automatic",
         "maximum": "Maximum",
         "k4": "4K",
         "k8": "8K",

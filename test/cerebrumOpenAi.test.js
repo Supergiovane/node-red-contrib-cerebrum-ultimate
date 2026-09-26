@@ -5,6 +5,7 @@ const { fitCerebrumPrompt, resolveCloudContextTokens, withCerebrumContextRetry }
 const {
   normalizeOpenAiReasoningEffortForModel,
   resolveCerebrumOperationalContextLimit,
+  resolveLmStudioModelContext,
   postOpenAiCompatibleChatWithFallbacks,
   postOpenAiResponsesWithFallbacks
 } = require('../nodes/cerebrumUltimate').__test
@@ -26,7 +27,11 @@ describe('Cerebrum context protection', () => {
     expect(resolveCerebrumOperationalContextLimit({ provider: 'openai_compat', model: 'gpt-5.5', maxContextKb: 512 }).tokens).to.equal(512 * 1024)
     expect(resolveCerebrumOperationalContextLimit({ provider: 'openai_compat', model: 'gpt-5.5', maxContextKb: 2048 }).tokens).to.equal(1050000)
     expect(resolveCerebrumOperationalContextLimit({ provider: 'openai_compat', model: 'custom-model', maxContextKb: 64 }).tokens).to.equal(64 * 1024)
-    expect(resolveCerebrumOperationalContextLimit({ provider: 'ollama', contextLength: 131072, maxContextKb: 64 }).tokens).to.equal(64 * 1024)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'ollama', contextLength: 131072, maxContextKb: 64 }).tokens).to.equal(131072)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'lmstudio', contextLength: 42496, localContextTokens: 0 }).tokens).to.equal(8192)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'lmstudio', contextLength: 42496, localContextTokens: 0, maxContextKb: 4 }).tokens).to.equal(8192)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'lmstudio', contextLength: 42496, localContextTokens: 16384, maxContextKb: 4 }).tokens).to.equal(16384)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'ollama', contextLength: 32768, localContextTokens: 16384, maxContextKb: 4 }).tokens).to.equal(16384)
   })
 
   it('bounds large memory/catalogs without mutating input or losing trusted instructions', () => {
@@ -99,6 +104,68 @@ describe('Cerebrum context protection', () => {
       }
       expect(calls).to.equal(message.includes('context') ? 3 : 1)
     }
+  })
+})
+
+describe('LM Studio resource-aware model loading', () => {
+  const catalog = {
+    models: [{ key: 'qwen/qwen3.8-27b', type: 'llm', max_context_length: 262144, loaded_instances: [] }]
+  }
+
+  it('requests a safe automatic context and retries once at 4K on a resource guardrail', async () => {
+    const requested = []
+    const result = await resolveLmStudioModelContext({
+      baseUrl: 'http://localhost:1234/v1/chat/completions',
+      model: 'qwen/qwen3.8-27b',
+      get: async () => catalog,
+      post: async ({ body }) => {
+        requested.push(body.context_length)
+        if (body.context_length === 8192) throw new Error('HTTP 500: Model loading was stopped due to insufficient system resources')
+        return { instance_id: 'qwen/qwen3.8-27b', load_config: { context_length: body.context_length } }
+      }
+    })
+    expect(requested).to.deep.equal([8192, 4096])
+    expect(result.contextLength).to.equal(4096)
+  })
+
+  it('honors an explicitly selected context and reports insufficient resources without repeated loads', async () => {
+    const requested = []
+    try {
+      await resolveLmStudioModelContext({
+        model: 'qwen/qwen3.8-27b',
+        requestedContextLength: 32768,
+        get: async () => catalog,
+        post: async ({ body }) => {
+          requested.push(body.context_length)
+          throw new Error('HTTP 500: insufficient system resources')
+        }
+      })
+      throw new Error('Expected model loading failure')
+    } catch (error) {
+      expect(error.code).to.equal('CEREBRUM_LMSTUDIO_INSUFFICIENT_RESOURCES')
+      expect(error.message).to.include('32768-token context')
+    }
+    expect(requested).to.deep.equal([32768])
+  })
+
+  it('uses the loaded model when the v1 catalog is temporarily unavailable', async () => {
+    const urls = []
+    const result = await resolveLmStudioModelContext({
+      baseUrl: 'http://localhost:1234/v1/chat/completions',
+      model: 'qwen/qwen3.8-27b',
+      get: async ({ url }) => {
+        urls.push(url)
+        if (url.includes('/api/v1/')) {
+          const error = new Error('HTTP 500: Model does not exist')
+          error.status = 500
+          throw error
+        }
+        return { data: [{ id: 'qwen/qwen3.8-27b', type: 'vlm', state: 'loaded', max_context_length: 262144, loaded_context_length: 42496 }] }
+      },
+      post: async () => { throw new Error('The loaded model should not be reloaded') }
+    })
+    expect(urls).to.have.length(2)
+    expect(result).to.include({ instanceId: 'qwen/qwen3.8-27b', contextLength: 42496, changed: false })
   })
 })
 

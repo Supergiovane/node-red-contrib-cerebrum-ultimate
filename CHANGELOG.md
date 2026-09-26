@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.2 - 2026-09-26
+## 1.0.3 - 2026-09-26
 
 - Place the AI provider endpoint directly below the provider selector in the node editor.
 - Check each AI-authored JavaScript routine callback in QuickJS before saving it, so errors such as an unavailable `Intl` global can be corrected before activation.

@@ -832,7 +832,9 @@
                 const selectedTokens = selectedLocalContextTokens();
                 return selectedTokens
                     ? formatCompactContextTokens(selectedTokens)
-                    : t("cerebrumUltimate.selectlists.localContext.maximum", "Maximum");
+                    : $("#node-input-llmProvider").val() === "lmstudio"
+                        ? t("cerebrumUltimate.selectlists.localContext.automatic", "Automatic") + " (8K)"
+                        : t("cerebrumUltimate.selectlists.localContext.automatic", "Automatic");
             };
 
             const renderChatContextOverview = (overview) => {
@@ -883,13 +885,13 @@
                     : 0;
                 const localProvider = currentProvider === "lmstudio" || currentProvider === "ollama";
                 if (localProvider) {
-                    const modelContextTokens = contextLimitTokens || Math.max(0, Number($("#node-input-llmContextLength").val()) || 0);
-                    const selectedTokens = selectedLocalContextTokens();
+                    const modelContextTokens = Math.max(0, Number($("#node-input-llmContextLength").val()) || 0) || contextLimitTokens;
+                    const selectedTokens = selectedLocalContextTokens() || (currentProvider === "lmstudio" ? 8192 : 0);
                     contextLimitTokens = selectedTokens > 0
                         ? (modelContextTokens > 0 ? Math.min(modelContextTokens, selectedTokens) : selectedTokens)
                         : modelContextTokens;
                 }
-                const configuredContextKb = selectedMaxContextKb();
+                const configuredContextKb = localProvider ? 0 : selectedMaxContextKb();
                 if (configuredContextKb > 0 && contextLimitTokens > 0) {
                     contextLimitTokens = Math.min(contextLimitTokens, configuredContextKb * 1024);
                 }
@@ -1401,6 +1403,7 @@
                 const provider = $("#node-input-llmProvider").val();
                 const localProvider = provider === "lmstudio" || provider === "ollama";
                 if (applyDefaults) applyProviderDefaults(provider);
+                $("#cerebrum-max-context-row").toggle(!localProvider);
                 $("#cerebrum-local-context-row").toggle(localProvider);
                 if (localProvider) {
                     updateLocalContextTokenOptions(localModelDetailsById.get(String($("#node-input-llmModel").val() || "").trim()));
@@ -1676,7 +1679,7 @@
                         <option value="max" data-i18n="cerebrumUltimate.selectlists.reasoningEffort.max"></option>
                     </select>
                 </div>
-                <div class="form-row">
+                <div class="form-row" id="cerebrum-max-context-row">
                     <label  for="node-input-llmMaxContextKb"><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.properties.llmMaxContextKb"></span></label>
                     <input style="width:100px" type="number" id="node-input-llmMaxContextKb" min="0" step="1">
                 </div>
@@ -1685,7 +1688,7 @@
                 <div class="form-row" id="cerebrum-local-context-row" style="display:none;">
                     <label  for="node-input-llmLocalContextTokens"><i class="fa fa-database"></i> <span data-i18n="cerebrumUltimate.properties.llmLocalContextTokens"></span></label>
                     <select style="width:200px" id="node-input-llmLocalContextTokens">
-                        <option value="0" data-i18n="cerebrumUltimate.selectlists.localContext.maximum"></option>
+                        <option value="0" data-i18n="cerebrumUltimate.selectlists.localContext.automatic"></option>
                         <option value="4096" data-context-tokens="4096" data-i18n="cerebrumUltimate.selectlists.localContext.k4"></option>
                         <option value="8192" data-context-tokens="8192" data-i18n="cerebrumUltimate.selectlists.localContext.k8"></option>
                         <option value="16384" data-context-tokens="16384" data-i18n="cerebrumUltimate.selectlists.localContext.k16"></option>
