@@ -68,217 +68,273 @@ describe('Cerebrum conversation response parsing', () => {
   })
 })
 
-describe('Cerebrum conversation response recovery', function () {
-  this.timeout(15000)
-  let node, userDir, requests, respond, originalConcat
-  const noop = () => {}
-  const ask = () => node.sidebarAsk('Mostra le informazioni sulla cucina')
-  const wireResponse = (content, finishReason = 'stop') => ({ choices: [{ message: { content }, finish_reason: finishReason }] })
+for (const provider of ['openai_compat', 'lmstudio', 'ollama']) {
+  describe(`Cerebrum conversation response recovery (${provider})`, function () {
+    this.timeout(15000)
+    let node, userDir, requests, respond, originalConcat
+    const noop = () => {}
+    const ask = () => node.sidebarAsk('Mostra le informazioni sulla cucina')
+    const wireResponse = (content, finishReason = 'stop') => provider === 'ollama' ? { message: { content }, done_reason: finishReason } : { choices: [{ message: { content }, finish_reason: finishReason }] }
 
-  beforeEach(() => {
-    userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-response-'))
-    requests = []
-    originalConcat = simpleGet.concat
-    simpleGet.concat = (options, callback) => {
-      try {
-        const body = JSON.parse(options.body)
-        requests.push(body)
-        assert(requests.length <= 12, 'Response recovery must not loop indefinitely')
-        const result = respond(body, requests.length)
-        callback(null, { statusCode: 200, headers: {} }, Buffer.from(JSON.stringify(result)))
-      } catch (error) { callback(error) }
-    }
-    let Constructor
-    require('../nodes/cerebrumUltimate')({
-      auth: { needsPermission: () => noop },
-      httpAdmin: { get: noop, post: noop, use: noop },
-      settings: { userDir },
-      nodes: {
-        getNode: noop,
-        registerType: (type, value) => { if (type === 'cerebrumUltimate') Constructor = value },
-        createNode: target => {
-          const emitter = new EventEmitter()
-          Object.assign(target, {
-            id: 'response-test',
-            type: 'cerebrumUltimate',
-            credentials: { llmApiKey: 'test-only' },
-            on: emitter.on.bind(emitter),
-            emit: emitter.emit.bind(emitter),
-            status: noop,
-            warn: noop,
-            error: noop,
-            log: noop,
-            send: outputs => {
-              const request = outputs[5]
-              if (request?.cerebrum?.direction === 'request') queueMicrotask(() => target.emit('input', { ...request, payload: [] }))
-            }
-          })
-        }
-      },
-      util: { cloneMessage: value => structuredClone(value) }
+    beforeEach(() => {
+      userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerebrum-response-'))
+      requests = []
+      originalConcat = simpleGet.concat
+      simpleGet.concat = (options, callback) => {
+        try {
+          const body = JSON.parse(options.body)
+          requests.push(body)
+          assert(requests.length <= 12, 'Response recovery must not loop indefinitely')
+          const result = respond(body, requests.length)
+          callback(null, { statusCode: result._httpStatus || 200, headers: {} }, Buffer.from(JSON.stringify(result)))
+        } catch (error) { callback(error) }
+      }
+      let Constructor
+      require('../nodes/cerebrumUltimate')({
+        auth: { needsPermission: () => noop },
+        httpAdmin: { get: noop, post: noop, use: noop },
+        settings: { userDir },
+        nodes: {
+          getNode: noop,
+          registerType: (type, value) => { if (type === 'cerebrumUltimate') Constructor = value },
+          createNode: target => {
+            const emitter = new EventEmitter()
+            Object.assign(target, {
+              id: 'response-test',
+              type: 'cerebrumUltimate',
+              credentials: { llmApiKey: 'test-only' },
+              on: emitter.on.bind(emitter),
+              emit: emitter.emit.bind(emitter),
+              status: noop,
+              warn: noop,
+              error: noop,
+              log: noop,
+              send: outputs => {
+                const request = outputs[5]
+                if (request?.cerebrum?.direction === 'request') queueMicrotask(() => target.emit('input', { ...request, payload: [] }))
+              }
+            })
+          }
+        },
+        util: { cloneMessage: value => structuredClone(value) }
+      })
+      node = new Constructor({ llmEnabled: true, llmProvider: provider, llmBaseUrl: provider === 'ollama' ? 'http://llm.invalid/api/chat' : 'https://llm.invalid/v1/chat/completions', llmModel: 'test-model', llmMaxTokens: 1200, llmContextLength: 32768, llmAllowKnxCommands: false, webAccessEnabled: false })
+      if (provider === 'ollama') {
+        node.llmLocalContextTokens = 8192
+        node.llmContextLength = 8192
+        node._ollamaContextReadyKey = `${node.llmBaseUrl}\u0000${node.llmModel}`
+      }
+      if (provider === 'lmstudio') {
+        node.llmLocalContextTokens = 8192
+        node.llmContextLength = 8192
+        node._lmStudioContextReadyKey = `${node.llmBaseUrl}\u0000${node.llmModel}\u0000${node.llmLocalContextTokens}`
+        node._lmStudioContextReadyAt = Date.now()
+      }
     })
-    node = new Constructor({ llmEnabled: true, llmProvider: 'openai_compat', llmBaseUrl: 'https://llm.invalid/v1/chat/completions', llmModel: 'test-model', llmMaxTokens: 1200, llmContextLength: 32768, llmAllowKnxCommands: false, webAccessEnabled: false })
-  })
 
-  afterEach(async () => {
-    simpleGet.concat = originalConcat
-    if (node) await new Promise(resolve => node.emit('close', resolve))
-    if (userDir) fs.rmSync(userDir, { recursive: true, force: true })
-    node = null
-  })
+    afterEach(async () => {
+      simpleGet.concat = originalConcat
+      if (node) await new Promise(resolve => node.emit('close', resolve))
+      if (userDir) fs.rmSync(userDir, { recursive: true, force: true })
+      node = null
+    })
 
-  it('repairs an empty envelope in the same authorized chat', async () => {
-    respond = (body, count) => wireResponse(JSON.stringify(count === 1 ? {} : answer({ reply: 'Ecco la risposta corretta.' })))
-    const result = await ask()
-    assert.equal(result.answer, 'Ecco la risposta corretta.')
-    assert.equal(requests.length, 2)
-    assert(requests[1].messages[0].content.includes('RESPONSE RECOVERY:'))
-    assert.equal(result.metadata.responseRecoveryCount, 1)
-    assert.equal(result.metadata.responseIssue, '')
-  })
+    if (provider !== 'openai_compat') {
+      it('remembers explicit lack of native tool support without repeating failed negotiations', async () => {
+        let rejections = 0
+        respond = body => {
+          if (body.tools) { rejections++; return { _httpStatus: 400, error: { message: 'This model does not support tools' } } }
+          assert(body.messages[0].content.includes('TRANSPORT:'))
+          return wireResponse('{"reply":"Risposta compatibile."}')
+        }
+        assert.equal((await ask()).answer, 'Risposta compatibile.')
+        assert.equal((await ask()).answer, 'Risposta compatibile.')
+        assert.equal(rejections, 1)
+        assert.equal(requests.length, 3)
+      })
 
-  it('repairs empty provider text instead of displaying the provider fallback as an answer', async () => {
-    respond = (body, count) => wireResponse(count === 1 ? '' : JSON.stringify(answer({ reply: 'Risposta recuperata.' })))
-    assert.equal((await ask()).answer, 'Risposta recuperata.')
-    assert.equal(requests.length, 2)
-  })
+      it('uses native tool calls and returns the actual backend result within an 8K window', async () => {
+        respond = (body, count) => {
+          assert(body.tools.some(tool => tool.function.name === 'automationActions'))
+          assert(!body.response_format && !body.format)
+          if (provider === 'lmstudio') assert.equal(body.reasoning_effort, 'none')
+          else assert.equal(body.think, false)
+          if (count > 1) {
+            assert(body.messages.some(message => message.content.includes('LOCAL AUTOMATION TOOL RESULTS')))
+            return wireResponse('Nessuna routine salvata. Esempio di sintassi: `{}`.')
+          }
+          const message = { content: '', tool_calls: [{ function: { name: 'automationActions', arguments: provider === 'ollama' ? { operation: 'list' } : '{"operation":"list"}' } }] }
+          return provider === 'ollama' ? { message, done_reason: 'stop' } : { choices: [{ message, finish_reason: 'tool_calls' }] }
+        }
+        const result = await ask()
+        assert.equal(requests.length, 2)
+        assert.equal(result.answer, 'Nessuna routine salvata. Esempio di sintassi: `{}`.')
+        assert.equal(result.metadata.responseIssue, '')
+      })
 
-  it('discards truncated tool instructions and retains the configured generation limit', async () => {
-    respond = (body, count) => wireResponse(count === 1
-      ? JSON.stringify(answer({ memoryActions: [{ operation: 'remember', text: 'Must never be saved' }] })).slice(0, -1)
-      : JSON.stringify(answer({ reply: 'Risposta completa.' })), count === 1 ? 'length' : 'stop')
-    const result = await ask()
-    assert.equal(result.answer, 'Risposta completa.')
-    assert.equal(result.metadata.memoryActionCount, 0)
-    assert.equal(requests.length, 2)
-    assert.equal(requests[0].max_tokens, requests[1].max_tokens)
-    assert(requests[1].messages[0].content.includes('(token_limit)'))
-  })
+      it('preserves an explicit reasoning choice', async () => {
+        node.llmReasoningEffort = 'high'
+        respond = body => {
+          assert.equal(provider === 'ollama' ? body.think : body.reasoning_effort, 'high')
+          return wireResponse('Risposta completa.')
+        }
+        assert.equal((await ask()).answer, 'Risposta completa.')
+      })
+    }
 
-  it('reports repeated empty responses as failures and stops recovery', async () => {
-    respond = () => wireResponse(JSON.stringify(answer()))
-    const result = await ask()
-    assert.equal(requests.length, 2)
-    assert(result.answer.includes('recupero automatico'))
-    assert.equal(result.metadata.responseIssue, 'empty')
-    const log = node.getCerebrumOperationsSnapshot()
-    assert(log.items.some(item => item.operation === 'conversation' && item.status === 'failed'))
-  })
+    it('repairs an empty envelope in the same authorized chat', async () => {
+      respond = (body, count) => wireResponse(JSON.stringify(count === 1 ? {} : answer({ reply: 'Ecco la risposta corretta.' })))
+      const result = await ask()
+      assert.equal(result.answer, 'Ecco la risposta corretta.')
+      assert.equal(requests.length, 2)
+      assert(requests[1].messages[0].content.includes('RESPONSE RECOVERY:'))
+      assert.equal(result.metadata.responseRecoveryCount, 1)
+      assert.equal(result.metadata.responseIssue, '')
+    })
 
-  it('does not execute even complete JSON marked incomplete by the provider', async () => {
-    respond = () => wireResponse(JSON.stringify(answer({ memoryActions: [{ operation: 'remember', text: 'This is still an incomplete response' }] })), 'length')
-    const result = await ask()
-    assert.equal(requests.length, 2)
-    assert.equal(result.metadata.memoryActionCount, 0)
-    assert.equal(result.metadata.responseIssue, 'token_limit')
-    assert(result.answer.includes('limite di generazione'))
-  })
+    it('repairs empty provider text instead of displaying the provider fallback as an answer', async () => {
+      respond = (body, count) => wireResponse(count === 1 ? '' : JSON.stringify(answer({ reply: 'Risposta recuperata.' })))
+      assert.equal((await ask()).answer, 'Risposta recuperata.')
+      assert.equal(requests.length, 2)
+    })
 
-  it('allows further useful tool passes after a repaired response', async () => {
-    respond = (body, count) => wireResponse(JSON.stringify(count === 1 || count === 3
-      ? answer()
-      : count === 2
-        ? answer({ automationActions: [{ operation: 'api' }] })
-        : count === 4
-          ? answer({ automationActions: [{ operation: 'list' }] })
-          : answer({ reply: 'Ho verificato le routine disponibili.' })))
-    const result = await ask()
-    assert.equal(requests.length, 5)
-    assert.equal(result.answer, 'Ho verificato le routine disponibili.')
-    assert.equal(result.metadata.responseRecoveryCount, 2)
-    assert(!requests[2].messages[0].content.includes('RESPONSE RECOVERY:'))
-  })
+    it('discards truncated tool instructions and retains the configured generation limit', async () => {
+      respond = (body, count) => wireResponse(count === 1
+        ? JSON.stringify(answer({ memoryActions: [{ operation: 'remember', text: 'Must never be saved' }] })).slice(0, -1)
+        : JSON.stringify(answer({ reply: 'Risposta completa.' })), count === 1 ? 'length' : 'stop')
+      const result = await ask()
+      assert.equal(result.answer, 'Risposta completa.')
+      assert.equal(result.metadata.memoryActionCount, 0)
+      assert.equal(requests.length, 2)
+      assert.equal(requests[0].max_tokens, requests[1].max_tokens)
+      assert(requests[1].messages[0].content.includes('(token_limit)'))
+    })
 
-  it('repairs malformed JSON without a token-limit status, while preserving ordinary prose', async () => {
-    const source = JSON.stringify(answer({ automationActions: [{ operation: 'create', code: 'return 12345' }] }))
-    respond = (body, count) => wireResponse(count === 1 ? source.slice(0, source.indexOf('12345')) : 'Posso spiegarti le informazioni disponibili.')
-    const result = await ask()
-    assert.equal(requests.length, 2)
-    assert.equal(result.answer, 'Posso spiegarti le informazioni disponibili.')
-    assert(requests[1].messages[0].content.includes('(invalid_json)'))
-  })
+    it('reports repeated empty responses as failures and stops recovery', async () => {
+      respond = () => wireResponse(JSON.stringify(answer()))
+      const result = await ask()
+      assert.equal(requests.length, 2)
+      assert(result.answer.includes('recupero automatico'))
+      assert.equal(result.metadata.responseIssue, 'empty')
+      const log = node.getCerebrumOperationsSnapshot()
+      assert(log.items.some(item => item.operation === 'conversation' && item.status === 'failed'))
+    })
 
-  it('recovers when a model requests only an unavailable tool', async () => {
-    respond = (body, count) => wireResponse(JSON.stringify(count === 1
-      ? answer({ webActions: [{ operation: 'search', query: 'weather' }] })
-      : answer({ reply: 'La ricerca Web è disabilitata.' })))
-    const result = await ask()
-    assert.equal(result.answer, 'La ricerca Web è disabilitata.')
-    assert.equal(requests.length, 2)
-    assert(requests[1].messages[0].content.includes('(unusable_tools)'))
-  })
+    it('does not execute even complete JSON marked incomplete by the provider', async () => {
+      respond = () => wireResponse(JSON.stringify(answer({ memoryActions: [{ operation: 'remember', text: 'This is still an incomplete response' }] })), 'length')
+      const result = await ask()
+      assert.equal(requests.length, 2)
+      assert.equal(result.metadata.memoryActionCount, 0)
+      assert.equal(result.metadata.responseIssue, 'token_limit')
+      assert(result.answer.includes('limite di generazione'))
+    })
 
-  it('acknowledges a successful memory-only action without another model call', async () => {
-    respond = () => wireResponse(JSON.stringify(answer({ memoryActions: [{ operation: 'remember', text: 'Preferisco risposte in italiano.', reason: 'Richiesta esplicita' }] })))
-    const result = await node.sidebarAsk('Ricorda che preferisco risposte in italiano quando parliamo della cucina')
-    assert.equal(requests.length, 1)
-    assert.equal(result.answer, 'Memoria aggiornata.')
-    assert.equal(result.metadata.memoryActionCount, 1)
-  })
+    it('allows further useful tool passes after a repaired response', async () => {
+      respond = (body, count) => wireResponse(JSON.stringify(count === 1 || count === 3
+        ? answer()
+        : count === 2
+          ? answer({ automationActions: [{ operation: 'api' }] })
+          : count === 4
+            ? answer({ automationActions: [{ operation: 'list' }] })
+            : answer({ reply: 'Ho verificato le routine disponibili.' })))
+      const result = await ask()
+      assert.equal(requests.length, 5)
+      assert.equal(result.answer, 'Ho verificato le routine disponibili.')
+      assert.equal(result.metadata.responseRecoveryCount, 2)
+      assert(!requests[2].messages[0].content.includes('RESPONSE RECOVERY:'))
+    })
 
-  it('reports a saved routine if final response recovery fails, without repeating the save', async () => {
-    let saves = 0
-    node._automationRuntime.save = async ({ name }) => { saves++; return { name, revision: 'saved', status: 'active' } }
-    const action = { operation: 'create', name: 'reminder.js', revision: '', code: 'module.exports = function () {}', offset: 0 }
-    respond = (body, count) => wireResponse(JSON.stringify(count === 1 ? answer({ automationActions: [action] }) : answer()))
-    const result = await node.sidebarAsk('Crea una routine di promemoria per la cucina alle sette')
-    assert.equal(saves, 1)
-    assert.equal(requests.length, 3)
-    assert(result.answer.includes('Routine salvata: reminder.js'))
-    assert(!result.answer.includes('non è stata eseguita'))
-    assert.equal(result.metadata.responseIssue, 'empty')
-    assert(requests[2].messages.some(message => message.content.includes('reminder.js')))
-  })
+    it('repairs malformed JSON without a token-limit status, while preserving ordinary prose', async () => {
+      const source = JSON.stringify(answer({ automationActions: [{ operation: 'create', code: 'return 12345' }] }))
+      respond = (body, count) => wireResponse(count === 1 ? source.slice(0, source.indexOf('12345')) : 'Posso spiegarti le informazioni disponibili.')
+      const result = await ask()
+      assert.equal(requests.length, 2)
+      assert.equal(result.answer, 'Posso spiegarti le informazioni disponibili.')
+      assert(requests[1].messages[0].content.includes('(invalid_json)'))
+    })
 
-  it('does not replay a completed automation operation returned by the recovery call', async () => {
-    let saves = 0
-    node._automationRuntime.save = async ({ name }) => { saves++; return { name, revision: 'saved', status: 'active' } }
-    const action = { operation: 'create', name: 'reminder.js', revision: '', code: 'module.exports = function () {}', offset: 0 }
-    respond = (body, count) => wireResponse(JSON.stringify(count === 2 ? answer() : answer({ automationActions: [{ ...action, code: count === 1 ? action.code : `${action.code}\n` }] })))
-    const result = await node.sidebarAsk('Crea una routine di promemoria per la cucina alle sette')
-    assert.equal(requests.length, 3)
-    assert.equal(saves, 1)
-    assert(result.answer.includes('Routine salvata: reminder.js'))
-  })
+    it('recovers when a model requests only an unavailable tool', async () => {
+      respond = (body, count) => wireResponse(JSON.stringify(count === 1
+        ? answer({ webActions: [{ operation: 'search', query: 'weather' }] })
+        : answer({ reply: 'La ricerca Web è disabilitata.' })))
+      const result = await ask()
+      assert.equal(result.answer, 'La ricerca Web è disabilitata.')
+      assert.equal(requests.length, 2)
+      assert(requests[1].messages[0].content.includes('(unusable_tools)'))
+    })
 
-  it('keeps clarification recovery free of tools', async () => {
-    let saves = 0
-    node._automationRuntime.save = async () => { saves++; throw new Error('Must not save') }
-    respond = (body, count) => wireResponse(JSON.stringify(count === 1
-      ? answer({ routine: { phase: 'clarify' } })
-      : answer({ automationActions: [{ operation: 'create', name: 'not-authorized.js', code: 'irrelevant' }] })))
-    const result = await ask()
-    assert.equal(saves, 0)
-    assert.equal(requests.length, 2)
-    assert.equal(result.metadata.responseIssue, 'unusable_tools')
-  })
+    it('acknowledges a successful memory-only action without another model call', async () => {
+      respond = () => wireResponse(JSON.stringify(answer({ memoryActions: [{ operation: 'remember', text: 'Preferisco risposte in italiano.', reason: 'Richiesta esplicita' }] })))
+      const result = await node.sidebarAsk('Ricorda che preferisco risposte in italiano quando parliamo della cucina')
+      assert.equal(requests.length, 1)
+      assert.equal(result.answer, 'Memoria aggiornata.')
+      assert.equal(result.metadata.memoryActionCount, 1)
+    })
 
-  it('preserves a clarification boundary even when the provider reports a token limit', async () => {
-    let saves = 0
-    node._automationRuntime.save = async () => { saves++; throw new Error('Must not save') }
-    respond = (body, count) => wireResponse(JSON.stringify(count === 1
-      ? answer({ routine: { phase: 'clarify' } })
-      : answer({ automationActions: [{ operation: 'create', name: 'not-authorized.js', code: 'irrelevant' }] })), count === 1 ? 'length' : 'stop')
-    const result = await ask()
-    assert.equal(saves, 0)
-    assert.equal(requests.length, 2)
-    assert.equal(result.metadata.responseIssue, 'unusable_tools')
-  })
+    it('reports a saved routine if final response recovery fails, without repeating the save', async () => {
+      let saves = 0
+      node._automationRuntime.save = async ({ name }) => { saves++; return { name, revision: 'saved', status: 'active' } }
+      const action = { operation: 'create', name: 'reminder.js', revision: '', code: 'module.exports = function () {}', offset: 0 }
+      respond = (body, count) => wireResponse(JSON.stringify(count === 1 ? answer({ automationActions: [action] }) : answer()))
+      const result = await node.sidebarAsk('Crea una routine di promemoria per la cucina alle sette')
+      assert.equal(saves, 1)
+      assert.equal(requests.length, 3)
+      assert(result.answer.includes('Routine salvata: reminder.js'))
+      assert(!result.answer.includes('non è stata eseguita'))
+      assert.equal(result.metadata.responseIssue, 'empty')
+      assert(requests[2].messages.some(message => message.content.includes('reminder.js')))
+    })
 
-  it('does not retry provider refusals or continue after chat cancellation', async () => {
-    respond = () => wireResponse('', 'content_filter')
-    assert.equal((await ask()).metadata.responseIssue, 'blocked')
-    assert.equal(requests.length, 1)
-    requests.length = 0
-    let requestStarted
-    const started = new Promise(resolve => { requestStarted = resolve })
-    respond = () => { node._interactiveChatRequests.clear(); requestStarted(); return wireResponse('{}') }
-    const pending = ask()
-    await started
-    assert.equal(requests.length, 1)
-    await new Promise(resolve => node.emit('close', resolve))
-    node = null
-    const result = await pending
-    assert(!result.answer.includes('recupero automatico'))
+    it('does not replay a completed automation operation returned by the recovery call', async () => {
+      let saves = 0
+      node._automationRuntime.save = async ({ name }) => { saves++; return { name, revision: 'saved', status: 'active' } }
+      const action = { operation: 'create', name: 'reminder.js', revision: '', code: 'module.exports = function () {}', offset: 0 }
+      respond = (body, count) => wireResponse(JSON.stringify(count === 2 ? answer() : answer({ automationActions: [{ ...action, code: count === 1 ? action.code : `${action.code}\n` }] })))
+      const result = await node.sidebarAsk('Crea una routine di promemoria per la cucina alle sette')
+      assert.equal(requests.length, 3)
+      assert.equal(saves, 1)
+      assert(result.answer.includes('Routine salvata: reminder.js'))
+    })
+
+    it('keeps clarification recovery free of tools', async () => {
+      let saves = 0
+      node._automationRuntime.save = async () => { saves++; throw new Error('Must not save') }
+      respond = (body, count) => wireResponse(JSON.stringify(count === 1
+        ? answer({ routine: { phase: 'clarify' } })
+        : answer({ automationActions: [{ operation: 'create', name: 'not-authorized.js', code: 'irrelevant' }] })))
+      const result = await ask()
+      assert.equal(saves, 0)
+      assert.equal(requests.length, 2)
+      assert.equal(result.metadata.responseIssue, 'unusable_tools')
+    })
+
+    it('preserves a clarification boundary even when the provider reports a token limit', async () => {
+      let saves = 0
+      node._automationRuntime.save = async () => { saves++; throw new Error('Must not save') }
+      respond = (body, count) => wireResponse(JSON.stringify(count === 1
+        ? answer({ routine: { phase: 'clarify' } })
+        : answer({ automationActions: [{ operation: 'create', name: 'not-authorized.js', code: 'irrelevant' }] })), count === 1 ? 'length' : 'stop')
+      const result = await ask()
+      assert.equal(saves, 0)
+      assert.equal(requests.length, 2)
+      assert.equal(result.metadata.responseIssue, 'unusable_tools')
+    })
+
+    it('does not retry provider refusals or continue after chat cancellation', async () => {
+      respond = () => wireResponse('', 'content_filter')
+      assert.equal((await ask()).metadata.responseIssue, 'blocked')
+      assert.equal(requests.length, 1)
+      requests.length = 0
+      let requestStarted
+      const started = new Promise(resolve => { requestStarted = resolve })
+      respond = () => { node._interactiveChatRequests.clear(); requestStarted(); return wireResponse('{}') }
+      const pending = ask()
+      await started
+      assert.equal(requests.length, 1)
+      await new Promise(resolve => node.emit('close', resolve))
+      node = null
+      const result = await pending
+      assert(!result.answer.includes('recupero automatico'))
+    })
   })
-})
+}

@@ -38,11 +38,13 @@ function classifyCerebrumResponseIssue (response) {
   if (['length', 'max_tokens', 'max_output_tokens'].includes(reason)) return 'token_limit'
   if (['content_filter', 'refusal'].includes(reason)) return 'blocked'
   if (['incomplete', 'failed', 'cancelled'].includes(reason)) return 'incomplete'
+  if (response.protocolIssue === 'invalid_json') return 'invalid_json'
   if (response.responseEmpty === true || !String(response.content || '').trim()) return 'empty'
   return ''
 }
 
-function buildCerebrumResponseRecoveryPrompt ({ issue, replyOnly = false }) {
+function buildCerebrumResponseRecoveryPrompt ({ issue, replyOnly = false, nativeTools = false }) {
+  if (nativeTools) return `\nRESPONSE RECOVERY: The previous response was unusable (${issue}); none of its instructions were executed. Return a complete final answer or a valid native function call with complete arguments. Respect the current user requirements and permissions. Recorded tool results are completed operations: never repeat their effects. ${replyOnly ? 'Ask the missing clarification question; call NO tools.' : 'If unable to complete the task, explain the specific limitation. Never produce an empty final answer.'}`
   return `\nRESPONSE RECOVERY: The previous response was unusable (${issue}); none of its instructions were executed. Return a complete, compact conversation JSON object, never a fragment or a continuation of JSON. Include a non-empty reply for a final answer or clarification; an empty reply is valid only with an available, necessary intermediate tool. Use only tools enabled in THIS pass. Preserve all current user requirements and execution permissions. Tool results already supplied remain authoritative evidence of completed operations: do not repeat those operations. If a routine was already saved, explain its recorded result. ${replyOnly ? 'This is a clarification: ask the missing question in reply and leave EVERY action array empty.' : 'If more evidence is needed, request an available tool. If the task cannot be completed, explain the specific limitation in reply.'}`
 }
 

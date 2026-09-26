@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4 - 2026-09-26
+
+- Use native tool calls and ordinary final text for local LM Studio/Ollama chat, with a compact JSON fallback for models that explicitly reject tools. Retain the existing action validation, shared archive and clarification boundaries.
+- Reduce local prompts, retrieve raw history on demand, and budget text/tool definitions separately from the persistent archive. Local chat defaults to reasoning off; explicit reasoning selections remain honored, including LM Studio `none`.
+- Preserve streamed tool calls, reject incomplete/malformed calls before effects, and add an isolated opt-in LAN benchmark.
+
 ## 1.0.3 - 2026-09-26
 
 - Place the AI provider endpoint directly below the provider selector in the node editor.
