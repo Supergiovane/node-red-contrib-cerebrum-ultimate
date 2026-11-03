@@ -246,6 +246,8 @@ const DYNAMIC_UI_PATTERNS = {
     anomalyCount: "anomalia x{{value}}",
     areaLabel: "Area {{value}}",
     providerModel: "Provider: {{provider}} | Modello: {{model}}",
+    staleGAs:
+      "{{count}} indirizzi di gruppo salvati non sono più nel catalogo ETS e verranno rimossi al salvataggio: {{list}}",
   },
   de: {
     countAreas: "{{count}} Bereiche",
@@ -268,6 +270,8 @@ const DYNAMIC_UI_PATTERNS = {
     anomalyCount: "Anomalie x{{value}}",
     areaLabel: "Bereich {{value}}",
     providerModel: "Anbieter: {{provider}} | Modell: {{model}}",
+    staleGAs:
+      "{{count}} gespeicherte Gruppenadressen sind nicht mehr im ETS-Katalog und werden beim Speichern entfernt: {{list}}",
   },
   fr: {
     countAreas: "{{count}} zones",
@@ -290,6 +294,8 @@ const DYNAMIC_UI_PATTERNS = {
     anomalyCount: "anomalie x{{value}}",
     areaLabel: "Zone {{value}}",
     providerModel: "Fournisseur : {{provider}} | Modèle : {{model}}",
+    staleGAs:
+      "{{count}} adresses de groupe enregistrées ne figurent plus dans le catalogue ETS et seront supprimées à l’enregistrement : {{list}}",
   },
   es: {
     countAreas: "{{count}} áreas",
@@ -312,6 +318,8 @@ const DYNAMIC_UI_PATTERNS = {
     anomalyCount: "anomalía x{{value}}",
     areaLabel: "Área {{value}}",
     providerModel: "Proveedor: {{provider}} | Modelo: {{model}}",
+    staleGAs:
+      "{{count}} direcciones de grupo guardadas ya no están en el catálogo ETS y se eliminarán al guardar: {{list}}",
   },
   "zh-CN": {
     countAreas: "{{count}} 个区域",
@@ -333,6 +341,8 @@ const DYNAMIC_UI_PATTERNS = {
     anomalyCount: "异常 x{{value}}",
     areaLabel: "区域 {{value}}",
     providerModel: "提供方: {{provider}} | 模型: {{model}}",
+    staleGAs:
+      "{{count}} 个已保存的组地址已不在 ETS 目录中，保存时将被移除：{{list}}",
   },
 };
 
@@ -538,6 +548,14 @@ function translateDynamicUiText(text) {
     return translateTemplate(langPatterns.countSelected, {
       selected: match[1],
       total: match[2],
+    });
+  match = text.match(
+    /^(\d+) saved group address\(es\) are no longer in the ETS catalog and will be removed when you save: (.+)$/,
+  );
+  if (match)
+    return translateTemplate(langPatterns.staleGAs, {
+      count: match[1],
+      list: match[2],
     });
   match = text.match(/^(\d+)\sread only$/i);
   if (match)
@@ -758,6 +776,7 @@ const state = reactive({
   etsAccessFilter: "",
   etsAccessSelected: [],
   etsAccessReadOnly: [],
+  etsAccessStaleGAs: [],
   etsAccessBaseline: "",
   etsAccessLoadedNodeId: "",
   etsAccessData: null,
@@ -2872,6 +2891,7 @@ watch(
     state.etsAccessFilter = "";
     state.etsAccessSelected = [];
     state.etsAccessReadOnly = [];
+    state.etsAccessStaleGAs = [];
     state.etsAccessBaseline = "";
     state.etsAccessLoadedNodeId = "";
     state.etsAccessData = null;
@@ -4222,16 +4242,21 @@ function hydrateEtsAccessDraft(snapshot, { force = false } = {}) {
   const source =
     snapshot && typeof snapshot === "object" ? snapshot : { items: [] };
   if (source.catalogIncluded !== true) return;
-  const selected = Array.isArray(source.exposedGAs) ? source.exposedGAs : (Array.isArray(source.items) ? source.items : [])
+  const items = Array.isArray(source.items) ? source.items : [];
+  const selected = Array.isArray(source.exposedGAs) ? source.exposedGAs : items
     .filter((item) => item && item.selected === true)
     .map((item) => item.ga);
-  const readOnly = Array.isArray(source.readOnlyGAs) ? source.readOnlyGAs : (Array.isArray(source.items) ? source.items : [])
+  const readOnly = Array.isArray(source.readOnlyGAs) ? source.readOnlyGAs : items
     .filter((item) => item && item.selected === true && item.readOnly === true)
     .map((item) => item.ga);
   const sameNode = state.etsAccessLoadedNodeId === state.selectedNodeId;
   if (!force && sameNode && etsAccessDirty.value) return;
-  state.etsAccessSelected = normalizeEtsAccessDraftList(selected);
-  state.etsAccessReadOnly = normalizeEtsAccessDraftList(readOnly);
+  // Saved addresses missing from the current ETS catalog cannot be shown or
+  // saved; keep them out of the draft so the next save removes them.
+  const catalogGAs = new Set(items.map((item) => item && item.ga));
+  state.etsAccessSelected = normalizeEtsAccessDraftList(selected).filter((ga) => catalogGAs.has(ga));
+  state.etsAccessReadOnly = normalizeEtsAccessDraftList(readOnly).filter((ga) => catalogGAs.has(ga));
+  state.etsAccessStaleGAs = normalizeEtsAccessDraftList(selected).filter((ga) => !catalogGAs.has(ga));
   state.etsAccessBaseline = buildEtsAccessDraftFingerprint(selected, readOnly);
   state.etsAccessLoadedNodeId = state.selectedNodeId;
   state.etsAccessError = "";
@@ -7500,6 +7525,23 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
+          <p
+            v-if="state.etsAccessError"
+            class="error-banner ets-access-banner"
+            role="alert"
+          >
+            {{ state.etsAccessError }}
+          </p>
+          <p
+            v-if="state.etsAccessStaleGAs.length"
+            class="error-banner ets-access-banner"
+            role="status"
+          >
+            {{ state.etsAccessStaleGAs.length }} saved group address(es) are no
+            longer in the ETS catalog and will be removed when you save:
+            {{ state.etsAccessStaleGAs.slice(0, 10).join(", ")
+            }}{{ state.etsAccessStaleGAs.length > 10 ? "…" : "" }}
+          </p>
           <div
             v-if="!etsAccessState.gateway?.configured"
             class="error-banner ets-access-banner"
@@ -7646,13 +7688,6 @@ onBeforeUnmount(() => {
             <p v-else class="empty-state">
               No group addresses match the current search, or the selected
               gateway has no ETS catalog.
-            </p>
-            <p
-              v-if="state.etsAccessError"
-              class="error-banner ets-access-banner"
-              role="alert"
-            >
-              {{ state.etsAccessError }}
             </p>
           </div>
         </section>

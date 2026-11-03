@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.5 - 2026-11-03
+
+- Fix saving **ETS Access** in the Web page when the saved selection contains group addresses that are no longer in the gateway's ETS catalog. They were hidden from the list but still sent, so every save was rejected. The page now lists them in a notice and removes them on the next save; save errors appear next to the Save button instead of below the list.
+- Recognize the context windows of current Claude models (1M tokens; 200K for Claude Haiku 4.5), including dated snapshots. Previously every Claude model fell back to an 8K budget unless **Maximum managed context (KB)** was set, so requests could fail with "Cerebrum context budget exhausted (8192 tokens)" before anything was sent.
+- New Anthropic nodes default to `claude-opus-5-5`. Provider default URLs and models are defined once in the runtime and shared with the node editor; existing nodes keep their selected model.
+- Reuse an unchanged KNX bus summary across consecutive reasoning steps for up to five seconds instead of rebuilding it for every step.
+- Build provider request bodies (Ollama, Anthropic, OpenAI Responses, OpenAI-compatible/LM Studio) in a separate, unit-tested module. Requests are unchanged.
+- Remove code for retired features that was no longer reachable: the AI Education compiler, the autonomous world-model engine and its runtime, comfort goals, behavior-pattern learning, legacy scheduled-task execution and unused GA role helpers. Validators for legacy autonomy checkpoints and observation journals remain, so old files still back up, restore and display.
+- Restore the missing 1.0.2 changelog entry and describe the LM Studio changes released in 1.0.3.
+
 ## 1.0.4 - 2026-09-26
 
 - Use native tool calls and ordinary final text for local LM Studio/Ollama chat, with a compact JSON fallback for models that explicitly reject tools. Retain the existing action validation, shared archive and clarification boundaries.
@@ -7,6 +17,12 @@
 - Preserve streamed tool calls, reject incomplete/malformed calls before effects, and add an isolated opt-in LAN benchmark.
 
 ## 1.0.3 - 2026-09-26
+
+- LM Studio now loads models with an automatic 8K context when no window is selected, retrying once at 4K if LM Studio reports insufficient resources. An explicitly selected window is honored and reported without repeated loads.
+- Fall back to the LM Studio v0 model catalog when v1 is temporarily unavailable, and ignore embedding models in the model list.
+- Local providers use the selected local context window only; the **Maximum managed context (KB)** field applies to cloud providers and is hidden for LM Studio/Ollama.
+
+## 1.0.2 - 2026-09-26
 
 - Place the AI provider endpoint directly below the provider selector in the node editor.
 - Check each AI-authored JavaScript routine callback in QuickJS before saving it, so errors such as an unavailable `Intl` global can be corrected before activation.

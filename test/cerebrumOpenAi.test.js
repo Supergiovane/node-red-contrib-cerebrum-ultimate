@@ -17,6 +17,10 @@ describe('Cerebrum context protection', () => {
     expect(resolveCloudContextTokens({ model: 'gpt-5.5-pro' })).to.equal(1050000)
     expect(resolveCloudContextTokens({ model: 'gpt-4o-mini', contextLength: 4096 })).to.equal(4096)
     expect(resolveCloudContextTokens({ model: 'gpt-4o-mini', contextLength: 9999999 })).to.equal(128000)
+    expect(resolveCloudContextTokens({ model: 'claude-opus-5-5' })).to.equal(1000000)
+    expect(resolveCloudContextTokens({ model: 'claude-haiku-4-5-20251001' })).to.equal(200000)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'anthropic', model: 'claude-opus-5-5' }).tokens).to.equal(1000000)
+    expect(resolveCerebrumOperationalContextLimit({ provider: 'anthropic', model: 'claude-opus-5-5', maxContextKb: 64 }).tokens).to.equal(65536)
     for (const contextLength of [0, -1, Infinity, NaN]) {
       expect(resolveCloudContextTokens({ model: 'unknown', contextLength })).to.equal(8192)
     }

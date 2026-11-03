@@ -1,7 +1,6 @@
 'use strict'
 
 const { CEREBRUM_AUTONOMY_LIMITS } = require('./cerebrumAutonomy')
-const { canAct } = require('./cerebrumAutonomyRuntime')
 
 // Human inspection has its own budget. Never reuse the LLM projection here:
 // provenance, goal baselines, source text and feedback must remain inspectable.
@@ -49,7 +48,7 @@ const activityFor = node => {
   else if (node.llmRequireCommandConfirmation === true) actionsReason = 'confirmation_required'
   return {
     enabled,
-    actionsEnabled: enabled && canAct(node),
+    actionsEnabled: enabled && actionsReason === 'ready',
     webEnabled: enabled && node.webAccessEnabled === true,
     actionsReason
   }

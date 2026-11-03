@@ -398,13 +398,15 @@
             const savedKnxGatewayId = String(node.server || "").trim();
             const savedUnifiProtectConfigId = String(node.unifiProtectConfig || "").trim();
             const OPENAI_DEFAULT_RESPONSES_URL = "https://api.openai.com/v1/responses";
-            const OLLAMA_DEFAULT_CHAT_URL = "http://localhost:11434/api/chat";
-            const ANTHROPIC_DEFAULT_CHAT_URL = "https://api.anthropic.com/v1/messages";
-            const LMSTUDIO_DEFAULT_CHAT_URL = "http://localhost:1234/v1/chat/completions";
+            // Provider defaults come from the runtime; an empty value lets the runtime apply its own default.
+            const providerDefaults = (RED.settings && RED.settings.cerebrumUltimateProviderDefaults) || {};
+            const OLLAMA_DEFAULT_CHAT_URL = providerDefaults.ollamaChatUrl || "";
+            const ANTHROPIC_DEFAULT_CHAT_URL = providerDefaults.anthropicChatUrl || "";
+            const LMSTUDIO_DEFAULT_CHAT_URL = providerDefaults.lmStudioChatUrl || "";
             const OLLAMA_LIBRARY_URL = "https://ollama.com/library";
             const OPENAI_COMPAT_DEFAULT_MODELS = ["gpt-5.4", "gpt-4o-mini"];
-            const OLLAMA_DEFAULT_MODEL = "llama3.1";
-            const ANTHROPIC_DEFAULT_MODEL = "claude-opus-4-8";
+            const OLLAMA_DEFAULT_MODEL = providerDefaults.ollamaModel || "";
+            const ANTHROPIC_DEFAULT_MODEL = providerDefaults.anthropicModel || "";
 
             const mountTabSection = (mountSelector, sectionSelector) => {
                 const $mount = $(mountSelector);

@@ -3,9 +3,10 @@
 const positiveInteger = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Math.floor(Number(value)) : 0
 
 const resolveCloudContextTokens = ({ model, contextLength } = {}) => {
-  // Official model pages, checked 2026-09-07. Match aliases and dated snapshots
-  // exactly; unknown compatible endpoints must not inherit a guessed large limit.
-  const id = String(model || '').trim().toLowerCase().replace(/-\d{4}-\d{2}-\d{2}$/, '')
+  // Official model pages, checked 2026-09-07 (OpenAI) and 2026-10-06 (Anthropic).
+  // Match aliases and dated snapshots exactly; unknown compatible endpoints must
+  // not inherit a guessed large limit.
+  const id = String(model || '').trim().toLowerCase().replace(/-(\d{4}-\d{2}-\d{2}|\d{8})$/, '')
   const known = {
     'gpt-6-astra': 1050000,
     'gpt-5.6-sol': 1050000,
@@ -14,7 +15,19 @@ const resolveCloudContextTokens = ({ model, contextLength } = {}) => {
     'gpt-5.5-pro': 1050000,
     'gpt-5.4': 1050000,
     'gpt-4o': 128000,
-    'gpt-4o-mini': 128000
+    'gpt-4o-mini': 128000,
+    'claude-fable-5-1': 1000000,
+    'claude-fable-5': 1000000,
+    'claude-opus-5-5': 1000000,
+    'claude-opus-5': 1000000,
+    'claude-opus-4-8': 1000000,
+    'claude-opus-4-7': 1000000,
+    'claude-opus-4-6': 1000000,
+    'claude-sonnet-5-5': 1000000,
+    'claude-sonnet-5': 1000000,
+    'claude-sonnet-4-6': 1000000,
+    'claude-haiku-5-5': 1000000,
+    'claude-haiku-4-5': 200000
   }[id] || 0
   const configured = positiveInteger(contextLength)
   return known && configured ? Math.min(known, configured) : configured || known || 8192

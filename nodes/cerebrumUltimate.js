@@ -19,6 +19,7 @@ const { createCerebrumAutomationRuntime } = require('./utils/cerebrumAutomationR
 const { hasCerebrumTransientMessageOrigin } = require('./utils/cerebrumTransientMessageOrigins')
 const { automationActionSchema, automationContract, routineAuthoringGuidance, executeAutomationAction } = require('./utils/cerebrumAutomationTool')
 const { createCerebrumLlmPolicy } = require('./utils/cerebrumLlmPolicy')
+const { buildCerebrumOllamaChatBody, buildCerebrumAnthropicMessagesBody, buildCerebrumOpenAiResponsesBody, buildCerebrumOpenAiCompatibleChatBody, withCerebrumJsonSchemaResponseFormat } = require('./utils/cerebrumLlmProviders')
 const { runCerebrumAutomationAssistant } = require('./utils/cerebrumAutomationAssistant')
 const { createCerebrumFunctionGenerator, registerCerebrumFunctionRoutes } = require('./utils/cerebrumFunctionAssistant')
 const { createCerebrumFunctionDataSource, registerCerebrumFunctionDataRoute } = require('./utils/cerebrumFunctionContext')
@@ -50,7 +51,6 @@ const {
 } = require('./utils/homeMemory')
 const {
   buildCerebrumEntityRegistryContext,
-  normalizeCerebrumEntityRegistry,
   synchronizeCerebrumSemanticEntities,
   upsertCerebrumSemanticEntity
 } = require('./utils/cerebrumEntityRegistry')
@@ -121,7 +121,6 @@ const {
   resolveCerebrumVoiceServiceConfig
 } = require('./utils/cerebrumTelegramVoice')
 const {
-  CEREBRUM_ADAPTER_HISTORY_MIN_HOURS,
   CEREBRUM_COMPACT_ARCHIVE_EXTENSION,
   buildCerebrumHistoryEventKey,
   createCerebrumHistoryAccumulator,
@@ -180,7 +179,6 @@ const {
   applyCerebrumScheduleActions,
   buildCerebrumScheduleMarkdown,
   buildCerebrumSchedulePromptContext,
-  claimDueCerebrumSchedules,
   completeCerebrumScheduleRun,
   createEmptyCerebrumScheduleStore,
   listActiveCerebrumSchedules,
@@ -3456,22 +3454,6 @@ const buildGaCatalogFromCsv = (csv) => {
     })
 }
 
-const applyGaRoleOverridesToCatalog = ({ catalog, roleOverrides }) => {
-  const rawCatalog = Array.isArray(catalog) ? catalog : []
-  const overrides = roleOverrides && typeof roleOverrides === 'object' ? roleOverrides : {}
-  return rawCatalog.map((item) => {
-    const ga = String(item && item.ga ? item.ga : '').trim()
-    const overrideRole = normalizeGaRoleValue(overrides[ga], 'auto')
-    return Object.assign({}, item, {
-      role: overrideRole === 'auto' ? normalizeGaRoleValue(item && item.baseRole ? item.baseRole : item && item.role ? item.role : 'status', 'status') : overrideRole,
-      roleSource: overrideRole === 'auto'
-        ? String(item && item.baseRoleSource ? item.baseRoleSource : item && item.roleSource ? item.roleSource : 'unknown_rule')
-        : 'user_override',
-      roleOverride: overrideRole
-    })
-  })
-}
-
 const applyCerebrumCatalogAccessConfiguration = ({
   catalog,
   exposeConfigured = false,
@@ -5181,7 +5163,16 @@ const ANTHROPIC_DEFAULT_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_DEFAULT_MODELS_URL = 'https://api.anthropic.com/v1/models'
 const LMSTUDIO_DEFAULT_CHAT_URL = 'http://localhost:1234/v1/chat/completions'
 const ANTHROPIC_API_VERSION = '2023-06-01'
-const ANTHROPIC_DEFAULT_MODEL = 'claude-opus-4-8'
+const ANTHROPIC_DEFAULT_MODEL = 'claude-opus-5-5'
+const OLLAMA_DEFAULT_MODEL = 'llama3.1'
+// Exported to the editor through RED.settings so both sides share one source.
+const CEREBRUM_EDITOR_PROVIDER_DEFAULTS = Object.freeze({
+  ollamaChatUrl: OLLAMA_DEFAULT_CHAT_URL,
+  anthropicChatUrl: ANTHROPIC_DEFAULT_MESSAGES_URL,
+  lmStudioChatUrl: LMSTUDIO_DEFAULT_CHAT_URL,
+  ollamaModel: OLLAMA_DEFAULT_MODEL,
+  anthropicModel: ANTHROPIC_DEFAULT_MODEL
+})
 
 const deriveLmStudioNativeApiUrl = (baseUrl, resourcePath = '/api/v1/models') => {
   const raw = String(baseUrl || '').trim() || LMSTUDIO_DEFAULT_CHAT_URL
@@ -7107,7 +7098,7 @@ module.exports = function (RED) {
         const body = req.body || {}
         const nodeId = body.nodeId ? String(body.nodeId) : ''
         let baseUrl = body.baseUrl ? String(body.baseUrl) : ''
-        const model = String(body.model || '').trim() || 'llama3.1'
+        const model = String(body.model || '').trim() || OLLAMA_DEFAULT_MODEL
 
         const deployedNode = nodeId ? aiRuntimeNodes.get(nodeId) : null
         if (deployedNode && deployedNode.type !== 'cerebrumUltimate') {
@@ -7212,7 +7203,7 @@ module.exports = function (RED) {
     node.llmModel = config.llmModel || (node.llmProvider === 'anthropic'
       ? ANTHROPIC_DEFAULT_MODEL
       : node.llmProvider === 'ollama'
-        ? 'llama3.1'
+        ? OLLAMA_DEFAULT_MODEL
         : node.llmProvider === 'lmstudio' ? '' : 'gpt-5.4')
     node.llmSystemPrompt = 'You help occupants create and maintain JavaScript home automations from their requests. Use installation data to resolve devices and ask focused questions when the requested behavior is incomplete.'
     node.llmTemperature = (config.llmTemperature === undefined || config.llmTemperature === '') ? 0.2 : Number(config.llmTemperature)
@@ -8559,6 +8550,14 @@ module.exports = function (RED) {
       node._lastSummaryAt = now
       node._summaryDirty = false
       return summary
+    }
+
+    // Consecutive reasoning steps reuse an unchanged summary for a few seconds.
+    const getConversationSummary = () => {
+      const age = nowMs() - Number(node._lastSummaryAt || 0)
+      return node._lastSummary && node._summaryDirty !== true && age < CEREBRUM_SUMMARY_REFRESH_MS
+        ? node._lastSummary
+        : rebuildCachedSummaryNow()
     }
 
     const scheduleRealtimeSummaryRebuild = () => {
@@ -12074,7 +12073,7 @@ module.exports = function (RED) {
     const ensureSelectedOllamaModelContext = async ({ autoStart = false, force = false } = {}) => {
       if (node.llmProvider !== 'ollama') return null
       const url = resolveOllamaChatUrl(node.llmBaseUrl)
-      const model = node.llmModel || 'llama3.1'
+      const model = node.llmModel || OLLAMA_DEFAULT_MODEL
       const key = `${url}\u0000${model}`
       if (!force && node._ollamaContextReadyKey === key && node.llmContextLength > 0) {
         return {
@@ -12196,28 +12195,22 @@ module.exports = function (RED) {
         : null
       if (node.llmProvider === 'ollama') {
         const url = resolveOllamaChatUrl(node.llmBaseUrl)
-        const ollamaContextTokens = contextLimit.tokens
-        const body = Object.assign({
-          model: node.llmModel || 'llama3.1',
-          stream: true,
-          messages: [
-            { role: 'system', content: resolvedSystemPrompt },
-            ...(resolvedStaticContext ? [{ role: 'user', content: resolvedStaticContext }] : []),
-            Object.assign(
-              { role: 'user', content: resolvedUserContent },
-              normalizedImages.length ? { images: normalizedImages.map(image => image.data.toString('base64')) } : {}
-            )
-          ],
-          options: Object.assign(
-            { temperature: node.llmTemperature, num_predict: resolvedMaxTokens },
-            ollamaContextTokens > 0 ? { num_ctx: Math.round(ollamaContextTokens) } : {}
-          )
-        }, resolveCerebrumReasoningRequestFields({
-          provider: 'ollama',
-          effort: trackChatContextUsage && node.llmReasoningEffort === 'default' ? 'none' : node.llmReasoningEffort
-        }))
-        if (conversationTools?.length) body.tools = conversationTools
-        else if (structuredSchema) body.format = structuredSchema
+        const body = buildCerebrumOllamaChatBody({
+          model: node.llmModel || OLLAMA_DEFAULT_MODEL,
+          systemPrompt: resolvedSystemPrompt,
+          staticContext: resolvedStaticContext,
+          userContent: resolvedUserContent,
+          images: normalizedImages,
+          temperature: node.llmTemperature,
+          maxTokens: resolvedMaxTokens,
+          contextTokens: contextLimit.tokens,
+          reasoningFields: resolveCerebrumReasoningRequestFields({
+            provider: 'ollama',
+            effort: trackChatContextUsage && node.llmReasoningEffort === 'default' ? 'none' : node.llmReasoningEffort
+          }),
+          tools: conversationTools,
+          format: structuredSchema
+        })
         let json
         let promptUsageSequence = 0
         const requestOllamaChat = requestBody => {
@@ -12260,36 +12253,16 @@ module.exports = function (RED) {
         // Anthropic native Messages API (not OpenAI-compatible).
         const url = node.llmBaseUrl || ANTHROPIC_DEFAULT_MESSAGES_URL
         const headers = buildAnthropicHeaders(node.llmApiKey)
-        const userBlocks = []
-        if (resolvedStaticContext) userBlocks.push({ type: 'text', text: resolvedStaticContext, cache_control: { type: 'ephemeral' } })
-        normalizedImages.forEach(image => {
-          userBlocks.push({
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: image.mediaType,
-              data: image.data.toString('base64')
-            }
-          })
-        })
-        userBlocks.push({ type: 'text', text: resolvedUserContent })
-        const body = Object.assign({
+        const body = buildCerebrumAnthropicMessagesBody({
           model: node.llmModel || ANTHROPIC_DEFAULT_MODEL,
-          max_tokens: resolvedMaxTokens,
-          messages: [{
-            role: 'user',
-            content: userBlocks
-          }]
-        }, resolveCerebrumReasoningRequestFields({
-          provider: 'anthropic',
-          effort: node.llmReasoningEffort
-        }))
-        if (resolvedSystemPrompt) body.system = [{ type: 'text', text: resolvedSystemPrompt }]
-        if (structuredSchema) {
-          body.output_config = Object.assign({}, body.output_config || {}, {
-            format: { type: 'json_schema', schema: structuredSchema }
-          })
-        }
+          systemPrompt: resolvedSystemPrompt,
+          staticContext: resolvedStaticContext,
+          userContent: resolvedUserContent,
+          images: normalizedImages,
+          maxTokens: resolvedMaxTokens,
+          reasoningFields: resolveCerebrumReasoningRequestFields({ provider: 'anthropic', effort: node.llmReasoningEffort }),
+          structuredSchema
+        })
         const promptUsageSequence = trackChatContextUsage
           ? recordChatPromptUsage({ body, provider: 'anthropic', model: body.model })
           : 0
@@ -12316,47 +12289,21 @@ module.exports = function (RED) {
       if (node.llmApiKey) headers.authorization = `Bearer ${node.llmApiKey}`
       const useOpenAiResponses = node.llmProvider !== 'lmstudio' && isOfficialOpenAiApiUrl(url)
       if (useOpenAiResponses) {
-        const inputContent = []
-        const explicitPromptCaching = supportsOpenAiExplicitPromptCaching(node.llmModel) && !!resolvedStaticContext
-        if (resolvedStaticContext) {
-          inputContent.push(Object.assign(
-            { type: 'input_text', text: resolvedStaticContext },
-            explicitPromptCaching ? { prompt_cache_breakpoint: { mode: 'explicit' } } : {}
-          ))
-        }
-        inputContent.push({ type: 'input_text', text: resolvedUserContent })
-        normalizedImages.forEach(image => {
-          inputContent.push({
-            type: 'input_image',
-            image_url: `data:${image.mediaType};base64,${image.data.toString('base64')}`,
-            detail: 'low'
-          })
-        })
-        const normalizedEffort = normalizeOpenAiReasoningEffortForModel(node.llmModel, node.llmReasoningEffort)
-        const responseBody = {
+        const responseBody = buildCerebrumOpenAiResponsesBody({
           model: node.llmModel,
-          instructions: resolvedSystemPrompt,
-          input: [{ role: 'user', content: inputContent }],
-          max_output_tokens: resolvedMaxTokens,
-          store: false,
-          truncation: 'disabled',
-          prompt_cache_key: String(promptCacheKey || `cerebrum-${node.id || 'node'}`).slice(0, 64)
-        }
-        if (explicitPromptCaching && node._openAiPromptCacheOptionsUnsupported !== true) {
-          responseBody.prompt_cache_options = { mode: 'explicit', ttl: '30m' }
-        }
-        if (!isOpenAiAstraModel(node.llmModel) && Number.isFinite(Number(node.llmTemperature))) responseBody.temperature = Number(node.llmTemperature)
-        if (normalizedEffort !== 'default') responseBody.reasoning = { effort: normalizedEffort }
-        if (jsonSchema && jsonSchema.schema) {
-          responseBody.text = {
-            format: {
-              type: 'json_schema',
-              name: String(jsonSchema.name || 'knx_ai_response'),
-              strict: jsonSchema.strict !== false,
-              schema: structuredSchema
-            }
-          }
-        }
+          systemPrompt: resolvedSystemPrompt,
+          staticContext: resolvedStaticContext,
+          userContent: resolvedUserContent,
+          images: normalizedImages,
+          maxTokens: resolvedMaxTokens,
+          temperature: isOpenAiAstraModel(node.llmModel) ? undefined : node.llmTemperature,
+          reasoningEffort: normalizeOpenAiReasoningEffortForModel(node.llmModel, node.llmReasoningEffort),
+          explicitPromptCaching: supportsOpenAiExplicitPromptCaching(node.llmModel) && !!resolvedStaticContext,
+          promptCacheOptions: node._openAiPromptCacheOptionsUnsupported !== true,
+          promptCacheKey: String(promptCacheKey || `cerebrum-${node.id || 'node'}`).slice(0, 64),
+          jsonSchema,
+          structuredSchema
+        })
         const promptUsageSequence = trackChatContextUsage
           ? recordChatPromptUsage({ body: responseBody, provider: 'openai', model: responseBody.model })
           : 0
@@ -12383,51 +12330,26 @@ module.exports = function (RED) {
         const responseRefused = Array.isArray(json?.output) && json.output.some(item => Array.isArray(item?.content) && item.content.some(part => part?.type === 'refusal'))
         return { provider: 'openai', model: responseBody.model, content, responseEmpty: !assistantText.trim(), responseRefused, finishReason }
       }
-      const baseBody = Object.assign({
+      const baseBody = buildCerebrumOpenAiCompatibleChatBody({
         model: node.llmProvider === 'lmstudio'
           ? String(node._lmStudioInferenceModel || node.llmModel).trim()
           : node.llmModel,
         temperature: node.llmTemperature,
         stream: node.llmProvider !== 'lmstudio',
-        messages: [
-          { role: 'system', content: resolvedSystemPrompt },
-          ...(resolvedStaticContext ? [{ role: 'user', content: resolvedStaticContext }] : []),
-          {
-            role: 'user',
-            content: normalizedImages.length
-              ? [
-                  { type: 'text', text: resolvedUserContent },
-                  ...normalizedImages.map(image => ({
-                    type: 'image_url',
-                    image_url: {
-                      url: `data:${image.mediaType};base64,${image.data.toString('base64')}`,
-                      detail: 'low'
-                    }
-                  }))
-                ]
-              : resolvedUserContent
-          }
-        ]
-      }, resolveCerebrumReasoningRequestFields({
-        provider: node.llmProvider,
-        effort: node.llmProvider === 'lmstudio' && trackChatContextUsage && node.llmReasoningEffort === 'default' ? 'none' : node.llmReasoningEffort
-      }))
-      if (conversationTools?.length) {
-        baseBody.tools = conversationTools
-      }
+        systemPrompt: resolvedSystemPrompt,
+        staticContext: resolvedStaticContext,
+        userContent: resolvedUserContent,
+        images: normalizedImages,
+        reasoningFields: resolveCerebrumReasoningRequestFields({
+          provider: node.llmProvider,
+          effort: node.llmProvider === 'lmstudio' && trackChatContextUsage && node.llmReasoningEffort === 'default' ? 'none' : node.llmReasoningEffort
+        }),
+        tools: conversationTools
+      })
       const shouldUseNativeJsonSchema = !conversationTools && node.llmProvider === 'lmstudio' && !!structuredSchema
 
       const schemaBody = shouldUseNativeJsonSchema
-        ? Object.assign({}, baseBody, {
-          response_format: {
-            type: 'json_schema',
-            json_schema: {
-              name: String(jsonSchema.name || 'knx_ai_response'),
-              strict: jsonSchema.strict !== false,
-              schema: structuredSchema
-            }
-          }
-        })
+        ? withCerebrumJsonSchemaResponseFormat(baseBody, jsonSchema, structuredSchema)
         : baseBody
 
       // OpenAI-compatible providers differ on optional sampling, response-format,
@@ -12569,8 +12491,6 @@ module.exports = function (RED) {
           provider: 'deterministic',
           model: '',
           normalizedPrompt: question,
-          translationProvider: '',
-          translationModel: '',
           fallback: false,
           error: translation.error || '',
           language: targetLanguage,
@@ -12757,56 +12677,6 @@ module.exports = function (RED) {
       return applied
     }
 
-    const applyCerebrumGaRoleActions = ({ actions, sessionId } = {}) => {
-      const sourceActions = Array.isArray(actions) ? actions : []
-      if (!sourceActions.length) return []
-      const current = loadPersistedAiConfig()
-      const nextRoles = Object.assign({}, current.gaRoles && typeof current.gaRoles === 'object' ? current.gaRoles : {})
-      const nextExperience = Object.assign({}, loadGaRoleExperience())
-      const learnedAt = new Date().toISOString()
-      const applied = []
-      sourceActions.forEach(action => {
-        const destination = normalizeAreaText(action && action.destination)
-        const operation = normalizeAreaText(action && action.operation).toLowerCase()
-        const role = normalizeGaRoleValue(action && action.role, 'auto')
-        if (!destination || !['learn', 'forget'].includes(operation)) return
-        if (operation === 'forget') {
-          delete nextRoles[destination]
-          delete nextExperience[destination]
-        } else if (role !== 'auto') {
-          nextRoles[destination] = role
-          nextExperience[destination] = {
-            role,
-            learnedAt,
-            reason: String(action.reason || '').trim().slice(0, 1000),
-            evidence: String(action.evidence || '').trim().slice(0, 2000),
-            source: 'chat_learning'
-          }
-        } else {
-          return
-        }
-        applied.push({
-          operation,
-          destination,
-          role: operation === 'forget' ? 'auto' : role,
-          reason: String(action.reason || '').trim().slice(0, 1000),
-          evidence: String(action.evidence || '').trim().slice(0, 2000),
-          sessionId: String(sessionId || '').trim(),
-          learnedAt
-        })
-      })
-      if (!applied.length) return applied
-      writePersistedAiConfig({
-        gaRoles: nextRoles,
-        gaRoleExperience: nextExperience
-      })
-      node._gaCatalogCache = null
-      node._homeCatalogSnapshotRef = null
-      node._homeCatalogByGa = null
-      scheduleHomeMemoryPersist({ immediate: true })
-      return applied
-    }
-
     // A useful tool pass clears the format-recovery attempt. It does not cap
     // retrieval; only consecutive unusable responses get one corrective call.
     const continueConversationalLLM = nextReasoningPass => ({ nextReasoningPass: { responseRecovery: null, ...nextReasoningPass } })
@@ -12838,7 +12708,7 @@ module.exports = function (RED) {
       scheduledTask = null
     }) => {
       await ensureSelectedLocalModelContext({ autoStartOllama: true })
-      const summary = rebuildCachedSummaryNow()
+      const summary = getConversationSummary()
       const catalog = getGaCatalogSnapshot()
       archiveCerebrumSnapshot('ets-catalog', catalog)
       archiveCerebrumSnapshot('ai-education', { text: String(node.aiEducation || '') })
@@ -12877,6 +12747,8 @@ module.exports = function (RED) {
         localContextTokens: node.llmLocalContextTokens,
         maxContextKb: node.llmMaxContextKb
       }).tokens
+      // The largest tier sends fewer raw events than the 16K tier so full-range
+      // history aggregates still fit; raw events remain retrievable on demand.
       const promptLimits = activeContextTokens > 0 && activeContextTokens <= 8192
         ? { chatChars: 2800, scheduleChars: 1600, webChars: 6000, homeMemoryChars: 1500, functionSourceChars: 3500, analysisSummaryChars: 1600, knxEvents: 12, adapterEvents: 8 }
         : activeContextTokens > 0 && activeContextTokens <= 16384
@@ -17652,108 +17524,6 @@ module.exports = function (RED) {
       }
     }
 
-    const buildScheduledTaskSyntheticInput = (task) => {
-      const sessionId = String(task && task.sessionId || 'default')
-      const remembered = node._chatSessionSources.get(sessionId)
-      const synthetic = remembered
-        ? cloneInputMessage(remembered)
-        : {
-            payload: {
-              type: 'message',
-              content: '',
-              chatId: sessionId
-            }
-          }
-      synthetic.topic = 'ask'
-      synthetic.prompt = String(task && task.instruction || '')
-      synthetic.sessionId = sessionId
-      synthetic.language = normalizeHomeLanguage(task && task.language)
-      synthetic.payload = Object.assign({}, synthetic.payload && typeof synthetic.payload === 'object' ? synthetic.payload : {}, {
-        type: 'message',
-        content: String(task && task.instruction || ''),
-        chatId: sessionId
-      })
-      synthetic.cerebrum = Object.assign({}, synthetic.cerebrum, {
-        type: 'scheduled_task_execution',
-        sessionId,
-        scheduledTask: task
-      })
-      delete synthetic.cerebrum.voiceInput
-      delete synthetic.cerebrum.sidebarRequestId
-      delete synthetic.weblink
-      delete synthetic.path
-      return synthetic
-    }
-
-    const runScheduledTaskTick = async () => {
-      // Legacy semantic schedules have no JavaScript authorization. Preserve them
-      // on disk for inspection/cancellation, without claiming or executing them.
-      if (!llmPolicy.allowed() || node._closing === true || node._scheduleTickInFlight === true || node.llmEnabled !== true) return
-      const now = nowMs()
-      node._scheduleStore = normalizeCerebrumScheduleStore(node._scheduleStore, { now })
-      const nextDue = node._scheduleStore.tasks
-        .filter(task => task.status === 'active' && task.nextRunAt && Date.parse(task.nextRunAt) <= now && !node._scheduledTaskIdsInFlight.has(task.id))
-        .sort((left, right) => String(left.nextRunAt).localeCompare(String(right.nextRunAt)))[0]
-      if (!nextDue) {
-        return
-      }
-      if (getLivePendingKnxCommands(nextDue.sessionId, now) || node._interactiveChatRequests.has(nextDue.sessionId)) {
-        const storeBeforeDefer = normalizeCerebrumScheduleStore(node._scheduleStore, { now })
-        nextDue.nextRunAt = new Date(now + (60 * 1000)).toISOString()
-        if (!scheduleScheduleStorePersist({ immediate: true })) node._scheduleStore = storeBeforeDefer
-        return
-      }
-      const storeBeforeClaim = normalizeCerebrumScheduleStore(node._scheduleStore, { now })
-      const claim = claimDueCerebrumSchedules({ store: storeBeforeClaim, now, limit: 1 })
-      node._scheduleStore = claim.store
-      if (!scheduleScheduleStorePersist({ immediate: true })) {
-        node._scheduleStore = storeBeforeClaim
-        updateStatus({ fill: 'red', shape: 'ring', text: 'Scheduled task waiting for persistent storage' })
-        return
-      }
-      const task = claim.claimed[0]
-      if (!task || node._closing === true) return
-      recordCerebrumOperation({
-        category: 'autonomous',
-        source: 'scheduler',
-        operation: 'scheduled_task_run',
-        status: 'started',
-        title: 'Cerebrum started a scheduled task',
-        summary: task.title || task.id,
-        sessionId: task.sessionId,
-        details: {
-          taskId: task.id,
-          kind: task.kind,
-          reason: task.reason,
-          scheduledFor: task.lastRunAt || task.nextRunAt,
-          runCount: task.runCount
-        }
-      })
-      node._scheduleTickInFlight = true
-      node._scheduledTaskIdsInFlight.add(task.id)
-      try {
-        await handleCommand(buildScheduledTaskSyntheticInput(task))
-      } catch (error) {
-        const completion = completeCerebrumScheduleRun({ store: node._scheduleStore, taskId: task.id, ok: false, error: error.message || String(error) })
-        node._scheduleStore = completion.store
-        scheduleScheduleStorePersist({ immediate: true })
-        recordCerebrumOperation({
-          category: 'autonomous',
-          source: 'scheduler',
-          operation: 'scheduled_task_run',
-          status: 'failed',
-          title: 'Cerebrum scheduled task failed',
-          summary: task.title || task.id,
-          sessionId: task.sessionId,
-          details: { taskId: task.id, error: error.message || String(error) }
-        })
-        try { node.sysLogger?.warn(`Cerebrum scheduled task error: ${error.message || error}`) } catch (logError) { /* ignore */ }
-      } finally {
-        releaseScheduledTaskIfNoPendingCamera(task.id)
-        node._scheduleTickInFlight = false
-      }
-    }
-
     node.getSidebarState = ({ fresh = false } = {}) => {
       try {
         const now = nowMs()
@@ -18517,6 +18287,9 @@ module.exports = function (RED) {
       llmApiKey: { type: 'password' },
       unifiHistoryUsername: { type: 'text' },
       unifiHistoryPassword: { type: 'password' }
+    },
+    settings: {
+      cerebrumUltimateProviderDefaults: { value: CEREBRUM_EDITOR_PROVIDER_DEFAULTS, exportable: true }
     }
   })
 }

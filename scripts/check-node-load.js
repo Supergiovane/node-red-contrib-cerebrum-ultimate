@@ -6,6 +6,7 @@ const path = require('path')
 const vm = require('vm')
 
 const registeredNodes = new Map()
+const registeredOptions = new Map()
 const noopRoute = () => {}
 const RED = {
   auth: { needsPermission: () => (req, res, next) => { if (next) next() } },
@@ -14,7 +15,10 @@ const RED = {
   nodes: {
     createNode: noopRoute,
     getNode: () => undefined,
-    registerType: (type, constructor) => registeredNodes.set(type, constructor)
+    registerType: (type, constructor, options) => {
+      registeredNodes.set(type, constructor)
+      registeredOptions.set(type, options)
+    }
   },
   settings: { userDir: process.cwd() }
 }
@@ -27,6 +31,9 @@ assert(registeredNodes.has('cerebrumUltimate'))
 assert(registeredNodes.has('cerebrum-function'))
 assert(!registeredNodes.has('function'))
 assert(!registeredNodes.has('cerebrumHomeAssistant'))
+const providerDefaults = registeredOptions.get('cerebrumUltimate').settings.cerebrumUltimateProviderDefaults
+assert(providerDefaults.exportable === true)
+assert(providerDefaults.value.anthropicModel && providerDefaults.value.anthropicChatUrl)
 
 const editorFiles = ['nodes/cerebrumUltimate.html', 'nodes/cerebrumFunction.html']
 let editorScriptCount = 0
